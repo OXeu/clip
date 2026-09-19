@@ -43,6 +43,12 @@ public partial class MainWindow : Window
         _arguments = arguments;
         _activeTrackId = _project.MainTrack.Id;
         InitializeComponent();
+        // Center the size that actually fits the desktop, not an oversized requested window.
+        var workArea = SystemParameters.WorkArea;
+        MinWidth = Math.Min(MinWidth, workArea.Width);
+        MinHeight = Math.Min(MinHeight, workArea.Height);
+        Width = Math.Min(Width, workArea.Width);
+        Height = Math.Min(Height, workArea.Height);
         TimelineView.Project = _project;
         TimelineView.SelectionChanged += SelectClip;
         TimelineView.SeekRequested += (track, time) => Seek(track, time);

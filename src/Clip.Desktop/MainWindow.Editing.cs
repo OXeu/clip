@@ -16,7 +16,8 @@ public partial class MainWindow
         var id = _project.Split(_activeTrackId, _position);
         if (id is null) { StatusText.Text = "请将播放头移到当前轨道的片段内部再分割。"; return; }
         _selected = id;
-        if (_playing) _playbackClip = _project.Locate(_activeTrackId, _position)?.Clip.Id;
+        if (_playing) _selected = _playbackClip = _project.Locate(_activeTrackId, _position)?.Clip.Id;
+        else ActivatePreview(_project.FindClip(id.Value)!.Value, false);
         StatusText.Text = "已分割当前轨道 · 可跨轨拖拽，Delete / X 删除。";
         Refresh();
     }

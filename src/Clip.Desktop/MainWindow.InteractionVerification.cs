@@ -189,8 +189,11 @@ public partial class MainWindow
         Require(SpeedErrorText.Visibility == Visibility.Visible && _project.FindClip(firstId)!.Value.Clip.Speed == 1.25,
             "Invalid speed changed a clip or missed inline feedback.");
         var count = _project.MainTrack.Clips.Count;
-        RaiseEditorKey(Key.X, SpeedBox, false);
-        RaiseEditorKey(Key.Delete, SpeedBox, false);
+        SpeedBox.ApplyTemplate();
+        var speedInput = SpeedBox.Template.FindName("PART_EditableTextBox", SpeedBox) as TextBox;
+        Require(speedInput is not null, "Editable speed input is missing from its native template.");
+        RaiseEditorKey(Key.X, speedInput!, false);
+        RaiseEditorKey(Key.Delete, speedInput!, false);
         Require(_project.MainTrack.Clips.Count == count, "Speed input triggered deletion.");
         Restore(false);
         var mainDuration = _project.MainTrack.Duration;
