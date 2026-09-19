@@ -30,6 +30,8 @@ public sealed class TimelineControl : FrameworkElement
     }
 
     private double Scale => Math.Max(1, ActualWidth - Inset * 2) / Math.Max(Duration, 1);
+    public double TimeAtX(double x) => Math.Clamp((x - Inset) / Scale, 0, Duration);
+    public double XAtTime(double time) => Inset + Math.Clamp(time, 0, Duration) * Scale;
 
     protected override void OnRender(DrawingContext dc)
     {
@@ -98,7 +100,7 @@ public sealed class TimelineControl : FrameworkElement
         if (!IsEnabled || Segments.Count == 0) return;
         Focus();
         var point = e.GetPosition(this);
-        var time = Math.Clamp((point.X - Inset) / Scale, 0, Duration);
+        var time = TimeAtX(point.X);
         if (point.Y >= TrackTop && point.Y <= TrackTop + TrackHeight)
         {
             double offset = 0;
@@ -121,7 +123,7 @@ public sealed class TimelineControl : FrameworkElement
         else if (e.ChangedButton == MouseButton.Right && point.Y >= TrackTop && point.Y <= TrackTop + TrackHeight)
         {
             var menu = new ContextMenu();
-            var delete = new MenuItem { Header = "删除片段", InputGestureText = "Delete" };
+            var delete = new MenuItem { Header = "删除片段", InputGestureText = "Delete / X" };
             delete.Click += (_, _) => DeleteRequested?.Invoke();
             menu.Items.Add(delete);
             menu.PlacementTarget = this;
@@ -134,7 +136,7 @@ public sealed class TimelineControl : FrameworkElement
     {
         base.OnMouseMove(e);
         if (IsMouseCaptured && e.LeftButton == MouseButtonState.Pressed)
-            SeekRequested?.Invoke(Math.Clamp((e.GetPosition(this).X - Inset) / Scale, 0, Duration));
+            SeekRequested?.Invoke(TimeAtX(e.GetPosition(this).X));
     }
 
     protected override void OnMouseUp(MouseButtonEventArgs e)

@@ -54,6 +54,28 @@ public sealed class Timeline
         return right.Id;
     }
 
+    /// <summary>Follow the source clock across adjacent cuts without seeking; seek only across removed ranges.</summary>
+    public PlaybackPosition? AdvancePlayback(Guid segmentId, double sourceTime)
+    {
+        if (!double.IsFinite(sourceTime)) return null;
+        var index = _segments.FindIndex(s => s.Id == segmentId);
+        if (index < 0) return null;
+        var timelineStart = _segments.Take(index).Sum(s => s.Duration);
+        while (true)
+        {
+            var segment = _segments[index];
+            if (sourceTime < segment.End)
+                return new(new(index, segment, Math.Max(segment.Start, sourceTime), timelineStart), false, false);
+            if (index == _segments.Count - 1)
+                return new(new(index, segment, segment.End, timelineStart), false, true);
+            timelineStart += segment.Duration;
+            var next = _segments[++index];
+            if (Math.Abs(next.Start - segment.End) > 0.000001)
+                return new(new(index, next, next.Start, timelineStart), true, false);
+            // A late UI timer may cross several tiny, contiguous cuts in one tick.
+        }
+    }
+
     public bool Delete(Guid id)
     {
         var index = _segments.FindIndex(s => s.Id == id);

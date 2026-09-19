@@ -55,6 +55,63 @@ Test("boundary splits do not create empty segments", () =>
     Check(timeline.Split(5) is null && timeline.Segments.Count == 2, "Duplicate split created a segment");
 });
 
+Test("playback crosses live cuts without seeking or losing source time", () =>
+{
+    var timeline = new Timeline();
+    timeline.Load(media);
+    var originalId = timeline.Segments[0].Id;
+    var rightId = timeline.Split(2)!.Value;
+    var before = timeline.AdvancePlayback(originalId, 1.99)!.Value;
+    Check(before.Position.Segment.Id == originalId && !before.RequiresSeek && !before.ReachedEnd, "Cut interrupted the left side");
+    var after = timeline.AdvancePlayback(originalId, 2.12)!.Value;
+    Check(after.Position.Segment.Id == rightId && !after.RequiresSeek && !after.ReachedEnd, "Contiguous cut requested a seek");
+    Near(after.Position.SourceTime, 2.12);
+    Near(after.TimelineTime, 2.12);
+    timeline.Split(2.2);
+    var lastId = timeline.Split(2.3)!.Value;
+    var late = timeline.AdvancePlayback(originalId, 2.65)!.Value;
+    Check(late.Position.Segment.Id == lastId && !late.RequiresSeek, "Late timer failed to cross multiple cuts");
+    Near(late.TimelineTime, 2.65);
+    Near(timeline.Duration, media.Duration);
+});
+
+Test("playback still skips deleted footage and stops at the retained end", () =>
+{
+    var timeline = new Timeline();
+    timeline.Load(media);
+    var first = timeline.Segments[0].Id;
+    var removed = timeline.Split(2)!.Value;
+    var last = timeline.Split(5)!.Value;
+    timeline.Delete(removed);
+    var gap = timeline.AdvancePlayback(first, 2.1)!.Value;
+    Check(gap.RequiresSeek && !gap.ReachedEnd && gap.Position.Segment.Id == last, "Deleted footage was not skipped");
+    Near(gap.Position.SourceTime, 5);
+    Near(gap.TimelineTime, 2);
+    var resumed = timeline.AdvancePlayback(last, 5.4)!.Value;
+    Check(!resumed.RequiresSeek, "Playback repeatedly sought after crossing a gap");
+    Near(resumed.TimelineTime, 2.4);
+    var end = timeline.AdvancePlayback(last, 10.2)!.Value;
+    Check(end.ReachedEnd && !end.RequiresSeek, "Playback failed to finish");
+    Near(end.TimelineTime, 7);
+    Check(timeline.AdvancePlayback(removed, 3) is null && timeline.AdvancePlayback(last, double.NaN) is null,
+        "Invalid playback cursor was accepted");
+});
+
+Test("frame-rounded live cuts preserve the playback position on either side", () =>
+{
+    foreach (var time in new[] { 2.01, 2.02 })
+    {
+        var timeline = new Timeline();
+        timeline.Load(media);
+        timeline.Split(time);
+        var cursor = timeline.Locate(time)!.Value;
+        var playback = timeline.AdvancePlayback(cursor.Segment.Id, time)!.Value;
+        Check(!playback.RequiresSeek && !playback.ReachedEnd, "Rounded split requested playback interruption");
+        Near(playback.TimelineTime, time);
+        Near(playback.Position.SourceTime, time);
+    }
+});
+
 Test("undo/redo restores IDs and all-deleted timeline", () =>
 {
     var timeline = new Timeline();
