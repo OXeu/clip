@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+.vs/
+.idea/
+.nuget/
+artifacts/
+.tools/
+*.user
+*.suo
+TestResults/

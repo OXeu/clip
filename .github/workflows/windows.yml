@@ -1,0 +1,97 @@
+name: Windows build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
+
+jobs:
+  build:
+    name: Test and publish Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install .NET and restore NuGet cache
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            **/packages.lock.json
+            global.json
+            Directory.Build.props
+            src/Clip.Desktop/Properties/PublishProfiles/win-x64.pubxml
+
+      - name: Restore FFmpeg cache
+        uses: actions/cache@v5
+        with:
+          path: .tools/ffmpeg
+          key: ffmpeg-${{ runner.os }}-x64-${{ hashFiles('scripts/ffmpeg-version.json', 'scripts/Get-FFmpeg.ps1') }}
+
+      - name: Get verified FFmpeg distribution
+        run: ./scripts/Get-FFmpeg.ps1
+
+      - name: Restore locked dependencies
+        run: |
+          dotnet restore tests/Clip.Tests/Clip.Tests.csproj --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet restore src/Clip.Desktop/Clip.Desktop.csproj --locked-mode -p:PublishProfile=win-x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and run core and FFmpeg integration tests
+        run: |
+          $env:CLIP_FFMPEG_DIR = Join-Path $env:GITHUB_WORKSPACE '.tools/ffmpeg'
+          dotnet run --project tests/Clip.Tests -c Release --no-restore -- --integration
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Publish self-contained application
+        run: ./scripts/Publish-Windows.ps1 -NoRestore
+
+      - name: Launch WPF and render UI smoke test
+        run: |
+          $app = Join-Path $env:GITHUB_WORKSPACE 'artifacts/Clip-win-x64/Clip.exe'
+          $process = Start-Process $app -ArgumentList '--smoke-test' -PassThru
+          if (-not $process.WaitForExit(45000)) {
+            Stop-Process -Id $process.Id -Force
+            throw 'WPF smoke test timed out.'
+          }
+          if ($process.ExitCode -ne 0) { throw "WPF smoke test failed: $($process.ExitCode)" }
+
+      - name: Upload UI smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Windows-UI-smoke-${{ github.run_number }}
+          path: |
+            artifacts/Clip-win-x64/smoke-ui.png
+            artifacts/Clip-win-x64/smoke-error.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload runnable Windows application
+        uses: actions/upload-artifact@v7
+        with:
+          name: Clip-win-x64-${{ github.run_number }}
+          path: |
+            artifacts/Clip-win-x64/**
+            !artifacts/Clip-win-x64/smoke-*
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 14
