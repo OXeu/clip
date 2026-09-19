@@ -36,8 +36,9 @@ internal static class UpdateProcess
         var panel = new StackPanel { Margin = new(24) };
         panel.Children.Add(status);
         panel.Children.Add(bar);
-        var window = new Window { Title = "Clip · 正在更新", Width = 480, SizeToContent = SizeToContent.Height,
+        var window = new Window { Title = "正在更新", Width = 480, SizeToContent = SizeToContent.Height,
             ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterScreen, Content = panel };
+        WindowPresentation.HideCaptionIcon(window);
         var applying = true;
         var started = false;
         window.Closing += (_, e) => e.Cancel = applying;
@@ -80,7 +81,7 @@ internal static class UpdateProcess
                 bar.IsIndeterminate = false;
                 status.Text = "更新未完成。\n" + error.Message + "\n更新目录：" + prepared.Workspace;
                 StartupDiagnostics.Write("Update installation failed", error);
-                MessageBox.Show(window, status.Text, "Clip 更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show(window, status.Text, "更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         };
         return window;

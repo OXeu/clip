@@ -25,7 +25,8 @@ internal sealed class UpdateWindow : Window
         _github = github;
         _build = build;
         _channel = channel;
-        Title = "Clip · 检查更新";
+        Title = "检查更新";
+        WindowPresentation.HideCaptionIcon(this);
         Width = 540;
         SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize;

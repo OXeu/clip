@@ -18,7 +18,7 @@ internal static class Program
         catch (Exception exception)
         {
             // This entry point catches failures before App.InitializeComponent / OnStartup exist.
-            StartupDiagnostics.ReportFailure("无法启动 Clip", exception, arguments.Any(IsAutomationArgument));
+            StartupDiagnostics.ReportFailure("无法启动视频剪辑", exception, arguments.Any(IsAutomationArgument));
             return 1;
         }
     }

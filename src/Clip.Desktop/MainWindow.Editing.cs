@@ -148,7 +148,7 @@ public partial class MainWindow
         var previewMode = _currentAsset?.StaticOnly == true ? "静态预览" : _currentAsset?.ProxyAttempted == true ? "兼容预览" : "原始素材";
         PreviewModeText.Text = selected is { } current ? $"{previewMode} · {current.Clip.Speed:0.##}×" : "";
         DocumentTitle.Text = hasMedia ? $"{_project.Sources.Count} 个素材 · 主轨 {_project.MainTrack.Duration:0.##} 秒" : "新建剪辑";
-        Title = hasMedia ? $"{_project.Sources.Count} 个素材 — Clip" : "Clip";
+        Title = hasMedia ? $"{_project.Sources.Count} 个素材 — 视频剪辑" : "视频剪辑";
         TimelineSummaryText.Text = $"主轨 {_project.MainTrack.Clips.Count} 片段 · {_project.MainTrack.Duration:0.##} 秒";
         TimelineSummaryText.ToolTip = $"共 {_project.Tracks.Count} 条轨道；候选轨不会导出。";
         RefreshPosition();

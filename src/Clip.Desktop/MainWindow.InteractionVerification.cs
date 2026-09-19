@@ -14,6 +14,15 @@ public partial class MainWindow
         if (!condition) throw new InvalidOperationException(failure);
     }
 
+    private void VerifyUnbrandedHeader()
+    {
+        UpdateLayout();
+        WindowPresentation.VerifyCaption(this);
+        Require(CommandHeader.Children.Count == 2 && CommandHeader.ColumnDefinitions.Count == 2 &&
+            Grid.GetColumn(DocumentTitle) == 0 && Math.Abs(DocumentTitle.TranslatePoint(new Point(), WindowRoot).X - 24) < 1,
+            "The command header retained a brand block, separator, or empty left gutter.");
+    }
+
     private void VerifyWheelNavigation()
     {
         FitClick(this, new RoutedEventArgs());
@@ -141,6 +150,7 @@ public partial class MainWindow
     internal async Task VerifyUiAsync()
     {
         Refresh();
+        VerifyUnbrandedHeader();
         Require(TimelineRegion.Visibility == Visibility.Collapsed && ExportButton.Visibility == Visibility.Collapsed, "Editing controls leaked into empty state.");
         UiCapture.Save(WindowRoot, "smoke-empty.png");
         var source = Environment.GetEnvironmentVariable("CLIP_UI_TEST_VIDEO");
@@ -164,6 +174,7 @@ public partial class MainWindow
         }
         Require(_project.Tracks.Count == 3 && _project.MainTrack.Clips.Count == 0 && !ExportButton.IsEnabled &&
             _activeTrackId == _project.Tracks[2].Id, "Imports must enter separate candidate tracks and preview the last candidate.");
+        VerifyUnbrandedHeader();
         UiCapture.Save(WindowRoot, "smoke-imported.png");
         var candidate = _project.Tracks[1].Id;
         var secondCandidate = _project.Tracks[2].Id;

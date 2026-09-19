@@ -14,7 +14,7 @@ public partial class App : Application
         var smoke = IsAutomatedRun;
         DispatcherUnhandledException += (_, args) =>
         {
-            StartupDiagnostics.ReportFailure("Clip · 发生错误", args.Exception, smoke);
+            StartupDiagnostics.ReportFailure("发生错误", args.Exception, smoke);
             args.Handled = true;
             if (smoke || !_windowRendered) Shutdown(1);
         };
@@ -46,6 +46,14 @@ public partial class App : Application
                     dialog.UpdateLayout();
                     dialog.VerifyDisclosure();
                     dialog.Close();
+                    // Creating the HWND verifies the update caption without showing the dialog or sending network requests.
+                    using var updateHttp = new System.Net.Http.HttpClient();
+                    var updateDialog = new Updates.UpdateWindow(new(updateHttp), Core.Updates.AppBuild.FromAssembly(typeof(App).Assembly),
+                        Core.Updates.UpdateChannel.Dev) { Owner = window };
+                    new System.Windows.Interop.WindowInteropHelper(updateDialog).EnsureHandle();
+                    WindowPresentation.VerifyCaption(updateDialog);
+                    updateDialog.Close();
+                    StartupDiagnostics.Write("Unbranded header and native main/export/update captions verified.");
                     File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "smoke-success.txt"), "Window initialization, edit controls, and export dialog passed.");
                     StartupDiagnostics.Write("Startup and UI verification completed");
                     Shutdown(0);

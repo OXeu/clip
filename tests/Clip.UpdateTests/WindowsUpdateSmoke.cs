@@ -1,11 +1,16 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using Clip.Core.Updates;
 
 internal static class WindowsUpdateSmoke
 {
+    [DllImport("user32.dll", ExactSpelling = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    private static extern int GetWindowLongW(IntPtr window, int index);
+
     // Runs only on Windows CI against the actual self-contained application and verified ZIP.
     internal static async Task<int> RunAsync(string publishedDirectory, string archivePath)
     {
@@ -55,6 +60,8 @@ internal static class WindowsUpdateSmoke
             start.ArgumentList.Add(original.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture));
             helper = Process.Start(start) ?? throw new Exception("Updater did not start.");
             await WaitUntilAsync(() => { helper.Refresh(); return !helper.HasExited && helper.MainWindowHandle != IntPtr.Zero; }, "Updater progress window did not open.");
+            if (helper.MainWindowTitle != "正在更新" || (GetWindowLongW(helper.MainWindowHandle, -20) & 1) == 0)
+                throw new Exception("Updater caption retained its application title or icon.");
             if (File.ReadAllText(canary) != "old release canary") throw new Exception("Updater modified files before the old process exited.");
             original.CloseMainWindow();
             await original.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));

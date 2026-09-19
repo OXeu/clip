@@ -14,6 +14,7 @@ public partial class ExportWindow : Window
     {
         _media = media;
         InitializeComponent();
+        WindowPresentation.HideCaptionIcon(this);
         NvidiaItem.IsEnabled = hasNvidia;
         EncoderBox.SelectedIndex = hasNvidia ? 0 : 1;
         HardwareDecodeBox.IsEnabled = hasNvidia;
@@ -112,6 +113,7 @@ public partial class ExportWindow : Window
 
     internal void VerifyDisclosure()
     {
+        WindowPresentation.VerifyCaption(this);
         if (AdvancedExpander.IsExpanded || DimensionsPanel.Visibility != Visibility.Collapsed || SizeBox.IsEnabled)
             throw new InvalidOperationException("Export defaults should disclose only basic options.");
         UiCapture.Save(DialogRoot, "smoke-export-basic.png");

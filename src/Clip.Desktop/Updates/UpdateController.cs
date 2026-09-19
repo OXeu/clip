@@ -81,7 +81,7 @@ internal sealed class UpdateController
             catch (Exception error)
             {
                 StartupDiagnostics.Write("Unable to launch update installer", error);
-                MessageBox.Show("无法启动更新程序，原版本未修改。\n" + error.Message, "Clip 更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("无法启动更新程序，原版本未修改。\n" + error.Message, "更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
         _owner.Closed += Launch;

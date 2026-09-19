@@ -43,6 +43,7 @@ public partial class MainWindow : Window
         _arguments = arguments;
         _activeTrackId = _project.MainTrack.Id;
         InitializeComponent();
+        WindowPresentation.HideCaptionIcon(this);
         // Center the size that actually fits the desktop, not an oversized requested window.
         var workArea = SystemParameters.WorkArea;
         MinWidth = Math.Min(MinWidth, workArea.Width);
@@ -232,7 +233,7 @@ public partial class MainWindow : Window
     {
         StatusText.Text = exception.Message.Split('\n')[0];
         if (App.IsAutomatedRun) throw new InvalidOperationException("Automated UI operation failed.", exception);
-        if (!_closed) MessageBox.Show(this, exception.Message, "Clip · 操作未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
+        if (!_closed) MessageBox.Show(this, exception.Message, "操作未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private void CancelClick(object sender, RoutedEventArgs e) => _operation?.Cancel();
@@ -425,7 +426,7 @@ public partial class MainWindow : Window
             return;
         }
         if (_project.CanUndo && !_closed && !App.IsAutomatedRun &&
-            MessageBox.Show(this, "关闭后轨道编辑不会保存。确认已导出需要的片段？", "关闭 Clip",
+            MessageBox.Show(this, "关闭后轨道编辑不会保存。确认已导出需要的片段？", "关闭视频剪辑",
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) { e.Cancel = true; return; }
         _closed = true;
         _timer.Stop();
