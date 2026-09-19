@@ -86,6 +86,39 @@ async Task<PreparedUpdate> Prepare(byte[] bytes, string directory, string? diges
 
 try
 {
+    await Test("startup log polling allows an open writer and waits for the complete marker", () =>
+    {
+        var log = Path.Combine(temp, "startup-writing.log");
+        using var stream = new FileStream(log, FileMode.Create, FileAccess.Write, FileShare.Read);
+        using var writer = new StreamWriter(stream) { AutoFlush = true };
+        writer.Write("Main window initialization ");
+        Check(!WindowsUpdateSmoke.HasInitializationCompleted(log), "Partial startup marker counted as initialized");
+        writer.WriteLine("completed");
+        Check(WindowsUpdateSmoke.HasInitializationCompleted(log), "Could not read startup marker while writer remained open");
+        writer.WriteLine("Background update check started");
+        Check(WindowsUpdateSmoke.HasInitializationCompleted(log), "Subsequent writes hid startup completion");
+        return Task.CompletedTask;
+    });
+    await Test("startup log polling waits for a missing or empty log", () =>
+    {
+        var log = Path.Combine(temp, "startup-pending.log");
+        Check(!WindowsUpdateSmoke.HasInitializationCompleted(log));
+        File.WriteAllText(log, "");
+        Check(!WindowsUpdateSmoke.HasInitializationCompleted(log));
+        File.WriteAllText(log, "Main window initialization completed\n");
+        Check(WindowsUpdateSmoke.HasInitializationCompleted(log));
+        return Task.CompletedTask;
+    });
+    if (OperatingSystem.IsWindows())
+        await Test("Windows startup log sharing violations retry after the lock is released", () =>
+        {
+            var log = Path.Combine(temp, "startup-locked.log");
+            File.WriteAllText(log, "Main window initialization completed\n");
+            using (var exclusive = new FileStream(log, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                Check(!WindowsUpdateSmoke.HasInitializationCompleted(log), "Locked log should be retried");
+            Check(WindowsUpdateSmoke.HasInitializationCompleted(log), "Readiness was not detected after releasing the lock");
+            return Task.CompletedTask;
+        });
     await Test("stable release comparison is numeric and ignores build metadata", async () =>
     {
         foreach (var (tag, current, expected) in new[] {

@@ -93,7 +93,7 @@ internal static class WindowsUpdateSmoke
                 process.Refresh();
                 if (process.HasExited) throw new Exception("Clip exited before initialization.");
                 var log = Directory.EnumerateFiles(logs, $"startup-*-{process.Id}.log").SingleOrDefault();
-                return process.MainWindowHandle != IntPtr.Zero && log is not null && File.ReadAllText(log).Contains("Main window initialization completed");
+                return process.MainWindowHandle != IntPtr.Zero && log is not null && HasInitializationCompleted(log);
             }
         }
         catch (Exception error)
@@ -112,6 +112,23 @@ internal static class WindowsUpdateSmoke
                 process.Dispose();
             }
             // Keep this isolated directory, including application logs and backups, for diagnosis.
+        }
+    }
+
+    internal static bool HasInitializationCompleted(string log)
+    {
+        try
+        {
+            // StartupDiagnostics may still be appending; the reader must also allow future writes.
+            using var stream = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd().Contains("Main window initialization completed", StringComparison.Ordinal);
+        }
+        catch (FileNotFoundException) { return false; }
+        catch (IOException error) when ((error.HResult & 0xFFFF) is 32 or 33)
+        {
+            // Windows sharing/lock violations are transient: let the existing bounded poll retry.
+            return false;
         }
     }
 

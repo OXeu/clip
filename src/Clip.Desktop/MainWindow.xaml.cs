@@ -264,27 +264,16 @@ public partial class MainWindow : Window
                 DateTime.UtcNow - _seekStarted < TimeSpan.FromSeconds(2)) return;
             _pendingSeek = null;
         }
-        var index = _timeline.Segments.ToList().FindIndex(s => s.Id == _playbackSegment);
-        if (index < 0) { Pause(); return; }
-        var segment = _timeline.Segments[index];
-        var timelineStart = _timeline.Segments.Take(index).Sum(s => s.Duration);
-        if (sourceTime >= segment.End - Math.Min(0.012, _timeline.FrameDuration / 3))
+        var playback = _playbackSegment is { } id ? _timeline.AdvancePlayback(id, sourceTime) : null;
+        if (playback is not { } p) { Pause(); return; }
+        _playbackSegment = p.Position.Segment.Id;
+        _position = p.TimelineTime;
+        if (p.ReachedEnd) Pause();
+        else if (p.RequiresSeek)
         {
-            if (index + 1 >= _timeline.Segments.Count)
-            {
-                Pause();
-                _position = _timeline.Duration;
-            }
-            else
-            {
-                var next = _timeline.Segments[index + 1];
-                _playbackSegment = next.Id;
-                _position = timelineStart + segment.Duration;
-                SetPreviewPosition(next.Start);
-                Preview.Play();
-            }
+            SetPreviewPosition(p.Position.SourceTime);
+            Preview.Play();
         }
-        else _position = timelineStart + Math.Clamp(sourceTime - segment.Start, 0, segment.Duration);
         RefreshPosition();
     }
 
@@ -300,11 +289,13 @@ public partial class MainWindow : Window
     private void Split()
     {
         if (_operation is not null) return;
-        Pause();
+        // Read the media clock now, not the last 25 ms timer sample. A cut changes only edit metadata.
+        if (_playing) Tick(this, EventArgs.Empty);
         var id = _timeline.Split(_position);
         if (id is null) { StatusText.Text = "将播放头移到片段内部再分割，不能在边界生成空片段。"; return; }
         _selected = id;
-        StatusText.Text = "已分割 · 单击片段后按 Delete 删除";
+        if (_playing) _playbackSegment = _timeline.Locate(_position)?.Segment.Id;
+        StatusText.Text = "已分割 · 单击片段后按 Delete / X 删除";
         Refresh();
     }
 
@@ -523,8 +514,16 @@ public partial class MainWindow : Window
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
-        if (_operation is not null || Keyboard.FocusedElement is TextBoxBase or ComboBox or ComboBoxItem or MenuItem || ZoomSlider.IsKeyboardFocusWithin) return;
-        if (e.Key == Key.Space && Keyboard.FocusedElement is ButtonBase) return;
+        // Space belongs to playback even when a button or the zoom slider has keyboard focus.
+        // Consume repeats and unavailable playback too, so controls never activate as a fallback.
+        if (e.Key == Key.Space && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            e.Handled = true;
+            if (!e.IsRepeat) TogglePlay();
+            return;
+        }
+        if (_operation is not null || Keyboard.FocusedElement is TextBoxBase or ComboBox or ComboBoxItem or MenuItem) return;
+        if (ZoomSlider.IsKeyboardFocusWithin && e.Key is Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End or Key.PageUp or Key.PageDown) return;
         var control = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
         if (control && e.Key == Key.O) ImportClick(sender, e);
         else if (control && e.Key == Key.Z) Restore(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
@@ -534,8 +533,8 @@ public partial class MainWindow : Window
             switch (e.Key)
             {
                 case Key.S: Split(); break;
-                case Key.Delete: DeleteSelected(); break;
-                case Key.Space: TogglePlay(); break;
+                case Key.Delete:
+                case Key.X: DeleteSelected(); break;
                 case Key.Left: Seek(_position - _timeline.FrameDuration); break;
                 case Key.Right: Seek(_position + _timeline.FrameDuration); break;
                 case Key.Home: Seek(0); break;
@@ -564,7 +563,40 @@ public partial class MainWindow : Window
 
     private void ZoomChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => UpdateTimelineWidth();
     private void TimelineSizeChanged(object sender, SizeChangedEventArgs e) => UpdateTimelineWidth();
-    private void FitClick(object sender, RoutedEventArgs e) => ZoomSlider.Value = 1;
+    private void FitClick(object sender, RoutedEventArgs e)
+    {
+        ZoomSlider.Value = 1;
+        TimelineScroll.ScrollToHorizontalOffset(0);
+    }
+
+    private void TimelineMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        e.Handled = ApplyTimelineWheel(e.Delta, Keyboard.Modifiers, e.GetPosition(TimelineScroll).X);
+    }
+
+    private bool ApplyTimelineWheel(int delta, ModifierKeys modifiers, double pointerX)
+    {
+        if (_operation is not null || _timeline.Media is null || delta == 0 || modifiers.HasFlag(ModifierKeys.Alt)) return false;
+        var notches = delta / 120.0; // Preserve high-resolution wheels' fractional deltas.
+        if ((modifiers & (ModifierKeys.Shift | ModifierKeys.Control)) != 0)
+        {
+            var anchorX = Math.Clamp(pointerX, 0, TimelineScroll.ViewportWidth);
+            var anchorTime = TimelineView.TimeAtX(TimelineScroll.HorizontalOffset + anchorX);
+            var zoom = Math.Clamp(ZoomSlider.Value * Math.Pow(1.2, notches), ZoomSlider.Minimum, ZoomSlider.Maximum);
+            if (zoom == ZoomSlider.Value) return true;
+            ZoomSlider.Value = zoom;
+            TimelineScroll.UpdateLayout();
+            TimelineScroll.ScrollToHorizontalOffset(TimelineView.XAtTime(anchorTime) - anchorX);
+        }
+        else
+        {
+            var step = SystemParameters.WheelScrollLines < 0
+                ? TimelineScroll.ViewportWidth * 0.9 : SystemParameters.WheelScrollLines * 24.0;
+            TimelineScroll.ScrollToHorizontalOffset(TimelineScroll.HorizontalOffset - notches * step);
+        }
+        return true;
+    }
+
     private void UpdateTimelineWidth()
     {
         if (TimelineView is null || TimelineScroll is null) return;
@@ -643,5 +675,7 @@ public partial class MainWindow : Window
         UiCapture.Save(WindowRoot, "smoke-compact.png");
         Width = previousWidth;
         Height = previousHeight;
+        UpdateLayout();
+        await VerifyTimelineInteractionsAsync(!string.IsNullOrWhiteSpace(source));
     }
 }
