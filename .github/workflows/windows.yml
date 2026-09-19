@@ -78,11 +78,14 @@ jobs:
           $ffmpeg = Join-Path $env:GITHUB_WORKSPACE '.tools/ffmpeg/ffmpeg.exe'
           & $ffmpeg -v error -y -f lavfi -i 'testsrc2=size=960x540:rate=30:duration=12' -f lavfi -i 'sine=frequency=440:duration=12' -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest $env:CLIP_UI_TEST_VIDEO
           if ($LASTEXITCODE -ne 0) { throw 'UI test video could not be generated.' }
+          $env:CLIP_UI_TEST_VIDEO_SECOND = Join-Path $env:GITHUB_WORKSPACE 'artifacts/UI second portrait.mp4'
+          & $ffmpeg -v error -y -f lavfi -i 'color=orange:size=540x960:rate=24:duration=3.2' -c:v libx264 -preset ultrafast -pix_fmt yuv420p $env:CLIP_UI_TEST_VIDEO_SECOND
+          if ($LASTEXITCODE -ne 0) { throw 'Second UI test video could not be generated.' }
           $env:CLIP_LOG_DIR = Join-Path $env:GITHUB_WORKSPACE 'artifacts/startup-logs'
           $env:DOTNET_HOST_TRACE = '1'
           $env:DOTNET_HOST_TRACEFILE = Join-Path $env:GITHUB_WORKSPACE 'artifacts/startup-host.log'
           $process = Start-Process $app -ArgumentList '--startup-test' -PassThru
-          if (-not $process.WaitForExit(60000)) {
+          if (-not $process.WaitForExit(90000)) {
             Stop-Process -Id $process.Id -Force
             throw 'Normal startup test timed out.'
           }
@@ -90,7 +93,7 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "Normal startup test failed: $($process.ExitCode)" }
           if (-not (Test-Path 'artifacts/Clip-win-x64/smoke-success.txt')) { throw 'UI verification did not finish.' }
           if (-not (Test-Path 'artifacts/Clip-win-x64/smoke-ui.png')) { throw 'UI screenshot missing.' }
-          foreach ($state in @('empty', 'imported', 'compact', 'export-basic', 'export-advanced')) {
+          foreach ($state in @('empty', 'imported', 'multitrack', 'compact', 'export-basic', 'export-advanced')) {
             if (-not (Test-Path "artifacts/Clip-win-x64/smoke-$state.png")) { throw "Missing UI state screenshot: $state" }
           }
 

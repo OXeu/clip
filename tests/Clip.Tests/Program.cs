@@ -156,6 +156,140 @@ Test("random edits preserve timeline invariants", () =>
     }
 });
 
+Test("multiple imports create candidate tracks and never implicitly enter the export track", () =>
+{
+    var project = new EditProject();
+    var first = project.Import(media);
+    var second = project.Import(media with { Path = "second.mp4", Width = 1080, Height = 1920 });
+    Check(project.Tracks.Count == 3 && project.MainTrack.IsMain && !first.IsMain && !second.IsMain, "Incorrect track roles");
+    Check(project.ExportClips().Count == 0 && project.Sources.Count == 2, "A candidate was included in export");
+    project.Move(first.Clips[0].Id, project.MainTrack.Id, 0);
+    Check(project.ExportClips().Single().Media.Path == media.Path && project.FindTrack(first.Id)!.Clips.Count == 0, "Cross-track move copied or lost a clip");
+    Check(project.FindTrack(second.Id)!.Clips.Count == 1, "Moving another clip mutated the second candidate track");
+    project.Undo();
+    Check(project.MainTrack.Clips.Count == 0 && project.FindTrack(first.Id)!.Clips.Count == 1, "Cross-track undo was not atomic");
+    project.Undo();
+    Check(project.Tracks.Count == 2 && project.Sources.Count == 1, "Undo import left orphaned project state");
+    project.Redo();
+    Check(project.Tracks[2].Id == second.Id, "Redo import changed track identity");
+});
+
+Test("cross-track moves, reordering, and speed have project-wide undo and stable clip identities", () =>
+{
+    var project = new EditProject();
+    var a = project.Import(media);
+    var b = project.Import(media with { Path = "b.mp4" });
+    var right = project.Split(a.Id, 4)!.Value;
+    project.Move(a.Clips[0].Id, project.MainTrack.Id, 0);
+    project.Move(b.Clips[0].Id, project.MainTrack.Id, 1);
+    project.Move(right, project.MainTrack.Id, 1);
+    Check(project.MainTrack.Clips.Select(c => c.Id).SequenceEqual(new[] { a.Clips[0].Id, right, b.Clips[0].Id }), "Insertion order is wrong");
+    project.Move(a.Clips[0].Id, project.MainTrack.Id, 3);
+    Check(project.MainTrack.Clips[^1].Id == a.Clips[0].Id, "Same-track forward move has an off-by-one error");
+    Check(!project.Move(right, project.MainTrack.Id, 0), "No-op move modified history");
+    project.SetSpeed(right, 2);
+    Near(project.FindClip(right)!.Value.Clip.Duration, 3);
+    project.Undo();
+    Near(project.FindClip(right)!.Value.Clip.Speed, 1);
+    project.Undo();
+    Check(project.MainTrack.Clips[0].Id == a.Clips[0].Id, "Undo lost the pre-reorder position");
+    project.Redo();
+    Check(project.MainTrack.Clips[^1].Id == a.Clips[0].Id, "Redo failed to restore reordering");
+    var snapshot = project.ExportClips();
+    project.Delete(right);
+    Check(snapshot.Count == 3 && project.ExportClips().Count == 2, "Export snapshot changed after another edit");
+});
+
+Test("clip speed maps timeline time to source frames for split and playback", () =>
+{
+    var project = new EditProject();
+    var track = project.Import(media);
+    var original = track.Clips[0].Id;
+    project.SetSpeed(original, 2);
+    Near(project.Locate(track.Id, 1.5)!.Value.SourceTime, 3);
+    var right = project.Split(track.Id, 2)!.Value;
+    var clips = project.FindTrack(track.Id)!.Clips;
+    Near(clips[0].End, 4);
+    Near(clips[0].Duration, 2);
+    Near(clips[1].Speed, 2);
+    var continued = project.AdvancePlayback(track.Id, original, 4.4)!.Value;
+    Check(continued.Position.Clip.Id == right && !continued.RequiresSeek, "Live cut introduced a seek");
+    Near(continued.Position.TimelineTime, 2.2);
+    project.SetSpeed(right, 0.5);
+    Near(project.Locate(track.Id, 4)!.Value.SourceTime, 5);
+    Near(project.MainTrack.Duration, 0);
+    var next = project.Import(media with { Path = "next.mp4" });
+    project.Move(next.Clips[0].Id, track.Id, 2);
+    var switched = project.AdvancePlayback(track.Id, right, 10)!.Value;
+    Check(switched.RequiresSeek && switched.Position.Clip.Media.Path == "next.mp4", "Cross-source continuation did not request a new source");
+    Check(project.AdvancePlayback(project.MainTrack.Id, right, 8) is null, "Playback crossed into a different track");
+});
+
+Test("invalid speed cannot mutate a project and tempo stages preserve the requested factor", () =>
+{
+    var project = new EditProject();
+    var track = project.Import(media);
+    foreach (var speed in new[] { 0, -1, double.NaN, double.PositiveInfinity, 0.01, 8.1 })
+    {
+        try { project.SetSpeed(track.Clips[0].Id, speed); throw new Exception("Invalid speed was accepted"); }
+        catch (ArgumentException) { }
+        Near(project.FindTrack(track.Id)!.Duration, 10);
+    }
+    foreach (var speed in new[] { 0.1, 0.25, 0.5, 1, 1.37, 2, 4, 8 })
+    {
+        var stages = ExportService.BuildTempoFilter(speed).Split(',').Select(s => double.Parse(s.Split('=')[1], CultureInfo.InvariantCulture)).ToArray();
+        Check(stages.All(s => s >= 0.5 && s <= 2), "Tempo stage can skip audio samples");
+        Near(stages.Aggregate(1.0, (a, b) => a * b), speed);
+    }
+});
+
+Test("multi-source filter normalizes each video and pads silent sections before concatenating", () =>
+{
+    VideoClip[] clips = [VideoClip.Create(media with { AudioStreamIndex = null }) with { Speed = 2 },
+        VideoClip.Create(media with { Path = "portrait.mp4", Width = 1080, Height = 1920, FrameRate = 24 }) with { Speed = 0.5 }];
+    var filter = ExportService.BuildFilter(clips, new());
+    Check(filter.Contains("[0:0]") && filter.Contains("[1:0]") && filter.Contains("anullsrc") && filter.Contains("atempo=0.5"), "Missing input or audio normalization");
+    Check(filter.Split("pad=1920:1080").Length == 3 && filter.Contains("concat=n=2:v=1:a=1"), "Videos were not scaled before concat");
+    var arguments = ExportService.BuildArguments(clips, new(), "graph", "output");
+    Check(arguments.Count(s => s == "-hwaccel") == 2 && arguments.Contains("[audio]"), "NVDEC or audio mapping omitted an input");
+});
+
+Test("random multi-track edits preserve nonoverlap, speed mappings, and unique IDs", () =>
+{
+    var project = new EditProject();
+    project.Import(media);
+    project.Import(media with { Path = "other.mp4" });
+    var random = new Random(28);
+    for (var iteration = 0; iteration < 500; iteration++)
+    {
+        var all = project.Tracks.SelectMany(t => t.Clips).ToArray();
+        var track = project.Tracks[random.Next(project.Tracks.Count)];
+        var clip = all.Length > 0 ? all[random.Next(all.Length)] : null;
+        switch (random.Next(6))
+        {
+            case 0: project.Split(track.Id, random.NextDouble() * track.Duration); break;
+            case 1: if (clip is not null) project.Move(clip.Id, track.Id, random.Next(track.Clips.Count + 1)); break;
+            case 2: if (clip is not null) project.SetSpeed(clip.Id, new[] { 0.25, 0.5, 1, 1.25, 2, 4 }[random.Next(6)]); break;
+            case 3: if (clip is not null) project.Delete(clip.Id); break;
+            case 4: project.Undo(); break;
+            case 5: project.Redo(); break;
+        }
+        all = project.Tracks.SelectMany(t => t.Clips).ToArray();
+        Check(all.Select(c => c.Id).Distinct().Count() == all.Length, "A drag duplicated a clip ID");
+        foreach (var lane in project.Tracks)
+        {
+            double offset = 0;
+            foreach (var segment in lane.Clips)
+            {
+                segment.Validate();
+                Near(project.Locate(lane.Id, offset + segment.Duration / 2)!.Value.SourceTime, (segment.Start + segment.End) / 2);
+                offset += segment.Duration;
+            }
+            Near(lane.Duration, offset);
+        }
+    }
+});
+
 Test("probe ignores cover art and handles portrait rotation, rational FPS and silent sources", () =>
 {
     const string json = """
@@ -303,6 +437,90 @@ if (args.Contains("--integration"))
             "-c:v", "libx264", "-g", "300", "-pix_fmt", "yuv420p", "-c:a", "aac", source);
         var input = await tools.ProbeAsync(source);
         var software = new ExportOptions(Encoder: VideoEncoder.Software, HardwareDecode: false);
+        await TestAsync("FFmpeg exports only the mixed-source main track with speed, silence, resolution and frame-rate normalization", async () =>
+        {
+            var portraitPath = Path.Combine(root, "portrait candidate 静音.mp4");
+            await Run("-v", "error", "-f", "lavfi", "-i", "color=yellow:s=180x320:r=24:d=4",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", portraitPath);
+            var portrait = await tools.ProbeAsync(portraitPath);
+            var project = new EditProject();
+            var a = project.Import(input);
+            var b = project.Import(portrait);
+            // If candidate inputs are accidentally included, FFmpeg will fail to open this file.
+            project.Import(input with { Path = Path.Combine(root, "must-not-be-read.mp4") });
+            project.Split(a.Id, 2);
+            var greenId = project.Split(a.Id, 4)!.Value;
+            project.Split(b.Id, 1);
+            project.Move(a.Clips[0].Id, project.MainTrack.Id, 0);
+            project.SetSpeed(a.Clips[0].Id, 2);
+            project.Move(b.Clips[0].Id, project.MainTrack.Id, 1);
+            project.SetSpeed(b.Clips[0].Id, 0.5);
+            project.Move(greenId, project.MainTrack.Id, 2);
+            Near(project.MainTrack.Duration, 5);
+            var output = Path.Combine(root, "multi-source-main.mp4");
+            await exporter.ExportAsync(project, software, output);
+            var result = await tools.ProbeAsync(output);
+            Near(result.Duration, 5, 0.07);
+            Check(result.Width == 320 && result.Height == 180 && result.HasAudio, "Mixed-source output metadata was not normalized");
+            var rgb = Path.Combine(root, "multitrack.rgb");
+            await Run("-v", "error", "-i", output, "-vf", "scale=1:1", "-f", "rawvideo", "-pix_fmt", "rgb24", rgb);
+            var bytes = await File.ReadAllBytesAsync(rgb);
+            var red = 0; var yellow = 0; var green = 0;
+            for (var i = 0; i < bytes.Length; i += 3)
+            {
+                var r = bytes[i]; var g = bytes[i + 1]; var blue = bytes[i + 2];
+                Check(blue < Math.Max(r, g), "Candidate-only blue footage leaked into the export");
+                if (r > g * 1.5) red++;
+                else if (g > r * 1.5) green++;
+                else { Check(r > 20 && g > 20, "Portrait section was not visible"); yellow++; }
+            }
+            Check(Math.Abs(red - 30) <= 1 && Math.Abs(yellow - 60) <= 1 && Math.Abs(green - 60) <= 1,
+                $"Speed changed the wrong output ranges: {red}, {yellow}, {green}");
+            var audioPath = Path.Combine(root, "multitrack.pcm");
+            await Run("-v", "error", "-i", output, "-map", "0:a:0", "-f", "s16le", "-ac", "1", "-ar", "48000", audioPath);
+            var audio = await File.ReadAllBytesAsync(audioPath);
+            Near(audio.Length / 96000.0, 5, 0.08);
+            for (var sample = 72000; sample < 120000; sample++)
+                Check(Math.Abs((int)BitConverter.ToInt16(audio, sample * 2)) < 30, "Silent candidate did not produce silence on the main track");
+            double Energy(int frequency)
+            {
+                double real = 0, imaginary = 0;
+                for (var sample = 9600; sample < 28800; sample++)
+                {
+                    var value = BitConverter.ToInt16(audio, sample * 2);
+                    real += value * Math.Cos(2 * Math.PI * frequency * sample / 48000);
+                    imaginary += value * Math.Sin(2 * Math.PI * frequency * sample / 48000);
+                }
+                return real * real + imaginary * imaginary;
+            }
+            Check(Energy(440) > Energy(880) * 30, "Speed adjustment changed pitch or retained deleted audio");
+            project.Move(a.Clips[0].Id, a.Id, 0);
+            project.Move(greenId, a.Id, 1);
+            var silentOutput = Path.Combine(root, "candidate-audio-excluded.mp4");
+            await exporter.ExportAsync(project, software, silentOutput);
+            Check(!(await tools.ProbeAsync(silentOutput)).HasAudio, "Audio on a candidate track leaked into a silent main track");
+        });
+
+        await TestAsync("FFmpeg handles slow motion, acceleration, and one-frame clips without losing the final frame", async () =>
+        {
+            foreach (var speed in new[] { 0.1, 0.5, 1.37, 2, 8 })
+            {
+                var output = Path.Combine(root, $"speed-{speed.ToString(CultureInfo.InvariantCulture)}.mp4");
+                var clip = VideoClip.Create(input) with { End = 1, Speed = speed };
+                await exporter.ExportAsync(new[] { clip }, software, output);
+                Near((await tools.ProbeAsync(output)).Duration, 1 / speed, 0.045);
+            }
+            var shortest = Path.Combine(root, "fast-one-frame.mp4");
+            await exporter.ExportAsync(new[] { VideoClip.Create(input) with { End = 1.0 / 30, Speed = 8 } }, software, shortest);
+            Check((await tools.ProbeAsync(shortest)).Duration > 0, "Sub-frame output dropped the entire clip");
+            var onlySilent = Path.Combine(root, "speed-silent.mp4");
+            var silentPath = Path.Combine(root, "silent-input.mp4");
+            await Run("-v", "error", "-i", source, "-map", "0:v:0", "-c", "copy", silentPath);
+            var silent = await tools.ProbeAsync(silentPath);
+            await exporter.ExportAsync(new[] { VideoClip.Create(silent) with { End = 1, Speed = 0.1 } }, software, onlySilent);
+            Near((await tools.ProbeAsync(onlySilent)).Duration, 10, 0.04);
+        });
+
         await TestAsync("FFmpeg precise non-keyframe cuts remove deleted video and audio ranges", async () =>
         {
             var output = Path.Combine(root, "trimmed 测试.mp4");

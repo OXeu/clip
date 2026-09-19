@@ -10,7 +10,7 @@ public partial class ExportWindow : Window
     private bool _updating;
     public ExportOptions? Options { get; private set; }
 
-    public ExportWindow(MediaInfo media, bool hasNvidia, string? nvidiaDiagnostic = null)
+    public ExportWindow(MediaInfo media, bool hasNvidia, string? nvidiaDiagnostic = null, string? mainTrackSummary = null)
     {
         _media = media;
         InitializeComponent();
@@ -21,7 +21,7 @@ public partial class ExportWindow : Window
         HardwareHint.Text = hasNvidia
             ? "NVENC 编码检测通过。解码支持取决于显卡和素材格式；失败时可关闭硬件解码重试。"
             : $"{nvidiaDiagnostic ?? "NVENC 检测未通过。"} 当前使用 CPU，可在设置中查看检测详情或重新检测。";
-        SourceNameText.Text = media.FileName;
+        SourceNameText.Text = mainTrackSummary ?? media.FileName;
         SourceInfoText.Text = $"{media.Width} × {media.Height} · {media.FrameRate:0.##} fps";
         UpdateQuality();
         UpdateDimensions();
@@ -42,7 +42,7 @@ public partial class ExportWindow : Window
         if (QualityBox.SelectedIndex == 0) SizeBox.SelectedIndex = 0;
         QualityDescriptionText.Text = QualityBox.SelectedIndex switch
         {
-            0 => "保留源分辨率，以高质量重新编码，不等同于无损复制。",
+            0 => "以主轨首个素材的分辨率为基准，高质量重编码；不同尺寸素材保持比例并补边。",
             1 => "保留更多画面细节，适合高质量分享。",
             2 => "兼顾画面质量与文件大小，适合日常使用。",
             _ => "优先减小文件体积，画面细节会有所减少。"

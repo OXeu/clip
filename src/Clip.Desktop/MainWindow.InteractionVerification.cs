@@ -1,11 +1,19 @@
+using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using Clip.Core;
 
 namespace Clip.Desktop;
 
 public partial class MainWindow
 {
+    private static void Require(bool condition, string failure)
+    {
+        if (!condition) throw new InvalidOperationException(failure);
+    }
+
     private void VerifyWheelNavigation()
     {
         FitClick(this, new RoutedEventArgs());
@@ -14,152 +22,247 @@ public partial class MainWindow
         var time = TimelineView.TimeAtX(anchor);
         ApplyTimelineWheel(120, ModifierKeys.Shift, anchor);
         UpdateLayout();
-        var pixelTime = Math.Abs(TimelineView.TimeAtX(42) - TimelineView.TimeAtX(40));
-        if (ZoomSlider.Value <= 1 || Math.Abs(TimelineView.TimeAtX(TimelineScroll.HorizontalOffset + anchor) - time) > pixelTime)
-            throw new InvalidOperationException("Shift + wheel did not zoom around the mouse position.");
-
+        var pixelTime = TimelineView.TimeAtX(TimelineControl.ContentInset + 2);
+        Require(ZoomSlider.Value > 1 && Math.Abs(TimelineView.TimeAtX(TimelineScroll.HorizontalOffset + anchor) - time) <= pixelTime,
+            "Shift-wheel lost its time anchor.");
         var zoom = ZoomSlider.Value;
         var offset = TimelineScroll.HorizontalOffset;
-        var wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120)
-            { RoutedEvent = Mouse.PreviewMouseWheelEvent };
+        var wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120) { RoutedEvent = Mouse.PreviewMouseWheelEvent };
         TimelineView.RaiseEvent(wheel);
         UpdateLayout();
-        if (!wheel.Handled || (SystemParameters.WheelScrollLines != 0 && TimelineScroll.HorizontalOffset <= offset) || ZoomSlider.Value != zoom)
-            throw new InvalidOperationException("The routed wheel event did not pan the horizontal timeline.");
-
+        Require(wheel.Handled && (SystemParameters.WheelScrollLines == 0 || TimelineScroll.HorizontalOffset > offset) && ZoomSlider.Value == zoom,
+            "Routed wheel did not pan the timeline.");
         ApplyTimelineWheel(-60, ModifierKeys.Control, anchor);
         UpdateLayout();
-        if (ZoomSlider.Value >= zoom) throw new InvalidOperationException("High-resolution Ctrl + wheel zoom did not work.");
+        Require(ZoomSlider.Value < zoom, "Fractional Ctrl-wheel did not zoom.");
         ApplyTimelineWheel(120000, ModifierKeys.Shift, anchor);
         UpdateLayout();
-        if (ZoomSlider.Value != ZoomSlider.Maximum) throw new InvalidOperationException("Wheel zoom exceeded its maximum.");
+        Require(ZoomSlider.Value == ZoomSlider.Maximum, "Zoom maximum failed.");
         ApplyTimelineWheel(-120000, ModifierKeys.Shift, anchor);
         UpdateLayout();
-        if (ZoomSlider.Value != ZoomSlider.Minimum || TimelineScroll.HorizontalOffset != 0)
-            throw new InvalidOperationException("Wheel zoom did not return to the fitted timeline.");
+        Require(ZoomSlider.Value == 1 && TimelineScroll.HorizontalOffset == 0, "Zoom did not return to fit.");
     }
 
-    private void RaiseEditorKey(Key key, UIElement? target = null)
+    private void RaiseEditorKey(Key key, UIElement? target = null, bool handled = true)
     {
         target ??= TimelineView;
-        if (!target.Focus()) throw new InvalidOperationException($"Could not focus the target for shortcut {key}.");
-        var keyEvent = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this)!, Environment.TickCount, key)
+        Require(target.Focus(), $"Cannot focus shortcut target for {key}.");
+        var args = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this)!, Environment.TickCount, key)
             { RoutedEvent = Keyboard.PreviewKeyDownEvent };
-        target.RaiseEvent(keyEvent);
-        if (!keyEvent.Handled) throw new InvalidOperationException($"Editor shortcut {key} was not handled.");
-        keyEvent.RoutedEvent = Keyboard.KeyDownEvent;
-        target.RaiseEvent(keyEvent);
-        var keyUp = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this)!, Environment.TickCount, key)
+        target.RaiseEvent(args);
+        if (handled) Require(args.Handled, $"Shortcut {key} was not handled.");
+        args.RoutedEvent = Keyboard.KeyDownEvent;
+        target.RaiseEvent(args);
+        var up = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this)!, Environment.TickCount, key)
             { RoutedEvent = Keyboard.PreviewKeyUpEvent };
-        target.RaiseEvent(keyUp);
-        keyUp.RoutedEvent = Keyboard.KeyUpEvent;
-        target.RaiseEvent(keyUp);
+        target.RaiseEvent(up);
+        up.RoutedEvent = Keyboard.KeyUpEvent;
+        target.RaiseEvent(up);
     }
 
-    private void VerifySpacePlaybackFocus()
+    private static async Task WaitForPreviewAsync(Func<bool> ready, string failure)
     {
-        var original = _timeline.Segments.ToArray();
-        Seek(1);
-        _selected = original[1].Id;
-        Refresh();
+        var deadline = DateTime.UtcNow.AddSeconds(12);
+        while (!ready() && DateTime.UtcNow < deadline) await Task.Delay(25);
+        Require(ready(), failure);
+    }
+
+    private async Task VerifyNativeDragAsync(Guid clipId, Guid trackId, int index, bool realInput)
+    {
+        Pause();
+        FitClick(this, new RoutedEventArgs());
+        TimelineScroll.ScrollToVerticalOffset(0);
         UpdateLayout();
-        if (!DeleteButton.Focus()) throw new InvalidOperationException("Could not focus the delete button.");
+        var rect = TimelineView.ClipBounds(clipId);
+        var track = _project.FindTrack(trackId)!;
+        var row = _project.Tracks.ToList().FindIndex(t => t.Id == trackId);
+        var x = TimelineView.XAtTime(track.Clips.Take(index).Sum(c => c.Duration)) + 5;
+        var target = new Point(x, TimelineControl.RulerHeight + row * TimelineControl.RowHeight + 34);
+        Require(TimelineView.InsertionAt(target) == (trackId, index), "Drop insertion slot did not match its visual marker.");
+        if (!realInput) { MoveClip(clipId, trackId, index); return; }
+        Activate();
+        var from = TimelineView.PointToScreen(new Point(rect.X + Math.Min(40, rect.Width * 0.4), rect.Y + 24));
+        var to = TimelineView.PointToScreen(target);
+        StartupDiagnostics.Write($"Native drag: {clipId} from {from} to {to}; target track {trackId}, slot {index}.");
+        UiCapture.Save(WindowRoot, "smoke-drag-before.png");
+        await Task.Run(() =>
+        {
+            NativeMouse.SetCursorPos((int)from.X, (int)from.Y);
+            Thread.Sleep(100);
+            NativeMouse.mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+            try
+            {
+                Thread.Sleep(120);
+                for (var step = 1; step <= 12; step++)
+                {
+                    NativeMouse.SetCursorPos((int)(from.X + (to.X - from.X) * step / 12), (int)(from.Y + (to.Y - from.Y) * step / 12));
+                    Thread.Sleep(35);
+                }
+            }
+            finally { NativeMouse.mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero); }
+        });
+        UiCapture.Save(WindowRoot, "smoke-drag-after.png");
+        await WaitForPreviewAsync(() => _project.FindClip(clipId) is { } moved && moved.TrackId == trackId &&
+            moved.Index == (track.Clips.Any(c => c.Id == clipId) && _project.FindClip(clipId)!.Value.Index < index ? index - 1 : index),
+            "Native mouse drag did not move the clip into the target slot.");
+    }
+
+    private async Task VerifySpaceFocusAsync(bool realMedia)
+    {
+        Pause();
+        var before = _project.MainTrack.Clips.ToArray();
+        Seek(_project.MainTrack.Id, 0);
+        UpdateLayout();
+        Require(DeleteButton.Focus(), "Delete button cannot focus.");
         DeleteButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
-        var remaining = original.Where(segment => segment.Id != original[1].Id).ToArray();
-        if (!_timeline.Segments.SequenceEqual(remaining) || !DeleteButton.IsKeyboardFocused || _playing)
-            throw new InvalidOperationException("Delete did not leave the next segment selected with the button focused.");
-
-        UIElement[] targets = [DeleteButton, SplitButton, UndoButton, PlayButton, BackButton, ForwardButton,
-            ZoomSlider, TimelineView, SettingsButton, ExportButton];
-        foreach (var target in targets.Where(target => target.IsEnabled))
+        Require(_project.MainTrack.Clips.Count == before.Length - 1 && DeleteButton.IsKeyboardFocused, "Delete did not preserve button focus.");
+        if (realMedia) await WaitForPreviewAsync(() => _mediaReady && _operation is null, "Preview failed after delete.");
+        var remaining = _project.MainTrack.Clips.ToArray();
+        UIElement[] targets = [DeleteButton, SplitButton, UndoButton, PlayButton, ZoomSlider, TimelineView, SettingsButton, ExportButton];
+        foreach (var target in targets.Where(t => t.IsEnabled))
         {
             RaiseEditorKey(Key.Space, target);
-            if (_playing != _mediaReady || _timer.IsEnabled != _mediaReady ||
-                !_timeline.Segments.SequenceEqual(remaining) || !target.IsKeyboardFocused)
-                throw new InvalidOperationException("Space did not exclusively start playback while preserving keyboard focus.");
+            Require(_playing == _mediaReady && _project.MainTrack.Clips.SequenceEqual(remaining), "Space activated a focused button.");
             RaiseEditorKey(Key.Space, target);
-            if (_playing || _timer.IsEnabled || !_timeline.Segments.SequenceEqual(remaining) || !target.IsKeyboardFocused)
-                throw new InvalidOperationException("Space did not exclusively pause playback while preserving keyboard focus.");
+            Require(!_playing && _project.MainTrack.Clips.SequenceEqual(remaining), "Space did not pause without editing.");
         }
-
-        var mediaReady = _mediaReady;
-        try
-        {
-            _mediaReady = false;
-            RaiseEditorKey(Key.Space, DeleteButton);
-            if (_playing || !_timeline.Segments.SequenceEqual(remaining))
-                throw new InvalidOperationException("Space activated a button while preview was unavailable.");
-        }
-        finally { _mediaReady = mediaReady; }
-
         SetBusy(true);
         try
         {
             UpdateLayout();
             RaiseEditorKey(Key.Space, CancelButton);
-            if (_playing || _operation!.IsCancellationRequested || !_timeline.Segments.SequenceEqual(remaining))
-                throw new InvalidOperationException("Space activated the cancel button during a busy operation.");
+            Require(!_operation!.IsCancellationRequested, "Space activated Cancel while busy.");
         }
         finally { SetBusy(false); }
-
         Restore(false);
-        if (!_timeline.Segments.SequenceEqual(original))
-            throw new InvalidOperationException("Space changed the edit history after deletion.");
-        StartupDiagnostics.Write("Space focus checks passed: delete then play/pause; focused buttons and zoom slider; unavailable preview; busy operation.");
+        Require(_project.MainTrack.Clips.SequenceEqual(before), "Space changed project history.");
     }
 
-    private static async Task WaitForPreviewAsync(Func<bool> ready, string failure)
+    internal async Task VerifyUiAsync()
     {
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (!ready() && DateTime.UtcNow < deadline) await Task.Delay(25);
-        if (!ready()) throw new InvalidOperationException(failure);
-    }
-
-    private async Task VerifyTimelineInteractionsAsync(bool hasVideoFixture)
-    {
+        Refresh();
+        Require(TimelineRegion.Visibility == Visibility.Collapsed && ExportButton.Visibility == Visibility.Collapsed, "Editing controls leaked into empty state.");
+        UiCapture.Save(WindowRoot, "smoke-empty.png");
+        var source = Environment.GetEnvironmentVariable("CLIP_UI_TEST_VIDEO");
+        var second = Environment.GetEnvironmentVariable("CLIP_UI_TEST_VIDEO_SECOND");
+        var realMedia = !string.IsNullOrWhiteSpace(source);
+        if (realMedia)
+        {
+            Require(!string.IsNullOrWhiteSpace(second), "Multi-track UI verification requires the second video fixture.");
+            await ImportFilesAsync([source!, second!]);
+            await WaitForPreviewAsync(() => _mediaReady && _operation is null, "Imported candidate did not become playable.");
+        }
+        else
+        {
+            foreach (var media in new[] { new MediaInfo("Sample A.mp4", 12, 960, 540, 30, 0, 1, "h264"),
+                new MediaInfo("Sample B.mp4", 3.2, 540, 960, 24, 0, null, "h264") })
+            {
+                var track = _project.Import(media);
+                AssetFor(media).StaticOnly = true;
+                ActivatePreview(_project.FindClip(track.Clips[0].Id)!.Value, false);
+            }
+        }
+        Require(_project.Tracks.Count == 3 && _project.MainTrack.Clips.Count == 0 && !ExportButton.IsEnabled &&
+            _activeTrackId == _project.Tracks[2].Id, "Imports must enter separate candidate tracks and preview the last candidate.");
+        UiCapture.Save(WindowRoot, "smoke-imported.png");
+        var candidate = _project.Tracks[1].Id;
+        var secondCandidate = _project.Tracks[2].Id;
+        Seek(candidate, 4); RaiseEditorKey(Key.S);
+        Seek(candidate, 8); RaiseEditorKey(Key.S);
+        Require(_project.FindTrack(candidate)!.Clips.Count == 3 && _project.MainTrack.Clips.Count == 0, "Candidate splits changed the main track.");
+        var firstId = _project.FindTrack(candidate)!.Clips[0].Id;
+        var secondId = _project.FindTrack(secondCandidate)!.Clips[0].Id;
+        await VerifyNativeDragAsync(firstId, _project.MainTrack.Id, 0, realMedia);
+        await VerifyNativeDragAsync(secondId, _project.MainTrack.Id, 1, realMedia);
+        Require(ExportButton.IsEnabled && _project.MainTrack.Clips.Select(c => c.Id).SequenceEqual(new[] { firstId, secondId }),
+            "Cross-track drops did not populate the export track.");
+        await VerifyNativeDragAsync(secondId, _project.MainTrack.Id, 0, realMedia);
+        Require(_project.MainTrack.Clips[0].Id == secondId, "Same-track reorder failed.");
+        Restore(false);
+        Seek(_project.MainTrack.Id, 1);
+        SpeedBox.Text = "1.25";
+        ApplySpeedClick(this, new RoutedEventArgs());
+        Require(_project.FindClip(firstId)!.Value.Clip.Speed == 1.25 && Math.Abs(_project.MainTrack.Duration - 6.4) < 0.02,
+            "Custom clip speed did not resize the main track.");
+        SpeedBox.Text = "0";
+        ApplySpeedClick(this, new RoutedEventArgs());
+        Require(SpeedErrorText.Visibility == Visibility.Visible && _project.FindClip(firstId)!.Value.Clip.Speed == 1.25,
+            "Invalid speed changed a clip or missed inline feedback.");
+        var count = _project.MainTrack.Clips.Count;
+        RaiseEditorKey(Key.X, SpeedBox, false);
+        RaiseEditorKey(Key.Delete, SpeedBox, false);
+        Require(_project.MainTrack.Clips.Count == count, "Speed input triggered deletion.");
+        Restore(false);
+        var mainDuration = _project.MainTrack.Duration;
+        Seek(candidate, 0);
+        var candidateId = _selected!.Value;
+        SpeedBox.Text = "0.5";
+        ApplySpeedClick(this, new RoutedEventArgs());
+        Require(_project.FindClip(candidateId)!.Value.Clip.Speed == 0.5 && _project.MainTrack.Duration == mainDuration,
+            "Candidate speed changed the main export duration.");
+        Restore(false);
         VerifyWheelNavigation();
-        Seek(1);
-        var count = _timeline.Segments.Count;
-        RaiseEditorKey(Key.S);
-        if (_playing || _timeline.Segments.Count != count + 1)
-            throw new InvalidOperationException("Paused S shortcut did not split while remaining paused.");
+
+        if (realMedia)
+        {
+            Seek(candidate, 0.8);
+            await WaitForPreviewAsync(() => _mediaReady, "Candidate preview did not open.");
+            TogglePlay();
+            await WaitForPreviewAsync(() => _playing && _pendingSeek is null && Preview.Position.TotalSeconds > 5, "Candidate preview clock did not advance.");
+            for (var i = 0; i < 2; i++)
+            {
+                var sourceBefore = Preview.Position.TotalSeconds;
+                var seekBefore = _seekStarted;
+                var clipsBefore = ActiveTrack.Clips.Count;
+                RaiseEditorKey(Key.S, i == 0 ? PlayButton : ZoomSlider);
+                Require(_playing && _timer.IsEnabled && ActiveTrack.Clips.Count == clipsBefore + 1 && _seekStarted == seekBefore,
+                    "Live split stopped, sought, or changed the wrong track.");
+                await WaitForPreviewAsync(() => Preview.Position.TotalSeconds > sourceBefore + 0.2, "Live split interrupted the native clock.");
+            }
+            Pause();
+            var lastCandidate = _project.FindTrack(candidate)!.Clips[^1].Id;
+            Seek(candidate, 3.8);
+            TogglePlay();
+            await WaitForPreviewAsync(() => _selected == lastCandidate && _playing, "Preview did not continue along the candidate track.");
+            Require(_activeTrackId == candidate && _project.MainTrack.Duration == mainDuration, "Candidate preview leaked into the main track.");
+            Pause();
+            Seek(_project.MainTrack.Id, 3.8);
+            TogglePlay();
+            await WaitForPreviewAsync(() => _selected == secondId && _currentAsset?.Media.Path == second && _mediaReady &&
+                _playing && Preview.Position.TotalSeconds > 0.2, "Preview failed to switch source while continuing on the main track.");
+            Pause();
+        }
+        Seek(candidate, 0.1);
+        count = ActiveTrack.Clips.Count;
         RaiseEditorKey(Key.X);
-        if (_timeline.Segments.Count != count) throw new InvalidOperationException("X did not delete the selected segment.");
+        Require(ActiveTrack.Clips.Count == count - 1, "X did not delete the selected candidate.");
         Restore(false);
         RaiseEditorKey(Key.Delete);
-        if (_timeline.Segments.Count != count) throw new InvalidOperationException("Delete shortcut regressed.");
+        Require(ActiveTrack.Clips.Count == count - 1, "Delete did not delete the selected candidate.");
         Restore(false);
-        Restore(false);
-        if (hasVideoFixture)
-            await WaitForPreviewAsync(() => _mediaReady && _operation is null, "Native video preview did not become ready.");
-        VerifySpacePlaybackFocus();
-        if (!hasVideoFixture)
-        {
-            StartupDiagnostics.Write("Timeline keyboard and wheel checks passed; no video fixture supplied for native playback verification.");
-            return;
-        }
+        await VerifySpaceFocusAsync(realMedia);
+        Seek(_project.MainTrack.Id, 0);
+        if (realMedia) await WaitForPreviewAsync(() => _mediaReady && _operation is null, "Main preview did not restore.");
+        UpdateLayout();
+        UiCapture.Save(WindowRoot, "smoke-multitrack.png");
+        UiCapture.Save(WindowRoot, "smoke-ui.png");
+        var width = Width; var height = Height;
+        Width = MinWidth; Height = MinHeight;
+        UpdateLayout();
+        Require(PreviewCanvas.ActualHeight >= 100, "Compact multitrack layout collapsed the preview.");
+        var speedBounds = SpeedBox.TransformToAncestor(SourcePane).TransformBounds(new Rect(SpeedBox.RenderSize));
+        Require(speedBounds.Bottom <= SourcePane.ActualHeight, "Compact layout hid the speed editor.");
+        UiCapture.Save(WindowRoot, "smoke-compact.png");
+        Width = width; Height = height;
+        StartupDiagnostics.Write("Multi-track verification passed: two candidate imports; native cross-track and same-track drag; main-only export selection; per-clip speed and input guards; live S / X / Delete; candidate continuation and cross-source main playback; Space focus and wheel navigation.");
+    }
 
-        Seek(1);
-        TogglePlay();
-        await WaitForPreviewAsync(() => _playing && _pendingSeek is null && Preview.Position.TotalSeconds > 1.2,
-            "Native preview clock did not advance before live splitting.");
-        for (var i = 0; i < 2; i++)
-        {
-            count = _timeline.Segments.Count;
-            var sourceBefore = Preview.Position.TotalSeconds;
-            var seekBefore = _seekStarted;
-            // S must work after starting playback or adjusting the zoom slider.
-            RaiseEditorKey(Key.S, i == 0 ? PlayButton : ZoomSlider);
-            if (!_playing || !_timer.IsEnabled || PlayGlyph.Kind != "Pause" || _timeline.Segments.Count != count + 1 ||
-                _seekStarted != seekBefore || _pendingSeek is not null)
-                throw new InvalidOperationException("S interrupted playback or sought the native media clock.");
-            VerifyWheelNavigation();
-            await WaitForPreviewAsync(() => Preview.Position.TotalSeconds > sourceBefore + 0.25,
-                "Native preview did not keep playing after S / wheel navigation.");
-            if (!_playing || _seekStarted != seekBefore)
-                throw new InvalidOperationException("Playback paused or sought across a contiguous split.");
-        }
-        Pause();
-        StartupDiagnostics.Write("Timeline interaction verification passed: routed S / X / Delete; anchored Shift / Ctrl wheel zoom; horizontal wheel; native media clock advanced across two live splits without pause or seek.");
+    private static class NativeMouse
+    {
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool SetCursorPos(int x, int y);
+        [DllImport("user32.dll")]
+        internal static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extraInfo);
     }
 }

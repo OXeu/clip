@@ -8,48 +8,81 @@ public sealed record ExportProgress(double Fraction, string Message);
 public sealed class ExportService(FfmpegTools tools)
 {
     private static string N(double value) => value.ToString("0.#########", CultureInfo.InvariantCulture);
+    private static VideoClip[] ConvertClips(MediaInfo media, IReadOnlyList<Segment> segments) =>
+        segments.Select(s => new VideoClip(s.Id, media, s.Start, s.End)).ToArray();
+    private static MediaInfo[] Sources(IReadOnlyList<VideoClip> clips) =>
+        clips.Select(c => c.Media).DistinctBy(m => m.Path, StringComparer.OrdinalIgnoreCase).ToArray();
 
-    public static string BuildFilter(MediaInfo media, IReadOnlyList<Segment> segments, ExportOptions options)
+    public static string BuildFilter(MediaInfo media, IReadOnlyList<Segment> segments, ExportOptions options) =>
+        BuildFilter(ConvertClips(media, segments), options);
+
+    public static string BuildTempoFilter(double speed)
     {
-        Validate(media, segments, options);
-        var (width, height) = options.GetDimensions(media);
+        VideoClip.ValidateSpeed(speed);
+        List<string> filters = [];
+        // Keep every stage within 0.5–2 so faster changes do not skip audio samples.
+        while (speed < 0.5) { filters.Add("atempo=0.5"); speed /= 0.5; }
+        while (speed > 2) { filters.Add("atempo=2"); speed /= 2; }
+        filters.Add($"atempo={N(speed)}");
+        return string.Join(",", filters);
+    }
+
+    public static string BuildFilter(IReadOnlyList<VideoClip> clips, ExportOptions options)
+    {
+        Validate(clips, options);
+        var (width, height) = options.GetDimensions(clips[0].Media);
+        var sources = Sources(clips);
+        var hasAudio = clips.Any(c => c.Media.HasAudio);
+        var fps = clips[0].Media.FrameRate;
         var graph = new StringBuilder();
-        graph.Append($"[0:{media.VideoStreamIndex}]setpts=PTS-STARTPTS,split={segments.Count}");
-        for (var i = 0; i < segments.Count; i++) graph.Append($"[vs{i}]");
-        graph.AppendLine(";");
-        if (media.HasAudio)
+        for (var input = 0; input < sources.Length; input++)
         {
-            graph.Append($"[0:{media.AudioStreamIndex}]asetpts=PTS-({N(media.VideoTimestampOffset)})/TB,aresample=48000:async=1:first_pts=0,apad,asplit={segments.Count}");
-            for (var i = 0; i < segments.Count; i++) graph.Append($"[as{i}]");
+            var source = sources[input];
+            var indexes = Enumerable.Range(0, clips.Count).Where(i => EditProject.SameSource(clips[i].Media, source)).ToArray();
+            graph.Append($"[{input}:{source.VideoStreamIndex}]setpts=PTS-STARTPTS,split={indexes.Length}");
+            foreach (var i in indexes) graph.Append($"[vs{i}]");
+            graph.AppendLine(";");
+            if (!source.HasAudio) continue;
+            graph.Append($"[{input}:{source.AudioStreamIndex}]asetpts=PTS-({N(source.VideoTimestampOffset)})/TB,aresample=48000:async=1:first_pts=0,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,apad,asplit={indexes.Length}");
+            foreach (var i in indexes) graph.Append($"[as{i}]");
             graph.AppendLine(";");
         }
-        for (var i = 0; i < segments.Count; i++)
+        for (var i = 0; i < clips.Count; i++)
         {
-            var s = segments[i];
-            graph.AppendLine($"[vs{i}]trim=start={N(s.Start)}:end={N(s.End)},setpts=PTS-STARTPTS[v{i}];");
-            if (media.HasAudio)
-                graph.AppendLine($"[as{i}]atrim=start={N(s.Start)}:end={N(s.End)},asetpts=PTS-STARTPTS[a{i}];");
+            var clip = clips[i];
+            graph.AppendLine($"[vs{i}]trim=start={N(clip.Start)}:end={N(clip.End)},settb=AVTB,setpts=(PTS-STARTPTS)/{N(clip.Speed)}," +
+                $"scale=w='trunc(ih*dar/2)*2':h=ih,setsar=1,scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2," +
+                $"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p," +
+                $"fps={N(fps)}:eof_action=pass,tpad=stop_mode=clone:stop_duration={N(Math.Max(1 / (clip.Media.FrameRate * clip.Speed), 2 / fps))},trim=duration={N(Math.Max(clip.Duration, 1 / fps))},settb=AVTB[v{i}];");
+            if (clip.Media.HasAudio)
+                graph.AppendLine($"[as{i}]atrim=start={N(clip.Start)}:end={N(clip.End)},asetpts=PTS-STARTPTS,{BuildTempoFilter(clip.Speed)},apad,atrim=duration={N(clip.Duration)}[a{i}];");
+            else if (hasAudio)
+                graph.AppendLine($"anullsrc=r=48000:cl=stereo,atrim=duration={N(clip.Duration)},asetpts=PTS-STARTPTS[a{i}];");
         }
-        for (var i = 0; i < segments.Count; i++)
+        for (var i = 0; i < clips.Count; i++)
         {
             graph.Append($"[v{i}]");
-            if (media.HasAudio) graph.Append($"[a{i}]");
+            if (hasAudio) graph.Append($"[a{i}]");
         }
-        graph.Append($"concat=n={segments.Count}:v=1:a={(media.HasAudio ? 1 : 0)}[joined]");
-        if (media.HasAudio) graph.Append("[audio]");
-        // Force square pixels, preserve display aspect ratio, and letterbox to the exact requested dimensions.
-        graph.AppendLine(";");
-        graph.Append($"[joined]scale=w='trunc(ih*dar/2)*2':h=ih,setsar=1,scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[video]");
+        graph.Append($"concat=n={clips.Count}:v=1:a={(hasAudio ? 1 : 0)}[video]");
+        if (hasAudio) graph.Append("[audio]");
         return graph.ToString();
     }
 
-    public static IReadOnlyList<string> BuildArguments(MediaInfo media, ExportOptions options, string filterFile, string output)
+    public static IReadOnlyList<string> BuildArguments(MediaInfo media, ExportOptions options, string filterFile, string output) =>
+        BuildArguments([VideoClip.Create(media)], options, filterFile, output);
+
+    public static IReadOnlyList<string> BuildArguments(IReadOnlyList<VideoClip> clips, ExportOptions options, string filterFile, string output)
     {
         List<string> arguments = ["-hide_banner", "-nostdin", "-y", "-loglevel", "warning", "-copyts", "-start_at_zero"];
-        // Frames are downloaded for CPU trim/concat/scale filters. NVDEC decoding and NVENC encoding remain accelerated.
-        if (options.HardwareDecode) arguments.AddRange(["-hwaccel", "cuda"]);
-        arguments.AddRange(["-i", media.Path, "-filter_complex_script", filterFile, "-map", "[video]"]);
-        if (media.HasAudio) arguments.AddRange(["-map", "[audio]", "-c:a", "aac", "-b:a", "192k"]);
+        foreach (var media in Sources(clips))
+        {
+            // Each input chooses NVDEC independently; CPU filters receive downloaded frames.
+            if (options.HardwareDecode) arguments.AddRange(["-hwaccel", "cuda"]);
+            arguments.AddRange(["-i", media.Path]);
+        }
+        arguments.AddRange(["-filter_complex_script", filterFile, "-map", "[video]"]);
+        if (clips.Any(c => c.Media.HasAudio)) arguments.AddRange(["-map", "[audio]", "-c:a", "aac", "-b:a", "192k"]);
         else arguments.Add("-an");
         if (options.Encoder == VideoEncoder.Nvidia)
             arguments.AddRange(["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", options.QualityValue.ToString(CultureInfo.InvariantCulture), "-b:v", "0"]);
@@ -60,17 +93,25 @@ public sealed class ExportService(FfmpegTools tools)
         return arguments;
     }
 
-    public async Task ExportAsync(MediaInfo media, IReadOnlyList<Segment> segments, ExportOptions options,
+    public Task ExportAsync(MediaInfo media, IReadOnlyList<Segment> segments, ExportOptions options,
+        string output, IProgress<ExportProgress>? progress = null, CancellationToken token = default) =>
+        ExportAsync(ConvertClips(media, segments), options, output, progress, token);
+
+    public Task ExportAsync(EditProject project, ExportOptions options, string output,
+        IProgress<ExportProgress>? progress = null, CancellationToken token = default) =>
+        ExportAsync(project.ExportClips(), options, output, progress, token);
+
+    public async Task ExportAsync(IReadOnlyList<VideoClip> clips, ExportOptions options,
         string output, IProgress<ExportProgress>? progress = null, CancellationToken token = default)
     {
-        var snapshot = segments.ToArray();
-        var filter = BuildFilter(media, snapshot, options);
+        var snapshot = clips.ToArray();
+        var filter = BuildFilter(snapshot, options);
         output = Path.GetFullPath(output);
-        if (string.Equals(output, Path.GetFullPath(media.Path), StringComparison.OrdinalIgnoreCase))
+        if (snapshot.Any(c => string.Equals(output, Path.GetFullPath(c.Media.Path), StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException("不能覆盖源视频，请选择不同的导出路径。");
         if (File.Exists(output)) throw new IOException("目标文件已存在，请选择新文件名。");
         if (!string.Equals(Path.GetExtension(output), ".mp4", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("第一期导出格式为 MP4，请使用 .mp4 扩展名。");
+            throw new ArgumentException("导出格式为 MP4，请使用 .mp4 扩展名。");
         var directory = Path.GetDirectoryName(output)!;
         if (!Directory.Exists(directory)) throw new DirectoryNotFoundException("导出目录不存在。");
         var id = Guid.NewGuid().ToString("N");
@@ -81,19 +122,18 @@ public sealed class ExportService(FfmpegTools tools)
             await File.WriteAllTextAsync(script, filter, new UTF8Encoding(false), token);
             var duration = snapshot.Sum(s => s.Duration);
             double lastFraction = 0;
-            progress?.Report(new(0, "正在编码…"));
-            var result = await ProcessRunner.RunAsync(tools.Ffmpeg, BuildArguments(media, options, script, staging), token, line =>
+            progress?.Report(new(0, "正在编码主轨…"));
+            var result = await ProcessRunner.RunAsync(tools.Ffmpeg, BuildArguments(snapshot, options, script, staging), token, line =>
             {
                 var fraction = lastFraction;
                 if (line.StartsWith("out_time_us=", StringComparison.Ordinal) &&
                     double.TryParse(line.AsSpan(12), CultureInfo.InvariantCulture, out var microseconds))
                     fraction = microseconds / 1_000_000 / duration;
-                // With -copyts some FFmpeg versions report out_time_us=0. Frame progress also covers those builds.
                 else if (line.StartsWith("frame=", StringComparison.Ordinal) &&
                     double.TryParse(line.AsSpan(6), CultureInfo.InvariantCulture, out var frames))
-                    fraction = frames / (duration * media.FrameRate);
+                    fraction = frames / (duration * snapshot[0].Media.FrameRate);
                 lastFraction = Math.Clamp(Math.Max(lastFraction, fraction), 0, 0.99);
-                progress?.Report(new(lastFraction, "正在编码并拼合保留片段…"));
+                progress?.Report(new(lastFraction, "正在变速并拼合主轨片段…"));
             });
             if (result.ExitCode != 0)
             {
@@ -103,14 +143,14 @@ public sealed class ExportService(FfmpegTools tools)
             }
             token.ThrowIfCancellationRequested();
             if (!File.Exists(staging) || new FileInfo(staging).Length == 0) throw new IOException("FFmpeg 未生成有效输出文件。");
+            var verified = await tools.ProbeAsync(staging, token);
+            var dimensions = options.GetDimensions(snapshot[0].Media);
+            if (verified.Width != dimensions.Width || verified.Height != dimensions.Height)
+                throw new IOException("导出视频的尺寸与请求不符，未发布输出文件。");
             File.Move(staging, output, overwrite: false);
             progress?.Report(new(1, "导出完成"));
         }
-        finally
-        {
-            TryDelete(script);
-            TryDelete(staging);
-        }
+        finally { TryDelete(script); TryDelete(staging); }
     }
 
     public async Task MakePreviewAsync(MediaInfo media, string output, bool hardwareDecode,
@@ -123,14 +163,15 @@ public sealed class ExportService(FfmpegTools tools)
         await ExportAsync(media, [Segment.Create(0, media.Duration)], options, output, progress, token);
     }
 
-    private static void Validate(MediaInfo media, IReadOnlyList<Segment> segments, ExportOptions options)
+    private static void Validate(IReadOnlyList<VideoClip> clips, ExportOptions options)
     {
-        if (segments.Count == 0) throw new InvalidOperationException("时间轴为空，没有可导出的片段。");
-        if (media.IsHdr) throw new NotSupportedException("第一期支持 SDR 视频。HDR 转 SDR 需要色调映射，请先将素材转换为 SDR。");
-        foreach (var s in segments)
-            if (!double.IsFinite(s.Start) || !double.IsFinite(s.End) || s.Start < 0 || s.End > media.Duration + 0.001 || s.Duration <= 0)
-                throw new ArgumentException("时间轴包含无效片段。");
-        options.GetDimensions(media);
+        if (clips.Count == 0) throw new InvalidOperationException("主轨为空，请先将候选片段拖入主轨。");
+        foreach (var clip in clips)
+        {
+            clip.Validate();
+            if (clip.Media.IsHdr) throw new NotSupportedException("HDR 转 SDR 需要色调映射，请先将素材转换为 SDR。");
+        }
+        options.GetDimensions(clips[0].Media);
     }
 
     private static void TryDelete(string path)

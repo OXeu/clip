@@ -23,8 +23,8 @@
       <TextBlock x:Name="DocumentTitle" Grid.Column="1" Text="新建剪辑" Foreground="{StaticResource ColorNeutralForeground3}"
                  VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,24,0" />
       <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-        <Button x:Name="ImportButton" Style="{StaticResource QuietButton}" Click="ImportClick" Visibility="Collapsed" Margin="0,0,8,0" ToolTip="更换视频 (Ctrl+O)">
-          <StackPanel Orientation="Horizontal"><local:RemixIcon Kind="Import" Margin="0,0,8,0" /><TextBlock Text="更换视频" /></StackPanel>
+        <Button x:Name="ImportButton" Style="{StaticResource QuietButton}" Click="ImportClick" Visibility="Collapsed" Margin="0,0,8,0" ToolTip="导入素材 (Ctrl+O)">
+          <StackPanel Orientation="Horizontal"><local:RemixIcon Kind="Import" Margin="0,0,8,0" /><TextBlock Text="导入素材" /></StackPanel>
         </Button>
         <Button x:Name="ExportButton" Style="{StaticResource PrimaryButton}" Click="ExportClick" Visibility="Collapsed" IsEnabled="False" Margin="0,0,12,0">
           <StackPanel Orientation="Horizontal"><local:RemixIcon Kind="Export" Margin="0,0,8,0" /><TextBlock Text="导出视频" /></StackPanel>
@@ -49,44 +49,54 @@
 
     <Grid Grid.Row="1" Margin="24,0,24,16">
       <Grid.ColumnDefinitions><ColumnDefinition x:Name="SourceColumn" Width="0" /><ColumnDefinition x:Name="SourceGapColumn" Width="0" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-      <Border x:Name="SourcePane" Style="{StaticResource Surface}" Padding="{StaticResource PanelPadding}" Visibility="Collapsed">
-        <Grid>
-          <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <Border x:Name="SourcePane" Style="{StaticResource Surface}" Padding="16" Visibility="Collapsed">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
           <StackPanel>
-            <TextBlock Text="素材" Style="{StaticResource SectionTitle}" Margin="0,0,0,16" />
-            <Border x:Name="SourceThumbnailFrame" Background="{StaticResource ColorNeutralBackground3}" CornerRadius="4" Height="108" ClipToBounds="True">
-              <Image x:Name="Thumbnail" Stretch="UniformToFill" />
-            </Border>
-            <TextBlock x:Name="FileNameText" FontWeight="SemiBold" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="40" Margin="0,12,0,4" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
-            <TextBlock x:Name="SourceSummaryText" Style="{StaticResource Caption}" />
-            <Expander x:Name="SourceDetailsExpander" Header="素材信息" Margin="0,16,0,0" IsExpanded="False" HorizontalAlignment="Stretch">
-              <TextBlock x:Name="MediaDetailsText" Style="{StaticResource Caption}" Margin="0,8,0,0" />
-            </Expander>
-          </StackPanel>
-          </ScrollViewer>
-            <StackPanel x:Name="SelectionPanel" Grid.Row="1" Visibility="Collapsed">
-              <Border Height="1" Background="{StaticResource ColorNeutralStroke2}" Margin="0,16,0,12" />
-              <TextBlock x:Name="SelectionText" Style="{StaticResource SectionTitle}" />
-              <Grid Margin="0,8,0,0">
+            <TextBlock Text="片段属性" Style="{StaticResource SectionTitle}" Margin="0,0,0,12" />
+            <TextBlock x:Name="FileNameText" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+            <StackPanel x:Name="SelectionPanel" Visibility="Collapsed">
+              <TextBlock x:Name="SelectionText" Style="{StaticResource Caption}" Margin="0,4,0,12" />
+              <Grid>
                 <TextBlock Text="时长" Style="{StaticResource Caption}" VerticalAlignment="Center" />
                 <TextBlock x:Name="LengthText" FontFamily="{StaticResource FontFamilyMono}" FontSize="14" HorizontalAlignment="Right" />
               </Grid>
-              <Expander x:Name="SelectionDetailsExpander" Header="时间信息" IsExpanded="False" Margin="0,12,0,0" HorizontalAlignment="Stretch">
+              <TextBlock Text="片段速度" Style="{StaticResource Caption}" Margin="0,12,0,4" />
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="8" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <ComboBox x:Name="SpeedBox" IsEditable="True" IsTextSearchEnabled="False" MinHeight="32" HorizontalAlignment="Stretch" PreviewKeyDown="SpeedKeyDown"
+                          AutomationProperties.Name="当前片段速度，0.1 到 8 倍，可输入任意小数">
+                  <ComboBoxItem Content="0.25×" /><ComboBoxItem Content="0.5×" /><ComboBoxItem Content="1×" />
+                  <ComboBoxItem Content="1.5×" /><ComboBoxItem Content="2×" /><ComboBoxItem Content="4×" /><ComboBoxItem Content="8×" />
+                </ComboBox>
+                <Button x:Name="ApplySpeedButton" Grid.Column="2" Content="应用" Style="{StaticResource CommandButton}" MinHeight="32" Padding="8,4" Click="ApplySpeedClick" />
+              </Grid>
+              <TextBlock Text="0.1–8× · 仅作用于此片段" Style="{StaticResource Caption}" Margin="0,4,0,0"
+                         ToolTip="导出时音频同步变速并保持音调。系统播放器在非 1 倍速预览时可能不播放声音。" />
+              <TextBlock x:Name="SpeedErrorText" TextWrapping="Wrap" Foreground="{StaticResource ColorDangerForeground}" Visibility="Collapsed" Margin="0,4,0,0" AutomationProperties.LiveSetting="Assertive" />
+              <Expander x:Name="SelectionDetailsExpander" Header="源视频入点 / 出点" IsExpanded="False" Margin="0,12,0,0" HorizontalAlignment="Stretch">
                 <StackPanel Margin="0,8,0,0">
-                  <TextBlock Text="源视频入点" Style="{StaticResource Caption}" /><TextBlock x:Name="InText" Style="{StaticResource TimeValue}" Margin="0,4,0,12" />
-                  <TextBlock Text="源视频出点" Style="{StaticResource Caption}" /><TextBlock x:Name="OutText" Style="{StaticResource TimeValue}" Margin="0,4,0,0" />
+                  <TextBlock x:Name="InText" Style="{StaticResource TimeValue}" /><TextBlock x:Name="OutText" Style="{StaticResource TimeValue}" Margin="0,4,0,0" />
                 </StackPanel>
               </Expander>
             </StackPanel>
-        </Grid>
+            <Expander x:Name="SourceDetailsExpander" Header="素材信息" Margin="0,8,0,0" IsExpanded="False" HorizontalAlignment="Stretch">
+              <StackPanel Margin="0,8,0,0">
+                <Border x:Name="SourceThumbnailFrame" Background="{StaticResource ColorNeutralBackground3}" CornerRadius="4" Height="72" ClipToBounds="True">
+                  <Image x:Name="Thumbnail" Stretch="Uniform" />
+                </Border>
+                <TextBlock x:Name="SourceSummaryText" Style="{StaticResource Caption}" Margin="0,8,0,0" />
+                <TextBlock x:Name="MediaDetailsText" Style="{StaticResource Caption}" Margin="0,4,0,0" />
+              </StackPanel>
+            </Expander>
+          </StackPanel>
+        </ScrollViewer>
       </Border>
 
       <Border Grid.Column="2" Style="{StaticResource Surface}" ClipToBounds="True">
         <Grid>
           <Grid.RowDefinitions><RowDefinition x:Name="PreviewHeaderRow" Height="0" /><RowDefinition Height="*" /><RowDefinition x:Name="PreviewFooterRow" Height="0" /></Grid.RowDefinitions>
           <Grid x:Name="PreviewHeader" Margin="20,0" Visibility="Collapsed">
-            <TextBlock Text="预览" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+            <TextBlock x:Name="PreviewTrackText" Text="预览" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
             <TextBlock x:Name="PreviewModeText" Style="{StaticResource Caption}" HorizontalAlignment="Right" VerticalAlignment="Center" />
           </Grid>
           <Grid x:Name="PreviewCanvas" Grid.Row="1" Background="{StaticResource ColorNeutralBackground1}">
@@ -98,13 +108,13 @@
                 <local:RemixIcon Kind="Film" Width="32" Height="32" Foreground="{StaticResource ColorBrandForeground}" HorizontalAlignment="Center" />
               </Border>
               <TextBlock Text="开始剪辑视频" FontSize="{StaticResource FontSizeHero}" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,24,0,8" />
-              <TextBlock Text="导入视频，在时间轴上留下需要的片段。" Style="{StaticResource SecondaryText}" TextAlignment="Center" />
+              <TextBlock Text="导入多个素材，从候选轨挑选片段拖入主轨。" Style="{StaticResource SecondaryText}" TextAlignment="Center" />
               <Button x:Name="EmptyImportButton" Content="导入视频" Click="ImportClick" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Center" Padding="24,8" Margin="0,24,0,12" />
-              <TextBlock Text="也可以将视频拖到这里 · Ctrl+O" Style="{StaticResource Caption}" HorizontalAlignment="Center" />
+              <TextBlock Text="也可以将多个视频拖到这里 · Ctrl+O" Style="{StaticResource Caption}" HorizontalAlignment="Center" />
             </StackPanel>
             <StackPanel x:Name="NoSegmentsOverlay" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
-              <TextBlock Text="时间轴为空" Foreground="{StaticResource ColorPreviewForeground}" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" />
-              <Button Content="撤销删除" Click="UndoClick" Style="{StaticResource CommandButton}" Margin="0,16,0,0" HorizontalAlignment="Center" />
+              <TextBlock Text="当前轨道为空" Foreground="{StaticResource ColorPreviewForeground}" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" />
+              <Button Content="撤销上一步" Click="UndoClick" Style="{StaticResource CommandButton}" Margin="0,16,0,0" HorizontalAlignment="Center" />
             </StackPanel>
           </Grid>
           <Grid x:Name="PreviewFooter" Grid.Row="2" Margin="20,0" Visibility="Collapsed">
@@ -144,13 +154,13 @@
             <Button Content="适应" Style="{StaticResource QuietButton}" Click="FitClick" Margin="12,0,0,0" />
           </StackPanel>
         </Grid>
-        <ScrollViewer x:Name="TimelineScroll" Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" SizeChanged="TimelineSizeChanged" PreviewMouseWheel="TimelineMouseWheel"
-                      ToolTip="滚轮：横向滚动 · Shift / Ctrl + 滚轮：以鼠标位置为中心缩放">
+        <ScrollViewer x:Name="TimelineScroll" Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" SizeChanged="TimelineSizeChanged" ScrollChanged="TimelineScrolled" PreviewMouseWheel="TimelineMouseWheel"
+                      ToolTip="拖拽：跨轨移动或轨内重排 · 滚轮：横向滚动 · Shift / Ctrl + 滚轮：缩放 · Alt + 滚轮 / 轨道名称区：上下滚动">
           <local:TimelineControl x:Name="TimelineView" AutomationProperties.Name="视频时间轴，按 S 分割，Delete 或 X 删除选中片段；滚轮滚动，Shift 加滚轮缩放" />
         </ScrollViewer>
         <Grid Grid.Row="2" Margin="20,0">
           <TextBlock x:Name="TimelineSummaryText" Style="{StaticResource Caption}" VerticalAlignment="Center" />
-          <TextBlock Text="滚轮滚动 · Shift + 滚轮缩放" Style="{StaticResource Caption}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+          <TextBlock Text="拖拽跨轨 · 滚轮滚动 · Shift 缩放" Style="{StaticResource Caption}" HorizontalAlignment="Right" VerticalAlignment="Center" />
         </Grid>
       </Grid>
     </Border>
