@@ -1,40 +1,71 @@
-<Window x:Class="Clip.Desktop.ExportWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="导出视频 · Clip" Style="{StaticResource {x:Type Window}}" Width="520" Height="700" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
-  <Grid Margin="28">
-    <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-    <StackPanel>
-      <TextBlock Text="让好片段，成为作品。" FontSize="23" FontWeight="SemiBold" />
-      <TextBlock Text="仅拼合时间轴中保留的片段 · MP4 / H.264" Style="{StaticResource MutedText}" Margin="0,10,0,24" />
-      <TextBlock Text="画面质量" Margin="0,0,0,7" />
-      <ComboBox x:Name="QualityBox" SelectedIndex="0">
-        <ComboBoxItem Content="原画 · 原分辨率 / 高质量重编码" /><ComboBoxItem Content="高清 · CQ / CRF 19" />
-        <ComboBoxItem Content="均衡 · CQ / CRF 23" /><ComboBoxItem Content="小体积 · CQ / CRF 28" />
-      </ComboBox>
-      <TextBlock Text="输出尺寸" Margin="0,17,0,7" />
-      <ComboBox x:Name="SizeBox" SelectedIndex="0" SelectionChanged="SizeSelectionChanged">
-        <ComboBoxItem Content="跟随源视频" /><ComboBoxItem Content="1080p · 1920 × 1080" /><ComboBoxItem Content="720p · 1280 × 720" />
-        <ComboBoxItem Content="2160p · 3840 × 2160" /><ComboBoxItem Content="自定义宽高" />
-      </ComboBox>
-      <Grid x:Name="DimensionsPanel" Margin="0,10,0,0" IsEnabled="False">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-        <TextBox x:Name="WidthBox" AutomationProperties.Name="输出宽度" />
-        <TextBlock Grid.Column="1" Text="×" HorizontalAlignment="Center" VerticalAlignment="Center" />
-        <TextBox x:Name="HeightBox" Grid.Column="2" AutomationProperties.Name="输出高度" />
+<Window x:Class="Clip.Desktop.ExportWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Clip.Desktop"
+        Title="导出视频" Style="{StaticResource ClipWindow}" Width="520" Height="660"
+        MinWidth="500" MinHeight="580" ResizeMode="CanResize" WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+  <Grid x:Name="DialogRoot" Background="{StaticResource ColorNeutralBackground3}">
+    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+    <StackPanel Margin="24,24,24,20">
+      <TextBlock Text="导出视频" FontSize="24" FontWeight="SemiBold" />
+      <TextBlock Text="将保留的片段合并为一个视频。" Style="{StaticResource SecondaryText}" Margin="0,8,0,0" />
+    </StackPanel>
+    <ScrollViewer x:Name="ExportScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Margin="24,0,24,24">
+        <Border Style="{StaticResource Surface}" Padding="16" Margin="0,0,0,24">
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <Border Width="40" Height="40" CornerRadius="4" Background="{StaticResource ColorBrandBackground2}" Margin="0,0,12,0">
+              <local:RemixIcon Kind="Film" Foreground="{StaticResource ColorBrandForeground}" />
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+              <TextBlock x:Name="SourceNameText" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+              <TextBlock x:Name="SourceInfoText" Style="{StaticResource Caption}" Margin="0,4,0,0" />
+            </StackPanel>
+          </Grid>
+        </Border>
+        <TextBlock Text="画面质量" Style="{StaticResource FieldLabel}" />
+        <ComboBox x:Name="QualityBox" SelectedIndex="0" MinHeight="36" HorizontalAlignment="Stretch" SelectionChanged="QualitySelectionChanged" AutomationProperties.Name="画面质量">
+          <ComboBoxItem Content="原画 · 保留源分辨率" /><ComboBoxItem Content="高清" />
+          <ComboBoxItem Content="均衡" /><ComboBoxItem Content="较小文件" />
+        </ComboBox>
+        <TextBlock x:Name="QualityDescriptionText" Style="{StaticResource Caption}" Margin="0,8,0,24" />
+        <TextBlock Text="输出尺寸" Style="{StaticResource FieldLabel}" />
+        <ComboBox x:Name="SizeBox" SelectedIndex="0" MinHeight="36" HorizontalAlignment="Stretch" SelectionChanged="SizeSelectionChanged" AutomationProperties.Name="输出尺寸">
+          <ComboBoxItem Content="跟随源视频" /><ComboBoxItem Content="1080p" /><ComboBoxItem Content="720p" />
+          <ComboBoxItem Content="4K" /><ComboBoxItem Content="自定义尺寸" />
+        </ComboBox>
+        <Grid x:Name="DimensionsPanel" Margin="0,12,0,0" Visibility="Collapsed">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="32" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+          <StackPanel><TextBlock Text="宽度 (px)" Style="{StaticResource Caption}" Margin="0,0,0,4" /><TextBox x:Name="WidthBox" MinHeight="36" TextChanged="DimensionsEdited" AutomationProperties.Name="输出宽度" /></StackPanel>
+          <TextBlock Grid.Column="1" Text="×" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,10" />
+          <StackPanel Grid.Column="2"><TextBlock Text="高度 (px)" Style="{StaticResource Caption}" Margin="0,0,0,4" /><TextBox x:Name="HeightBox" MinHeight="36" TextChanged="DimensionsEdited" AutomationProperties.Name="输出高度" /></StackPanel>
+        </Grid>
+        <TextBlock x:Name="SizeHintText" Style="{StaticResource Caption}" Margin="0,8,0,24" />
+        <Expander x:Name="AdvancedExpander" Header="高级设置" IsExpanded="False" HorizontalAlignment="Stretch" Expanded="AdvancedExpanded">
+          <StackPanel Margin="0,16,0,0">
+            <TextBlock Text="视频编码器" Style="{StaticResource FieldLabel}" />
+            <ComboBox x:Name="EncoderBox" SelectedIndex="0" MinHeight="36" HorizontalAlignment="Stretch" AutomationProperties.Name="视频编码器">
+              <ComboBoxItem x:Name="NvidiaItem" Content="NVIDIA NVENC · 硬件编码" /><ComboBoxItem Content="CPU · 软件编码" />
+            </ComboBox>
+            <CheckBox x:Name="HardwareDecodeBox" Content="NVIDIA 硬件解码" Margin="0,16,0,0" />
+            <TextBlock x:Name="HardwareHint" Style="{StaticResource Caption}" Margin="0,8,0,0" />
+            <TextBlock Text="视频 H.264 · 音频 AAC · 保持画面比例" Style="{StaticResource Caption}" Margin="0,16,0,0" />
+          </StackPanel>
+        </Expander>
+        <Border x:Name="ValidationPanel" Visibility="Collapsed" Background="{StaticResource ColorDangerBackground}" CornerRadius="4" Padding="12" Margin="0,16,0,0">
+          <TextBlock x:Name="ValidationText" TextWrapping="Wrap" Foreground="{StaticResource ColorDangerForeground}" AutomationProperties.LiveSetting="Assertive" />
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+    <Border Grid.Row="2" Background="{StaticResource ColorNeutralBackground1}" BorderBrush="{StaticResource ColorNeutralStroke2}" BorderThickness="0,1,0,0" Padding="24,16">
+      <Grid>
+        <TextBlock Text="MP4" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+          <Button Content="取消" Style="{StaticResource CommandButton}" IsCancel="True" Margin="0,0,8,0" />
+          <Button Content="选择保存位置" Style="{StaticResource PrimaryButton}" Click="ConfirmClick" IsDefault="True" />
+        </StackPanel>
       </Grid>
-      <TextBlock Text="保持画面比例，尺寸不匹配时补黑边。" Style="{StaticResource MutedText}" FontSize="11" Margin="0,6,0,0" />
-      <TextBlock Text="视频编码器" Margin="0,17,0,7" />
-      <ComboBox x:Name="EncoderBox" SelectedIndex="0">
-        <ComboBoxItem x:Name="NvidiaItem" Content="NVIDIA NVENC · 硬件编码" /><ComboBoxItem Content="CPU · H.264 软件编码" />
-      </ComboBox>
-      <CheckBox x:Name="HardwareDecodeBox" Content="使用 NVIDIA NVDEC / CUDA 硬件解码" Margin="0,16,0,0" />
-      <TextBlock x:Name="HardwareHint" Style="{StaticResource MutedText}" FontSize="11" Margin="0,8,0,0" />
-      <Border Background="{StaticResource SurfaceBrush}" Padding="12" CornerRadius="5" Margin="0,18,0,0">
-        <TextBlock Text="“原画”保留原分辨率，以高质量重新编码。精确切割不受关键帧限制，但不等同于无损复制。文件大小由画面内容和质量决定。" Style="{StaticResource MutedText}" FontSize="11" />
-      </Border>
-    </StackPanel>
-    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
-      <Button Content="取消" IsCancel="True" Margin="0,0,8,0" />
-      <Button Content="选择位置并导出 ↗" Style="{StaticResource AccentButton}" Click="ConfirmClick" IsDefault="True" />
-    </StackPanel>
+    </Border>
   </Grid>
 </Window>

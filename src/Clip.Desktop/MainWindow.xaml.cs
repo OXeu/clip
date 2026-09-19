@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Clip.Core;
@@ -19,10 +20,11 @@ public partial class MainWindow : Window
     private readonly string[] _arguments;
     private readonly TaskCompletionSource _initialization = new(TaskCreationOptions.RunContinuationsAsynchronously);
     internal Task InitializationCompleted => _initialization.Task;
+    internal MediaInfo? CurrentMedia => _timeline.Media;
     private readonly string _cacheDirectory = Path.Combine(Path.GetTempPath(), "Clip", Guid.NewGuid().ToString("N"));
     private FfmpegTools _tools = FfmpegTools.Discover();
     private CancellationTokenSource? _operation;
-    private bool _hasNvidia;
+    private NvidiaEncoderProbeResult? _nvidiaProbe;
     internal bool ToolsReady { get; private set; }
     private bool _mediaReady;
     private bool _playing;
@@ -80,10 +82,23 @@ public partial class MainWindow : Window
     private async Task VerifyToolsAsync(CancellationToken token)
     {
         await _tools.VerifyAsync(token);
-        _hasNvidia = await _tools.CanEncodeNvidiaAsync(token);
+        var probe = await _tools.ProbeNvidiaAsync(token);
+        ApplyNvidiaProbe(probe);
         ToolsReady = true;
-        HardwareText.Text = _hasNvidia ? "● NVIDIA NVENC 可用" : "● FFmpeg 就绪 · CPU 编码";
     }
+
+    private void ApplyNvidiaProbe(NvidiaEncoderProbeResult? probe)
+    {
+        _nvidiaProbe = probe;
+        HardwareText.Text = probe?.IsAvailable == true ? "● NVIDIA NVENC 可用" : "● FFmpeg 就绪 · CPU 编码";
+        HardwareText.ToolTip = probe is null ? null : $"{probe.Summary}\n设置 → NVIDIA 检测详情…";
+        if (probe is not null) StartupDiagnostics.Write(NvidiaDiagnostics());
+    }
+
+    private string NvidiaDiagnostics() => _nvidiaProbe is not { } probe ? "尚未完成 NVIDIA NVENC 检测。" :
+        $"{probe.Summary}\n\nFFmpeg：{_tools.Ffmpeg}\n退出码：{probe.ExitCode}\n" +
+        $"检测参数：{string.Join(" ", FfmpegTools.BuildNvidiaProbeArguments())}\n\n" +
+        $"{(string.IsNullOrWhiteSpace(probe.StandardError) ? "FFmpeg 未输出错误详情。" : probe.StandardError)}";
 
     private async void ImportClick(object sender, RoutedEventArgs e)
     {
@@ -123,17 +138,21 @@ public partial class MainWindow : Window
             catch (OperationCanceledException) { throw; }
             catch (Exception) { /* Metadata is sufficient for editing even when thumbnail generation fails. */ }
             _timeline.Load(media);
-            _selected = _timeline.Segments[0].Id;
+            _selected = null;
             _position = 0;
             _usingProxy = false;
             _previewRetryPending = false;
             _mediaReady = false;
             Thumbnail.Source = thumbnail;
+            PreviewPoster.Source = thumbnail;
             FileNameText.Text = media.FileName;
+            DocumentTitle.Text = media.FileName;
+            SourceSummaryText.Text = $"{media.Width} × {media.Height} · {media.Duration:0.#} 秒";
+            SourceDetailsExpander.IsExpanded = SelectionDetailsExpander.IsExpanded = false;
             MediaDetailsText.Text = $"{media.Width} × {media.Height}  ·  {media.FrameRate:0.##} fps\n{TimelineControl.FormatTime(media.Duration)}\n{media.Codec.ToUpperInvariant()} · {(media.HasAudio ? "含音频" : "无音频")}";
             Title = $"{media.FileName} — Clip";
             EmptyPreview.Visibility = Visibility.Collapsed;
-            PreviewModeText.Text = "原始视频 · 适应画面";
+            PreviewModeText.Text = "原始素材";
             Preview.Close();
             Preview.Source = new Uri(media.Path);
             Preview.Play();
@@ -161,7 +180,8 @@ public partial class MainWindow : Window
         Pause();
         if (_usingProxy || _timeline.Media is not { } media || _closed)
         {
-            StatusText.Text = "预览不可用。请安装 Windows 媒体功能包；仍可编辑和导出。";
+            PreviewModeText.Text = "静态预览";
+            StatusText.Text = "系统播放器不可用，正在显示首帧；仍可剪辑和导出。";
             Refresh();
             return;
         }
@@ -182,7 +202,7 @@ public partial class MainWindow : Window
             Preview.Source = new Uri(output);
             Preview.Play();
             Preview.Pause();
-            PreviewModeText.Text = "兼容预览 · 导出使用源视频";
+            PreviewModeText.Text = "兼容预览";
             StatusText.Text = "兼容预览已生成";
         }
         catch (OperationCanceledException) { StatusText.Text = "已取消预览生成，仍可剪辑和导出"; }
@@ -223,7 +243,7 @@ public partial class MainWindow : Window
         _playing = true;
         Preview.Play();
         _timer.Start();
-        PlayButton.Content = "Ⅱ";
+        PlayGlyph.Kind = "Pause";
     }
 
     private void Pause()
@@ -231,7 +251,7 @@ public partial class MainWindow : Window
         _playing = false;
         _timer.Stop();
         Preview.Pause();
-        PlayButton.Content = "▶";
+        PlayGlyph.Kind = "Play";
     }
 
     private void Tick(object? sender, EventArgs e)
@@ -316,6 +336,7 @@ public partial class MainWindow : Window
         _position = Math.Clamp(_position, 0, _timeline.Duration);
         _selected = _timeline.Locate(_position)?.Segment.Id;
         Seek(_position);
+        StatusText.Text = redo ? "已重做上一步操作" : "已撤销上一步操作";
         Refresh();
     }
 
@@ -326,7 +347,7 @@ public partial class MainWindow : Window
     {
         if (_operation is not null || _timeline.Media is not { } media || _timeline.Segments.Count == 0) return;
         Pause();
-        var options = new ExportWindow(media, _hasNvidia) { Owner = this };
+        var options = new ExportWindow(media, _nvidiaProbe?.IsAvailable == true, _nvidiaProbe?.Summary) { Owner = this };
         if (options.ShowDialog() != true) return;
         var save = new SaveFileDialog
         {
@@ -362,6 +383,19 @@ public partial class MainWindow : Window
     {
         var ready = _operation is null;
         var any = _timeline.Segments.Count > 0;
+        var hasMedia = _timeline.Media is not null;
+        var mediaVisibility = hasMedia ? Visibility.Visible : Visibility.Collapsed;
+        SourcePane.Visibility = TimelineRegion.Visibility = ImportButton.Visibility = ExportButton.Visibility = mediaVisibility;
+        PreviewHeader.Visibility = PreviewFooter.Visibility = mediaVisibility;
+        SourceColumn.Width = new GridLength(hasMedia ? 224 : 0);
+        SourceGapColumn.Width = new GridLength(hasMedia ? 20 : 0);
+        TimelineRow.Height = new GridLength(hasMedia ? 252 : 0);
+        PreviewHeaderRow.Height = new GridLength(hasMedia ? 48 : 0);
+        PreviewFooterRow.Height = new GridLength(hasMedia ? 64 : 0);
+        EmptyPreview.Visibility = hasMedia ? Visibility.Collapsed : Visibility.Visible;
+        NoSegmentsOverlay.Visibility = hasMedia && !any ? Visibility.Visible : Visibility.Collapsed;
+        PreviewCanvas.Background = (Brush)FindResource(hasMedia ? "ColorPreviewBackground" : "ColorNeutralBackground1");
+        PreviewPoster.Visibility = hasMedia && any && !_mediaReady ? Visibility.Visible : Visibility.Collapsed;
         Preview.Visibility = any ? Visibility.Visible : Visibility.Hidden;
         ExportButton.IsEnabled = SplitButton.IsEnabled = ready && any;
         PlayButton.IsEnabled = ready && any && _mediaReady;
@@ -375,11 +409,14 @@ public partial class MainWindow : Window
         TimelineView.SelectedId = _selected;
         TimelineView.IsEnabled = ready;
         var selected = _timeline.Segments.Where(s => s.Id == _selected).ToArray();
+        SelectionPanel.Visibility = DeleteButton.Visibility = selected.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        SourceThumbnailFrame.Height = selected.Length > 0 ? 72 : 108;
         SelectionText.Text = selected.Length > 0 ? $"片段 {_timeline.Segments.ToList().FindIndex(s => s.Id == _selected) + 1:00}" : "尚未选择片段";
         InText.Text = selected.Length > 0 ? TimelineControl.FormatTime(selected[0].Start) : "—";
         OutText.Text = selected.Length > 0 ? TimelineControl.FormatTime(selected[0].End) : "—";
         LengthText.Text = selected.Length > 0 ? TimelineControl.FormatTime(selected[0].Duration) : "—";
-        TimelineSummaryText.Text = $"{_timeline.Segments.Count} 个片段  ·  保留 {_timeline.Duration:0.##} s  ·  已移除 {Math.Max(0, (_timeline.Media?.Duration ?? 0) - _timeline.Duration):0.##} s";
+        TimelineSummaryText.Text = $"{_timeline.Segments.Count} 个片段 · 保留 {_timeline.Duration:0.##} 秒";
+        TimelineSummaryText.ToolTip = $"已移除 {Math.Max(0, (_timeline.Media?.Duration ?? 0) - _timeline.Duration):0.##} 秒；原文件不会被修改。";
         RefreshPosition();
     }
 
@@ -401,6 +438,7 @@ public partial class MainWindow : Window
         }
         else { _operation?.Dispose(); _operation = null; }
         ImportButton.IsEnabled = SettingsButton.IsEnabled = !busy;
+        EmptyImportButton.IsEnabled = !busy;
         CancelButton.Visibility = OperationProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         if (message is not null) StatusText.Text = message;
         Refresh();
@@ -414,6 +452,7 @@ public partial class MainWindow : Window
     private void ShowError(Exception exception)
     {
         StatusText.Text = exception.Message.Split('\n')[0];
+        if (App.IsAutomatedRun) throw new InvalidOperationException("Automated UI operation failed.", exception);
         if (!_closed) MessageBox.Show(this, exception.Message, "Clip · 操作未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
@@ -430,6 +469,8 @@ public partial class MainWindow : Window
         if (picker.ShowDialog(this) != true) return;
         SetBusy(true, "验证 FFmpeg…");
         var old = _tools;
+        var oldProbe = _nvidiaProbe;
+        var oldReady = ToolsReady;
         try
         {
             _tools = FfmpegTools.Discover(picker.FolderName);
@@ -437,10 +478,36 @@ public partial class MainWindow : Window
             new Settings(picker.FolderName).Save();
             StatusText.Text = "FFmpeg 配置已保存";
         }
-        catch (OperationCanceledException) { _tools = old; }
-        catch (Exception exception) { _tools = old; ShowError(exception); }
+        catch (OperationCanceledException) { RestoreTools(); }
+        catch (Exception exception) { RestoreTools(); ShowError(exception); }
+        finally { SetBusy(false); }
+
+        void RestoreTools()
+        {
+            _tools = old;
+            ToolsReady = oldReady;
+            ApplyNvidiaProbe(oldProbe);
+            if (!oldReady) HardwareText.Text = "● FFmpeg 未就绪";
+        }
+    }
+
+    private async void RetryNvidiaClick(object sender, RoutedEventArgs e)
+    {
+        if (_operation is not null) return;
+        SetBusy(true, "正在重新检测 NVIDIA NVENC…");
+        try
+        {
+            await VerifyToolsAsync(_operation!.Token);
+            StatusText.Text = _nvidiaProbe!.Summary;
+        }
+        catch (OperationCanceledException) { StatusText.Text = "已取消检测"; }
+        catch (Exception exception) { ShowError(exception); }
         finally { SetBusy(false); }
     }
+
+    private void NvidiaDiagnosticsClick(object sender, RoutedEventArgs e) =>
+        MessageBox.Show(this, NvidiaDiagnostics() + $"\n\n诊断日志：{StartupDiagnostics.LogPath ?? "日志目录不可写"}",
+            "NVIDIA NVENC 检测详情", MessageBoxButton.OK, MessageBoxImage.Information);
 
     private void RegisterShellClick(object sender, RoutedEventArgs e)
     {
@@ -456,7 +523,8 @@ public partial class MainWindow : Window
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
-        if (_operation is not null || Keyboard.FocusedElement is TextBoxBase or ComboBox or ComboBoxItem or MenuItem) return;
+        if (_operation is not null || Keyboard.FocusedElement is TextBoxBase or ComboBox or ComboBoxItem or MenuItem || ZoomSlider.IsKeyboardFocusWithin) return;
+        if (e.Key == Key.Space && Keyboard.FocusedElement is ButtonBase) return;
         var control = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
         if (control && e.Key == Key.O) ImportClick(sender, e);
         else if (control && e.Key == Key.Z) Restore(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
@@ -524,21 +592,56 @@ public partial class MainWindow : Window
         catch (UnauthorizedAccessException) { }
     }
 
-    internal void VerifyUi()
+    internal async Task VerifyUiAsync()
     {
-        _timeline.Load(new MediaInfo("smoke.mp4", 12, 1920, 1080, 30, 0, 1, "h264"));
-        _timeline.Split(4);
-        _timeline.Split(8);
+        Refresh();
+        if (TimelineRegion.Visibility != Visibility.Collapsed || SourcePane.Visibility != Visibility.Collapsed ||
+            ExportButton.Visibility != Visibility.Collapsed || EmptyPreview.Visibility != Visibility.Visible)
+            throw new InvalidOperationException("Empty state disclosed editing controls too early.");
+        UiCapture.Save(WindowRoot, "smoke-empty.png");
+        var source = Environment.GetEnvironmentVariable("CLIP_UI_TEST_VIDEO");
+        if (!string.IsNullOrWhiteSpace(source)) await ImportAsync(source);
+        else
+        {
+            _timeline.Load(new MediaInfo("UI sample.mp4", 12, 1920, 1080, 30, 0, 1, "h264"));
+            FileNameText.Text = DocumentTitle.Text = "UI sample.mp4";
+            SourceSummaryText.Text = "1920 × 1080 · 12 秒";
+            Refresh();
+        }
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (_operation is not null && DateTime.UtcNow < deadline) await Task.Delay(50);
+        if (_operation is not null || _timeline.Media is null || TimelineRegion.Visibility != Visibility.Visible ||
+            SelectionPanel.Visibility != Visibility.Collapsed || SourceDetailsExpander.IsExpanded)
+            throw new InvalidOperationException("Import state did not disclose the correct controls.");
+        UiCapture.Save(WindowRoot, "smoke-imported.png");
+        Seek(4);
+        Split();
+        Seek(8);
+        Split();
         _selected = _timeline.Segments[1].Id;
         Refresh();
+        if (SelectionPanel.Visibility != Visibility.Visible || DeleteButton.Visibility != Visibility.Visible ||
+            SelectionDetailsExpander.IsExpanded) throw new InvalidOperationException("Selection disclosure failed.");
         DeleteSelected();
+        if (_timeline.Segments.Count != 2 || Math.Abs(_timeline.Duration - 8) > 0.1)
+            throw new InvalidOperationException("Delete did not remove the selected range.");
         Restore(false);
+        if (_timeline.Segments.Count != 3) throw new InvalidOperationException("Undo did not restore the selected range.");
+        if (StatusText.Text != "已撤销上一步操作") throw new InvalidOperationException("Undo left stale operation feedback.");
+        _selected = _timeline.Segments[1].Id;
+        Refresh();
+        UiCapture.Save(WindowRoot, "smoke-ui.png");
+        var previousWidth = Width;
+        var previousHeight = Height;
+        Width = MinWidth;
+        Height = MinHeight;
         UpdateLayout();
-        var bitmap = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
-        bitmap.Render(this);
-        var encoder = new PngBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        using var stream = File.Create(Path.Combine(AppContext.BaseDirectory, "smoke-ui.png"));
-        encoder.Save(stream);
+        if (PreviewCanvas.ActualHeight < 100) throw new InvalidOperationException("Compact layout collapsed the preview.");
+        var selectionBounds = LengthText.TransformToAncestor(SourcePane).TransformBounds(new Rect(LengthText.RenderSize));
+        if (selectionBounds.Top < 0 || selectionBounds.Bottom > SourcePane.ActualHeight)
+            throw new InvalidOperationException("Compact layout hid the selected clip duration.");
+        UiCapture.Save(WindowRoot, "smoke-compact.png");
+        Width = previousWidth;
+        Height = previousHeight;
     }
 }

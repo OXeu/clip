@@ -28,7 +28,7 @@
 | 高清 / 均衡 / 小体积 | CQ/CRF 19 / 23 / 28，数值越低质量越高、文件通常越大 |
 | 输出尺寸 | 跟随源视频、1080p、720p、2160p、自定义偶数宽高；竖屏素材的预设随方向调整 |
 | 比例不一致 | 保持显示比例并补黑边，不拉伸画面 |
-| NVIDIA NVENC | `h264_nvenc` 编码；初始化时实际编码一帧检测显卡可用性 |
+| NVIDIA NVENC | `h264_nvenc` 编码；初始化时用 640×360、YUV420P 画面实际编码一帧检测可用性 |
 | NVIDIA 硬件解码 | FFmpeg `-hwaccel cuda`；可单独关闭，保留 NVENC 编码 |
 
 “原画”表示保留原分辨率并高质量重新编码，**不是无损码流复制**。任意位置精确切割使用 `trim / atrim + concat`，不受关键帧限制；导出仅保留编辑后的区间。导出音轨为 AAC 192 kbps。只导出首个普通视频轨道和首个音频轨道，不导出封面、字幕及其他音轨。目标尺寸是像素宽高，不是指定文件大小。
@@ -95,6 +95,14 @@ CLIP_FFMPEG_DIR=/path/to/ffmpeg/bin dotnet run --project tests/Clip.Tests -c Rel
 请先把完整发布包解压到新目录，再运行 `Clip.exe`。应用会在 `%LOCALAPPDATA%\Clip\logs` 写入每次启动的阶段日志，包含完整异常；WPF 初始化前的异常也会记录并显示错误对话框。
 
 如果仍然没有窗口，双击程序旁的 `Start-Clip-Diagnostics.cmd`。它会启动程序并收集启动退出码、.NET 宿主加载日志、应用日志及本次 Clip 相关的 Windows 应用程序事件，随后打开诊断报告。报告保存在 `%LOCALAPPDATA%\Clip\diagnostics`，不会要求安装额外运行时或修改系统设置。启动器只为本次诊断 PowerShell 进程设置脚本执行选项，不更改全局执行策略。
+
+### NVENC 检测失败，但其他软件能使用 NVIDIA
+
+旧版使用 128×128 的测试画面，低于部分 NVIDIA 显卡的 NVENC 最小编码尺寸，会把可用显卡误判为不可用。现在改用 640×360 的 YUV420P 画面，并匹配导出使用的编码参数；仍以实际编码成功为准。
+
+在“设置 → 重新检测 NVIDIA NVENC”中重试。“设置 → NVIDIA 检测详情…”会显示当前 FFmpeg 路径、检测参数、退出码和原始错误；这些信息也会写入 `%LOCALAPPDATA%\Clip\logs` 下的启动日志。
+
+若错误为 `Driver does not support the required nvenc API version`，表示当前 FFmpeg 所需的 NVENC API 高于驱动支持的版本。可按错误中的要求更新驱动，或在设置中选择与现有驱动兼容且包含 `h264_nvenc` 的 FFmpeg 目录。其他剪辑软件可能使用不同版本的编码接口，因此其可用性不能保证当前 FFmpeg 也兼容。检测失败时仍可选择 CPU 导出。
 
 ## GitHub Actions 与缓存
 

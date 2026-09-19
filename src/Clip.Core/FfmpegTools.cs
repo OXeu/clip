@@ -69,14 +69,22 @@ public sealed record FfmpegTools(string Ffmpeg, string Ffprobe)
             Text(video, "color_transfer") is "smpte2084" or "arib-std-b67");
     }
 
-    public async Task<bool> CanEncodeNvidiaAsync(CancellationToken token = default)
+    public static IReadOnlyList<string> BuildNvidiaProbeArguments() =>
+        // Turing and newer NVENC implementations reject tiny inputs such as 128x128.
+        // Use an ordinary SDR frame and the same encoding settings as a balanced export.
+        ["-hide_banner", "-v", "error", "-nostdin", "-f", "lavfi", "-i", "color=c=black:s=640x360:r=30,format=yuv420p",
+         "-frames:v", "1", "-an", "-c:v", "h264_nvenc", "-pix_fmt", "yuv420p",
+         "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "23", "-b:v", "0", "-f", "null", "-"];
+
+    public async Task<NvidiaEncoderProbeResult> ProbeNvidiaAsync(CancellationToken token = default)
     {
         // An encoder listing only proves that FFmpeg was built with NVENC, not that a GPU/driver works.
-        var result = await ProcessRunner.RunAsync(Ffmpeg,
-            ["-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=128x128:r=30",
-             "-frames:v", "1", "-an", "-c:v", "h264_nvenc", "-f", "null", "-"], token);
-        return result.ExitCode == 0;
+        var result = await ProcessRunner.RunAsync(Ffmpeg, BuildNvidiaProbeArguments(), token);
+        return new(result.ExitCode, result.StandardError);
     }
+
+    public async Task<bool> CanEncodeNvidiaAsync(CancellationToken token = default) =>
+        (await ProbeNvidiaAsync(token)).IsAvailable;
 
     public async Task MakeThumbnailAsync(MediaInfo media, string output, CancellationToken token = default)
     {

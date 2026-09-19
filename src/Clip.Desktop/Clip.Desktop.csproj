@@ -15,4 +15,9 @@
   <ItemGroup>
     <ProjectReference Include="../Clip.Core/Clip.Core.csproj" />
   </ItemGroup>
+  <ItemGroup Condition="'$(GITHUB_REPOSITORY)' == 'OXeu/clip' And '$(GITHUB_WORKFLOW)' == 'Windows build'">
+    <AssemblyMetadata Include="GitHubSha" Value="$(GITHUB_SHA)" />
+    <AssemblyMetadata Include="GitHubRunNumber" Value="$(GITHUB_RUN_NUMBER)" />
+    <AssemblyMetadata Include="GitHubRunAttempt" Value="$(GITHUB_RUN_ATTEMPT)" />
+  </ItemGroup>
 </Project>

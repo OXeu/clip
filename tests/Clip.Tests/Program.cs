@@ -131,6 +131,59 @@ Test("NVIDIA decoder and encoder can be configured independently", () =>
     Check(software.Contains("libx264") && !software.Contains("cuda"), "Software fallback unavailable");
 });
 
+Test("NVENC probe uses hardware-safe dimensions and the export encoding profile", () =>
+{
+    var probe = FfmpegTools.BuildNvidiaProbeArguments().ToList();
+    var input = probe[probe.IndexOf("-i") + 1];
+    var size = System.Text.RegularExpressions.Regex.Match(input, @"s=(\d+)x(\d+)");
+    Check(size.Success, "Probe is missing its test frame dimensions");
+    var width = int.Parse(size.Groups[1].Value, CultureInfo.InvariantCulture);
+    var height = int.Parse(size.Groups[2].Value, CultureInfo.InvariantCulture);
+    // H.264 on Turing has a minimum width of 145 and minimum height of 49.
+    Check(width >= 145 && height >= 49 && width % 2 == 0 && height % 2 == 0,
+        "Probe would reject a working NVENC encoder because the test frame is too small or odd-sized");
+    Check(probe.Contains("yuv420p") && !probe.Contains("-hwaccel"), "Probe must use SDR software frames independently of NVDEC");
+    var export = ExportService.BuildArguments(media, new(ExportQuality.Balanced, HardwareDecode: false), "filter.ffgraph", "output.mp4").ToList();
+    foreach (var option in new[] { "-c:v", "-preset", "-tune", "-rc", "-cq", "-b:v" })
+    {
+        Check(probe.Contains(option) && export.Contains(option), $"Missing encoder option: {option}");
+        Check(probe[probe.IndexOf(option) + 1] == export[export.IndexOf(option) + 1], $"Probe differs from export: {option}");
+    }
+    Check(probe.Contains("-nostdin") && probe[probe.IndexOf("-frames:v") + 1] == "1", "Probe must be noninteractive and finite");
+});
+
+Test("NVENC failures preserve raw errors and distinguish driver, build and device problems", () =>
+{
+    (string Error, string Hint)[] failuresToCheck =
+    [
+        ("Driver does not support the required nvenc API version. Required: 13.0 Found: 12.2\nThe minimum required Nvidia driver for nvenc is 570.0 or newer", "驱动不兼容"),
+        ("Unknown encoder 'h264_nvenc'", "未包含 h264_nvenc"),
+        ("Unrecognized option 'rc'.\nError splitting the argument list: Option not found", "不支持 NVENC 检测所需参数"),
+        ("Cannot load nvcuda.dll", "驱动组件"),
+        ("Cannot load nvEncodeAPI64.dll", "驱动组件"),
+        ("Cannot load libnvidia-encode.so.1", "驱动组件"),
+        ("No capable devices found", "未找到可用"),
+        ("InitializeEncoder failed: invalid param (8)", "试编码失败"),
+        ("", "试编码失败")
+    ];
+    foreach (var (error, hint) in failuresToCheck)
+    {
+        var result = new NvidiaEncoderProbeResult(1, error);
+        Check(!result.IsAvailable && result.Summary.Contains(hint), $"Wrong diagnostic for: {error}");
+        Check(result.StandardError == error && result.ExitCode == 1, "Raw FFmpeg failure was lost");
+    }
+    Check(new NvidiaEncoderProbeResult(0, "warning").IsAvailable, "Successful encoding must not be rejected for stderr warnings");
+    Check(!new NvidiaEncoderProbeResult(-1, "h264_nvenc is listed").IsAvailable, "Encoder listing is not proof of working hardware");
+});
+
+await TestAsync("NVENC detection respects cancellation before launching FFmpeg", async () =>
+{
+    using var cancellation = new CancellationTokenSource();
+    cancellation.Cancel();
+    var unavailableTools = new FfmpegTools("clip-test-missing-ffmpeg", "clip-test-missing-ffprobe");
+    await ThrowsAsync<OperationCanceledException>(() => unavailableTools.ProbeNvidiaAsync(cancellation.Token));
+});
+
 Test("custom dimensions validate and silent sources omit audio", () =>
 {
     var options = new ExportOptions(Width: 720, Height: 1280);
@@ -168,6 +221,24 @@ if (args.Contains("--integration"))
     try
     {
         await tools.VerifyAsync();
+        await TestAsync("NVENC probe source produces a valid SDR frame without NVIDIA decoding", async () =>
+        {
+            var probe = FfmpegTools.BuildNvidiaProbeArguments().ToList();
+            var probeSource = probe[probe.IndexOf("-i") + 1];
+            var output = Path.Combine(root, "probe-frame.mp4");
+            await Run("-v", "error", "-nostdin", "-f", "lavfi", "-i", probeSource,
+                "-frames:v", "1", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", output);
+            var frame = await tools.ProbeAsync(output);
+            Check(frame.Width >= 145 && frame.Height >= 49 && frame.Codec == "h264", "Invalid NVENC probe source");
+        });
+
+        await TestAsync("real NVENC probe retains failure diagnostics or completes actual encoding", async () =>
+        {
+            var result = await tools.ProbeNvidiaAsync();
+            Check(result.IsAvailable || !string.IsNullOrWhiteSpace(result.StandardError), "Failed probe discarded FFmpeg diagnostics");
+            Console.WriteLine($"  NVENC available: {result.IsAvailable}; {result.Summary}");
+        });
+
         await Run("-v", "error", "-y", "-f", "lavfi", "-i", "color=red:s=320x180:r=30:d=2",
             "-f", "lavfi", "-i", "color=blue:s=320x180:r=30:d=2", "-f", "lavfi", "-i", "color=green:s=320x180:r=30:d=2",
             "-f", "lavfi", "-i", "aevalsrc=sin(2*PI*if(lt(t\\,2)\\,440\\,if(lt(t\\,4)\\,880\\,660))*t)*0.12:s=48000:d=6",
