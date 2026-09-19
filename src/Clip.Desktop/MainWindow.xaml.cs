@@ -336,6 +336,7 @@ public partial class MainWindow : Window
         _position = Math.Clamp(_position, 0, _timeline.Duration);
         _selected = _timeline.Locate(_position)?.Segment.Id;
         Seek(_position);
+        StatusText.Text = redo ? "已重做上一步操作" : "已撤销上一步操作";
         Refresh();
     }
 
@@ -626,6 +627,7 @@ public partial class MainWindow : Window
             throw new InvalidOperationException("Delete did not remove the selected range.");
         Restore(false);
         if (_timeline.Segments.Count != 3) throw new InvalidOperationException("Undo did not restore the selected range.");
+        if (StatusText.Text != "已撤销上一步操作") throw new InvalidOperationException("Undo left stale operation feedback.");
         _selected = _timeline.Segments[1].Id;
         Refresh();
         UiCapture.Save(WindowRoot, "smoke-ui.png");
