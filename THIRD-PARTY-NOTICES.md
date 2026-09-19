@@ -1,5 +1,11 @@
 # Third-party components
 
+## Remix Icon
+
+Application action icons use original SVG paths from [Remix Icon](https://remixicon.com/), revision [9fb7967c0a4c09910161192bde99efd3df09f5eb](https://github.com/Remix-Design/RemixIcon/tree/9fb7967c0a4c09910161192bde99efd3df09f5eb), under the Remix Icon License v1.0. Source SVGs and the license are retained in `src/Clip.Desktop/Assets/RemixIcon`; the Windows package includes `licenses/RemixIcon.txt`. The WPF geometry resource preserves those SVG paths. The Clip wordmark is separate from the functional icon library.
+
+## FFmpeg and .NET
+
 Clip invokes FFmpeg and FFprobe as separate executable processes. The Windows CI bundle includes the unmodified **Gyan FFmpeg 8.1.2 essentials build** pinned in `scripts/ffmpeg-version.json`.
 
 - FFmpeg project: https://ffmpeg.org/

@@ -1,0 +1,57 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+  <!-- Fluent 2 light semantic aliases, shared by XAML surfaces and timeline drawing. -->
+  <SolidColorBrush x:Key="ColorNeutralBackground1" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="ColorNeutralBackground2" Color="#FAFAFA" />
+  <SolidColorBrush x:Key="ColorNeutralBackground3" Color="#F5F5F5" />
+  <SolidColorBrush x:Key="ColorNeutralForeground1" Color="#242424" />
+  <SolidColorBrush x:Key="ColorNeutralForeground2" Color="#424242" />
+  <SolidColorBrush x:Key="ColorNeutralForeground3" Color="#616161" />
+  <SolidColorBrush x:Key="ColorNeutralStroke1" Color="#D1D1D1" />
+  <SolidColorBrush x:Key="ColorNeutralStroke2" Color="#E0E0E0" />
+  <SolidColorBrush x:Key="ColorSubtleStroke" Color="#EBEBEB" />
+  <SolidColorBrush x:Key="ColorBrandBackground" Color="#0F6CBD" />
+  <SolidColorBrush x:Key="ColorBrandBackgroundHover" Color="#115EA3" />
+  <SolidColorBrush x:Key="ColorBrandBackgroundPressed" Color="#0F548C" />
+  <SolidColorBrush x:Key="ColorBrandBackground2" Color="#EBF3FC" />
+  <SolidColorBrush x:Key="ColorBrandForeground" Color="#0F548C" />
+  <SolidColorBrush x:Key="ColorBrandStroke" Color="#0F6CBD" />
+  <SolidColorBrush x:Key="ColorOnBrand" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="ColorDangerForeground" Color="#B10E1C" />
+  <SolidColorBrush x:Key="ColorDangerBackground" Color="#FDF3F4" />
+  <SolidColorBrush x:Key="ColorPreviewBackground" Color="#171717" />
+  <SolidColorBrush x:Key="ColorPreviewForeground" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="ColorTimelineClipBackground" Color="#E6EFF8" />
+  <SolidColorBrush x:Key="ColorTimelineClipBorder" Color="#96B6D4" />
+  <!-- Brand bindings for the native Fluent accent-button template and its interaction states. -->
+  <SolidColorBrush x:Key="AccentButtonBackground" Color="#0F6CBD" />
+  <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#115EA3" />
+  <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="#0F548C" />
+  <SolidColorBrush x:Key="AccentButtonForeground" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FFFFFF" />
+  <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#FFFFFF" />
+  <FontFamily x:Key="FontFamilyBase">Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI</FontFamily>
+  <FontFamily x:Key="FontFamilyMono">Cascadia Mono, Consolas</FontFamily>
+  <sys:Double x:Key="FontSizeCaption">12</sys:Double>
+  <sys:Double x:Key="FontSizeBody">14</sys:Double>
+  <sys:Double x:Key="FontSizeSubtitle">16</sys:Double>
+  <sys:Double x:Key="FontSizeTitle">20</sys:Double>
+  <sys:Double x:Key="FontSizeHero">28</sys:Double>
+  <sys:Double x:Key="ControlHeight">36</sys:Double>
+  <sys:Double x:Key="Space4">4</sys:Double>
+  <sys:Double x:Key="Space8">8</sys:Double>
+  <sys:Double x:Key="Space12">12</sys:Double>
+  <sys:Double x:Key="Space16">16</sys:Double>
+  <sys:Double x:Key="Space20">20</sys:Double>
+  <sys:Double x:Key="Space24">24</sys:Double>
+  <sys:Double x:Key="Space32">32</sys:Double>
+  <Thickness x:Key="PagePadding">24</Thickness>
+  <Thickness x:Key="PanelPadding">20</Thickness>
+  <Thickness x:Key="ControlPadding">12,8</Thickness>
+  <Thickness x:Key="FieldGap">0,8,0,0</Thickness>
+  <Thickness x:Key="SectionGap">0,24,0,0</Thickness>
+  <CornerRadius x:Key="RadiusControl">4</CornerRadius>
+  <CornerRadius x:Key="RadiusSurface">8</CornerRadius>
+  <CornerRadius x:Key="RadiusHero">12</CornerRadius>
+</ResourceDictionary>

@@ -33,10 +33,11 @@ public partial class App : Application
                     await window.InitializationCompleted.WaitAsync(TimeSpan.FromSeconds(40));
                     if (e.Args.Contains("--startup-test") && !window.ToolsReady)
                         throw new InvalidOperationException("Packaged FFmpeg could not be initialized.");
-                    window.VerifyUi();
-                    var dialog = new ExportWindow(new Core.MediaInfo("test.mp4", 10, 1920, 1080, 30, 0, 1, "h264"), true) { Owner = window };
+                    await window.VerifyUiAsync();
+                    var dialog = new ExportWindow(window.CurrentMedia!, true) { Owner = window };
                     dialog.Show();
                     dialog.UpdateLayout();
+                    dialog.VerifyDisclosure();
                     dialog.Close();
                     File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "smoke-success.txt"), "Window initialization, edit controls, and export dialog passed.");
                     StartupDiagnostics.Write("Startup and UI verification completed");

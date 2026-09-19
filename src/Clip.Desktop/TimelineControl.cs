@@ -10,6 +10,8 @@ namespace Clip.Desktop;
 public sealed class TimelineControl : FrameworkElement
 {
     private const double Inset = 20;
+    private const double TrackTop = 40;
+    private const double TrackHeight = 80;
     public IReadOnlyList<Segment> Segments { get; set; } = [];
     public string SourceName { get; set; } = "";
     public double Duration { get; set; }
@@ -23,8 +25,8 @@ public sealed class TimelineControl : FrameworkElement
     {
         Focusable = true;
         ClipToBounds = true;
-        MinHeight = 160;
-        Cursor = Cursors.Cross;
+        MinHeight = 144;
+        Cursor = Cursors.Hand;
     }
 
     private double Scale => Math.Max(1, ActualWidth - Inset * 2) / Math.Max(Duration, 1);
@@ -32,44 +34,53 @@ public sealed class TimelineControl : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
-        dc.DrawRectangle(Brush("#16191C"), null, new Rect(0, 0, ActualWidth, ActualHeight));
+        dc.DrawRectangle(TokenBrush("ColorNeutralBackground1"), null, new Rect(0, 0, ActualWidth, ActualHeight));
         if (Segments.Count == 0)
         {
-            DrawText(dc, "时间轴为空 · 导入视频以开始，或按 Ctrl + Z 恢复片段", 20, 72, 13, "#9DA6AE");
+            DrawText(dc, "所有片段已删除，按 Ctrl+Z 恢复", Inset, 64, 14, "ColorNeutralForeground3");
             return;
         }
         var steps = new[] { 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200, 21600, 86400 };
-        var interval = steps.FirstOrDefault(s => s * Scale >= 90, Math.Max(Duration / 8, 1));
+        var interval = steps.FirstOrDefault(s => s * Scale >= 88, Math.Max(Duration / 8, 1));
         for (double t = 0; t <= Duration; t += interval)
         {
             var x = Inset + t * Scale;
-            dc.DrawLine(new Pen(Brush("#363D43"), 1), new Point(x, 27), new Point(x, ActualHeight - 15));
-            DrawText(dc, FormatTime(t), x + 4, 6, 10, "#9DA6AE");
+            dc.DrawLine(new Pen(TokenBrush("ColorSubtleStroke"), 1), new Point(x, 28), new Point(x, ActualHeight - 8));
+            var time = TimeSpan.FromSeconds(t);
+            var label = t >= 3600 ? $"{(int)time.TotalHours:00}:{time.Minutes:00}:{time.Seconds:00}" :
+                $"{(int)time.TotalMinutes:00}:{time.Seconds:00}" + (interval < 1 ? $".{time.Milliseconds / 100}" : "");
+            DrawText(dc, label, x + 4, 6, 12, "ColorNeutralForeground3");
         }
         double offset = 0;
         for (var i = 0; i < Segments.Count; i++)
         {
             var s = Segments[i];
             var x = Inset + offset * Scale;
-            var width = Math.Max(0.5, s.Duration * Scale - 2);
+            var width = Math.Max(0.5, s.Duration * Scale - 3);
             var selected = s.Id == SelectedId;
-            var rect = new Rect(x, 45, width, 89);
-            dc.DrawRoundedRectangle(Brush(selected ? "#394E38" : "#293C35"),
-                new Pen(Brush(selected ? "#BAE8AB" : "#536F61"), selected ? 2 : 1), rect, 4, 4);
+            var foreground = selected ? "ColorOnBrand" : "ColorBrandForeground";
+            var rect = new Rect(x, TrackTop, width, TrackHeight);
+            dc.DrawRoundedRectangle(TokenBrush(selected ? "ColorBrandBackground" : "ColorTimelineClipBackground"),
+                new Pen(TokenBrush(selected ? "ColorBrandBackgroundPressed" : "ColorTimelineClipBorder"), selected ? 2 : 1), rect, 4, 4);
             dc.PushClip(new RectangleGeometry(rect));
-            dc.DrawRectangle(Brush(selected ? "#BAE8AB" : "#7AAB91"), null, new Rect(x, 45, width, 4));
-            if (width > 35)
+            if (width > 48)
             {
-                DrawText(dc, $"{i + 1:00}   {SourceName}", x + 12, 61, 12, "#EFF2F4");
-                DrawText(dc, $"{FormatTime(s.Start)} → {FormatTime(s.End)}", x + 12, 89, 11, "#B3C4B8");
-                DrawText(dc, $"{s.Duration:0.##} s", x + 12, 110, 10, "#9AAC9F");
+                if (TryFindResource("Remix.Film") is Geometry icon)
+                {
+                    dc.PushTransform(new TranslateTransform(x + 12, TrackTop + 14));
+                    dc.PushTransform(new ScaleTransform(16.0 / 24, 16.0 / 24));
+                    dc.DrawGeometry(TokenBrush(foreground), null, icon);
+                    dc.Pop();
+                    dc.Pop();
+                }
+                DrawText(dc, $"{i + 1:00}  {SourceName}", x + 36, TrackTop + 13, 13, foreground, width - 48);
+                DrawText(dc, $"{s.Duration:0.##} 秒" + (selected && width > 140 ? " · 已选中" : ""), x + 12, TrackTop + 45, 12, foreground, width - 24);
             }
             dc.Pop();
             offset += s.Duration;
         }
-        DrawText(dc, "视频 + 原音频 · 删除后自动收拢", Inset, 148, 11, "#7B8790");
         var playhead = Inset + Math.Clamp(Position, 0, Duration) * Scale;
-        dc.DrawLine(new Pen(Brush("#D9F3CB"), 1.5), new Point(playhead, 28), new Point(playhead, ActualHeight - 10));
+        dc.DrawLine(new Pen(TokenBrush("ColorNeutralForeground1"), 1.5), new Point(playhead, 28), new Point(playhead, ActualHeight - 6));
         var pointer = new StreamGeometry();
         using (var context = pointer.Open())
         {
@@ -77,7 +88,7 @@ public sealed class TimelineControl : FrameworkElement
             context.LineTo(new Point(playhead + 5, 22), true, false);
             context.LineTo(new Point(playhead, 30), true, false);
         }
-        dc.DrawGeometry(Brush("#D9F3CB"), null, pointer);
+        dc.DrawGeometry(TokenBrush("ColorNeutralForeground1"), null, pointer);
     }
 
     protected override void OnMouseDown(MouseButtonEventArgs e)
@@ -87,7 +98,7 @@ public sealed class TimelineControl : FrameworkElement
         Focus();
         var point = e.GetPosition(this);
         var time = Math.Clamp((point.X - Inset) / Scale, 0, Duration);
-        if (point.Y is >= 45 and <= 134)
+        if (point.Y >= TrackTop && point.Y <= TrackTop + TrackHeight)
         {
             double offset = 0;
             for (var i = 0; i < Segments.Count; i++)
@@ -106,10 +117,10 @@ public sealed class TimelineControl : FrameworkElement
             SeekRequested?.Invoke(time);
             CaptureMouse();
         }
-        else if (e.ChangedButton == MouseButton.Right && point.Y is >= 45 and <= 134)
+        else if (e.ChangedButton == MouseButton.Right && point.Y >= TrackTop && point.Y <= TrackTop + TrackHeight)
         {
             var menu = new ContextMenu();
-            var delete = new MenuItem { Header = "Delete · 删除片段", InputGestureText = "Delete" };
+            var delete = new MenuItem { Header = "删除片段", InputGestureText = "Delete" };
             delete.Click += (_, _) => DeleteRequested?.Invoke();
             menu.Items.Add(delete);
             menu.PlacementTarget = this;
@@ -131,11 +142,33 @@ public sealed class TimelineControl : FrameworkElement
         if (IsMouseCaptured) ReleaseMouseCapture();
     }
 
-    private void DrawText(DrawingContext dc, string text, double x, double y, double size, string color) =>
-        dc.DrawText(new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
-            new Typeface("Segoe UI, Microsoft YaHei UI"), size, Brush(color), VisualTreeHelper.GetDpi(this).PixelsPerDip), new Point(x, y));
+    private void DrawText(DrawingContext dc, string text, double x, double y, double size, string token, double maxWidth = double.PositiveInfinity)
+    {
+        var font = (FontFamily?)TryFindResource("FontFamilyBase") ?? SystemFonts.MessageFontFamily;
+        var formatted = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+            new Typeface(font, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
+            size, TokenBrush(token), VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        if (double.IsFinite(maxWidth))
+        {
+            formatted.MaxTextWidth = Math.Max(1, maxWidth);
+            formatted.MaxLineCount = 1;
+            formatted.Trimming = TextTrimming.CharacterEllipsis;
+        }
+        dc.DrawText(formatted, new Point(x, y));
+    }
 
-    private static SolidColorBrush Brush(string hex) => new((Color)ColorConverter.ConvertFromString(hex));
+    private Brush TokenBrush(string key)
+    {
+        if (SystemParameters.HighContrast)
+        {
+            if (key == "ColorOnBrand") return SystemColors.HighlightTextBrush;
+            if (key is "ColorBrandBackground" or "ColorBrandBackgroundPressed") return SystemColors.HighlightBrush;
+            if (key.Contains("Background", StringComparison.Ordinal)) return SystemColors.WindowBrush;
+            return SystemColors.WindowTextBrush;
+        }
+        return (Brush?)TryFindResource(key) ?? SystemColors.WindowTextBrush;
+    }
+
     public static string FormatTime(double value)
     {
         var t = TimeSpan.FromSeconds(Math.Max(0, double.IsFinite(value) ? value : 0));

@@ -16,4 +16,7 @@ Copy-Item (Join-Path $repo 'README.md') $outputPath -Force
 Copy-Item (Join-Path $repo 'THIRD-PARTY-NOTICES.md') $outputPath -Force
 Copy-Item (Join-Path $PSScriptRoot 'Start-Clip-Diagnostics.cmd') $outputPath -Force
 Copy-Item (Join-Path $PSScriptRoot 'Diagnose-Startup.ps1') $outputPath -Force
+$licenseOutput = Join-Path $outputPath 'licenses'
+New-Item $licenseOutput -ItemType Directory -Force | Out-Null
+Copy-Item (Join-Path $repo 'src/Clip.Desktop/Assets/RemixIcon/LICENSE.txt') (Join-Path $licenseOutput 'RemixIcon.txt') -Force
 Write-Host "Published: $outputPath"
