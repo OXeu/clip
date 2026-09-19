@@ -17,10 +17,13 @@ public partial class MainWindow : Window
     private readonly Timeline _timeline = new();
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(25) };
     private readonly string[] _arguments;
+    private readonly TaskCompletionSource _initialization = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal Task InitializationCompleted => _initialization.Task;
     private readonly string _cacheDirectory = Path.Combine(Path.GetTempPath(), "Clip", Guid.NewGuid().ToString("N"));
     private FfmpegTools _tools = FfmpegTools.Discover();
     private CancellationTokenSource? _operation;
     private bool _hasNvidia;
+    internal bool ToolsReady { get; private set; }
     private bool _mediaReady;
     private bool _playing;
     private bool _usingProxy;
@@ -46,19 +49,31 @@ public partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        if (Environment.GetCommandLineArgs().Contains("--smoke-test")) return;
+        StartupDiagnostics.Write("Main window Loaded; initializing services");
+        if (Environment.GetCommandLineArgs().Contains("--smoke-test")) { _initialization.TrySetResult(); return; }
         _initializing = true;
-        SetBusy(true, "正在检测 FFmpeg 和 NVIDIA…");
         try
         {
+            SetBusy(true, "正在检测 FFmpeg 和 NVIDIA…");
             var settings = Settings.Load();
             _tools = FfmpegTools.Discover(settings.FfmpegDirectory);
             await VerifyToolsAsync(_operation!.Token);
             StatusText.Text = "就绪 · Ctrl + O 导入视频";
         }
         catch (OperationCanceledException) { StatusText.Text = "已取消检测"; }
-        catch (Exception exception) { StatusText.Text = "FFmpeg 未就绪：请通过「设置」选择 FFmpeg 目录。"; HardwareText.ToolTip = exception.Message; }
-        finally { SetBusy(false); _initializing = false; }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.Write("FFmpeg initialization unavailable", exception);
+            StatusText.Text = "FFmpeg 未就绪：请通过「设置」选择 FFmpeg 目录。";
+            HardwareText.ToolTip = exception.Message;
+        }
+        finally
+        {
+            SetBusy(false);
+            _initializing = false;
+            StartupDiagnostics.Write("Main window initialization completed");
+            _initialization.TrySetResult();
+        }
         if (!_closed && _arguments.Length > 0) await ImportAsync(_arguments[0]);
     }
 
@@ -66,6 +81,7 @@ public partial class MainWindow : Window
     {
         await _tools.VerifyAsync(token);
         _hasNvidia = await _tools.CanEncodeNvidiaAsync(token);
+        ToolsReady = true;
         HardwareText.Text = _hasNvidia ? "● NVIDIA NVENC 可用" : "● FFmpeg 就绪 · CPU 编码";
     }
 
@@ -496,7 +512,7 @@ public partial class MainWindow : Window
             StatusText.Text = "正在取消当前操作并清理，请稍后再次关闭。";
             return;
         }
-        if (_timeline.CanUndo && !_closed && !Environment.GetCommandLineArgs().Contains("--smoke-test") &&
+        if (_timeline.CanUndo && !_closed && !App.IsAutomatedRun &&
             MessageBox.Show(this, "关闭后时间轴编辑不会保存。确认已导出需要的片段？", "关闭 Clip",
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) { e.Cancel = true; return; }
         _closed = true;

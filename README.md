@@ -4,9 +4,10 @@
 
 ## 获取 Windows 程序
 
-每次 `push`、Pull Request 或手动运行都会触发 [Windows build](../../actions/workflows/windows.yml)。成功后，在该次运行的 **Artifacts** 中下载 `Clip-win-x64-<运行编号>`，解压并运行 `Clip.exe`。
+每次 `push`、Pull Request 或手动运行都会触发 [Windows build](../../actions/workflows/windows.yml)。成功后，在该次运行的 **Artifacts** 中下载 `Clip-win-x64.zip`，解压并运行 `Clip.exe`。
 
 - 发布包包含 .NET 运行时，以及经过 SHA-256 校验的 FFmpeg / FFprobe，无需自行安装 .NET。
+- 使用自包含目录发布，运行时 DLL 与 `Clip.exe` 一起分发，不依赖启动时的单文件自解压。请解压整个目录，勿只复制 EXE。
 - 支持 Windows 10/11 x64。Windows N/KN 版的预览需要安装系统媒体功能包。
 - 默认使用检测通过的 NVIDIA NVENC；没有可用显卡时可用 CPU 完整剪辑导出。
 - NVIDIA 硬件解码取决于显卡型号、驱动和视频编码格式。NVENC 是编码器，NVDEC / CUDA 才是硬件解码路径。
@@ -78,15 +79,32 @@ CLIP_FFMPEG_DIR=/path/to/ffmpeg/bin dotnet run --project tests/Clip.Tests -c Rel
 
 输出在 `artifacts/Clip-win-x64`。FFmpeg 也可放到程序旁的 `ffmpeg` 目录，或通过设置、`CLIP_FFMPEG_DIR`、PATH 指定；自定义目录需同时包含 `ffmpeg.exe` 和 `ffprobe.exe`。
 
+安装 7-Zip 后运行 `./scripts/Package-Windows.ps1` 可生成经过校验的 ZIP（已有同名包时需通过 `-Output` 选择新文件名）。脚本会测试压缩包、实际解压，并逐文件比较字节数和 SHA-256；全部一致后才发布最终文件，同时生成 `.sha256` 和 `.manifest.json`。也支持 `-Format 7z -Output artifacts/Clip-win-x64.7z` 生成更小的完整分发包，或用 `-SevenZip` 指定 7-Zip 可执行文件。
+
+若下载后提示“文件末端错误”或“数据错误”，先在 PowerShell 检查实际下载文件：
+
+```powershell
+(Get-Item "$env:USERPROFILE\Downloads\Clip-win-x64.zip").Length
+(Get-FileHash "$env:USERPROFILE\Downloads\Clip-win-x64.zip" -Algorithm SHA256).Hash
+```
+
+与对应 Actions 运行摘要中的字节数和 SHA-256 比较。数值不一致说明下载文件与发布文件不同，需要重新下载；两者均一致但解压仍报错时，请记录解压软件名称、版本及完整错误信息。校验清单也在 `Windows-package-checksums-<运行编号>` 构建产物中。
+
+### 双击没有窗口或启动后立即退出
+
+请先把完整发布包解压到新目录，再运行 `Clip.exe`。应用会在 `%LOCALAPPDATA%\Clip\logs` 写入每次启动的阶段日志，包含完整异常；WPF 初始化前的异常也会记录并显示错误对话框。
+
+如果仍然没有窗口，双击程序旁的 `Start-Clip-Diagnostics.cmd`。它会启动程序并收集启动退出码、.NET 宿主加载日志、应用日志及本次 Clip 相关的 Windows 应用程序事件，随后打开诊断报告。报告保存在 `%LOCALAPPDATA%\Clip\diagnostics`，不会要求安装额外运行时或修改系统设置。启动器只为本次诊断 PowerShell 进程设置脚本执行选项，不更改全局执行策略。
+
 ## GitHub Actions 与缓存
 
-[`.github/workflows/windows.yml`](.github/workflows/windows.yml) 在 `windows-2025` 上完成恢复依赖 → 核心与 FFmpeg 测试 → WPF 编译与独立发布 → 启动窗口、渲染截图 → 上传可运行程序。
+[`.github/workflows/windows.yml`](.github/workflows/windows.yml) 在 `windows-2025` 上完成恢复依赖 → 核心与 FFmpeg 测试 → WPF 编译与独立发布 → 完整启动（包括 FFmpeg 检测）、渲染截图 → 启动异常日志回归测试 → 打包并逐文件验证解压结果 → 上传可运行程序。
 
 - **NuGet 缓存**：`actions/setup-dotnet` 缓存仓库内 `.nuget/packages`，缓存键包含锁文件、SDK 版本、公共构建属性和发布配置，使用 `--locked-mode` 恢复。
 - **FFmpeg 缓存**：缓存验证、解压后的 `.tools/ffmpeg`；键包含系统、架构、版本清单和下载脚本。命中后无需重复下载约 110 MB 的分发包。
 - **固定版本与完整性**：`scripts/ffmpeg-version.json` 固定下载 URL 与 SHA-256；升级时同时更新版本、URL、摘要。
 - **避免重复工作**：发布使用 `--no-restore`；同一分支的新运行取消旧运行。编译 `bin/obj` 不跨运行缓存，避免陈旧构建状态。
-- **减少上传耗时**：产物压缩级别为 1，程序保留 14 天，UI 截图保留 7 天。
+- **发布完整性**：7-Zip 打包后实际解压，比较所有发布文件的 SHA-256。验证后的 ZIP 使用 `archive: false` 原样上传，避免再次压缩，下载可直接与发布摘要校验。程序保留 14 天，UI 截图保留 7 天。
 - **权限**：工作流仅需 `contents: read`，不自动发布 Release、不写仓库。
 
 标准 GitHub Windows 托管机器没有 NVIDIA GPU；CI 验证 CPU 完整导出链路与 NVIDIA 参数配置，实际 NVDEC/NVENC 性能和驱动兼容性需要在 NVIDIA Windows 机器上按 [手工验收清单](docs/windows-qa.md) 验证。

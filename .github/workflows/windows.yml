@@ -64,15 +64,39 @@ jobs:
       - name: Publish self-contained application
         run: ./scripts/Publish-Windows.ps1 -NoRestore
 
-      - name: Launch WPF and render UI smoke test
+      - name: Launch normal startup and verify UI
         run: |
           $app = Join-Path $env:GITHUB_WORKSPACE 'artifacts/Clip-win-x64/Clip.exe'
-          $process = Start-Process $app -ArgumentList '--smoke-test' -PassThru
-          if (-not $process.WaitForExit(45000)) {
+          $env:CLIP_LOG_DIR = Join-Path $env:GITHUB_WORKSPACE 'artifacts/startup-logs'
+          $env:DOTNET_HOST_TRACE = '1'
+          $env:DOTNET_HOST_TRACEFILE = Join-Path $env:GITHUB_WORKSPACE 'artifacts/startup-host.log'
+          $process = Start-Process $app -ArgumentList '--startup-test' -PassThru
+          if (-not $process.WaitForExit(60000)) {
             Stop-Process -Id $process.Id -Force
-            throw 'WPF smoke test timed out.'
+            throw 'Normal startup test timed out.'
           }
-          if ($process.ExitCode -ne 0) { throw "WPF smoke test failed: $($process.ExitCode)" }
+          $process.Refresh()
+          if ($process.ExitCode -ne 0) { throw "Normal startup test failed: $($process.ExitCode)" }
+          if (-not (Test-Path 'artifacts/Clip-win-x64/smoke-success.txt')) { throw 'UI verification did not finish.' }
+          if (-not (Test-Path 'artifacts/Clip-win-x64/smoke-ui.png')) { throw 'UI screenshot missing.' }
+
+      - name: Verify pre-WPF startup failure is logged
+        run: |
+          $env:CLIP_LOG_DIR = Join-Path $env:GITHUB_WORKSPACE 'artifacts/startup-failure-logs'
+          $app = Join-Path $env:GITHUB_WORKSPACE 'artifacts/Clip-win-x64/Clip.exe'
+          $process = Start-Process $app -ArgumentList '--startup-failure-test' -PassThru
+          if (-not $process.WaitForExit(15000)) {
+            Stop-Process -Id $process.Id -Force
+            throw 'Startup error handling timed out.'
+          }
+          $process.Refresh()
+          if ($process.ExitCode -ne 1) { throw "Expected failure exit code 1, got $($process.ExitCode)" }
+          if (-not (Get-ChildItem $env:CLIP_LOG_DIR -Filter '*.log' | Select-String 'CLIP_STARTUP_FAILURE_TEST')) {
+            throw 'Startup failure was not recorded.'
+          }
+
+      - name: Package, extract, and verify every published file
+        run: ./scripts/Package-Windows.ps1
 
       - name: Upload UI smoke evidence
         if: always()
@@ -82,16 +106,27 @@ jobs:
           path: |
             artifacts/Clip-win-x64/smoke-ui.png
             artifacts/Clip-win-x64/smoke-error.txt
+            artifacts/Clip-win-x64/smoke-success.txt
+            artifacts/startup-logs/**
+            artifacts/startup-failure-logs/**
+            artifacts/startup-host.log
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Upload runnable Windows application
+      - name: Upload package checksums and file manifest
         uses: actions/upload-artifact@v7
         with:
-          name: Clip-win-x64-${{ github.run_number }}
+          name: Windows-package-checksums-${{ github.run_number }}
           path: |
-            artifacts/Clip-win-x64/**
-            !artifacts/Clip-win-x64/smoke-*
+            artifacts/Clip-win-x64.zip.sha256
+            artifacts/Clip-win-x64.zip.manifest.json
           if-no-files-found: error
-          compression-level: 1
+          retention-days: 14
+
+      - name: Upload verified Windows ZIP without recompression
+        uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/Clip-win-x64.zip
+          archive: false
+          if-no-files-found: error
           retention-days: 14

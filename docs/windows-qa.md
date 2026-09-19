@@ -5,7 +5,8 @@
 ## 自动化
 
 - `dotnet run --project tests/Clip.Tests -c Release -- --integration`：真实生成测试素材，验证剪辑内容、时长、音频对齐、失败和取消清理。
-- `Clip.exe --smoke-test`：Windows CI 实际创建主窗口、导出窗口，进行分割 / 删除 / 撤销，渲染 `smoke-ui.png`。这是启动与布局冒烟验证，不替代鼠标、声音或 GPU 验收。
+- `Clip.exe --startup-test`：Windows CI 执行正常启动，包括 FFmpeg / NVIDIA 检测，再创建导出窗口，进行分割 / 删除 / 撤销，渲染 `smoke-ui.png` 并写入成功标记。只检测退出码不足以通过此检查。`--smoke-test` 仍可用于单独验证布局；它不覆盖服务初始化。
+- `Clip.exe --startup-failure-test`：在 WPF 初始化前主动抛出测试异常，CI 要求退出码为 1，且日志中包含对应异常，防止错误发生后无诊断信息。
 
 ## Windows 桌面
 
@@ -28,4 +29,4 @@
 4. 使用显卡不支持解码的编码格式，确认明确报错，能够关闭硬件解码重试。应用不应将硬解失败悄悄当作硬解成功。
 5. 没有 NVIDIA 的电脑应使用 CPU 完成同样的导出，不出现假“GPU 可用”状态。
 
-截至实现时，本地验证环境为 Linux。Windows GUI、资源管理器和真实 NVIDIA 硬件验收须在上述环境执行；首个 push 后可在 Actions 获取自动化 Windows 验证结果。
+本地开发环境为 Linux。Windows 自动化验证结果与启动日志保存在 Actions 产物中；人工桌面交互、资源管理器和真实 NVIDIA 硬件验收仍须在上述环境执行。
