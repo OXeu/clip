@@ -409,6 +409,7 @@ public partial class MainWindow : Window
         TimelineView.IsEnabled = ready;
         var selected = _timeline.Segments.Where(s => s.Id == _selected).ToArray();
         SelectionPanel.Visibility = DeleteButton.Visibility = selected.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        SourceThumbnailFrame.Height = selected.Length > 0 ? 72 : 108;
         SelectionText.Text = selected.Length > 0 ? $"片段 {_timeline.Segments.ToList().FindIndex(s => s.Id == _selected) + 1:00}" : "尚未选择片段";
         InText.Text = selected.Length > 0 ? TimelineControl.FormatTime(selected[0].Start) : "—";
         OutText.Text = selected.Length > 0 ? TimelineControl.FormatTime(selected[0].End) : "—";
@@ -634,6 +635,9 @@ public partial class MainWindow : Window
         Height = MinHeight;
         UpdateLayout();
         if (PreviewCanvas.ActualHeight < 100) throw new InvalidOperationException("Compact layout collapsed the preview.");
+        var selectionBounds = LengthText.TransformToAncestor(SourcePane).TransformBounds(new Rect(LengthText.RenderSize));
+        if (selectionBounds.Top < 0 || selectionBounds.Bottom > SourcePane.ActualHeight)
+            throw new InvalidOperationException("Compact layout hid the selected clip duration.");
         UiCapture.Save(WindowRoot, "smoke-compact.png");
         Width = previousWidth;
         Height = previousHeight;

@@ -10,7 +10,7 @@
       <TextBlock Text="导出视频" FontSize="24" FontWeight="SemiBold" />
       <TextBlock Text="将保留的片段合并为一个视频。" Style="{StaticResource SecondaryText}" Margin="0,8,0,0" />
     </StackPanel>
-    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <ScrollViewer x:Name="ExportScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Margin="24,0,24,24">
         <Border Style="{StaticResource Surface}" Padding="16" Margin="0,0,0,24">
           <Grid>
@@ -42,7 +42,7 @@
           <StackPanel Grid.Column="2"><TextBlock Text="高度 (px)" Style="{StaticResource Caption}" Margin="0,0,0,4" /><TextBox x:Name="HeightBox" MinHeight="36" TextChanged="DimensionsEdited" AutomationProperties.Name="输出高度" /></StackPanel>
         </Grid>
         <TextBlock x:Name="SizeHintText" Style="{StaticResource Caption}" Margin="0,8,0,24" />
-        <Expander x:Name="AdvancedExpander" Header="高级设置" IsExpanded="False" HorizontalAlignment="Stretch">
+        <Expander x:Name="AdvancedExpander" Header="高级设置" IsExpanded="False" HorizontalAlignment="Stretch" Expanded="AdvancedExpanded">
           <StackPanel Margin="0,16,0,0">
             <TextBlock Text="视频编码器" Style="{StaticResource FieldLabel}" />
             <ComboBox x:Name="EncoderBox" SelectedIndex="0" MinHeight="36" HorizontalAlignment="Stretch" AutomationProperties.Name="视频编码器">

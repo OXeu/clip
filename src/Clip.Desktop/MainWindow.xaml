@@ -14,7 +14,7 @@
     <Grid Margin="24,0">
       <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-        <Border Background="{StaticResource ColorBrandBackground}" CornerRadius="6" Width="32" Height="32" Margin="0,0,12,0">
+        <Border Background="{StaticResource ColorBrandBackground}" CornerRadius="{StaticResource RadiusSurface}" Width="32" Height="32" Margin="0,0,12,0">
           <TextBlock Text="C" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource ColorOnBrand}" HorizontalAlignment="Center" VerticalAlignment="Center" />
         </Border>
         <TextBlock Text="Clip" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
@@ -50,31 +50,36 @@
     <Grid Grid.Row="1" Margin="24,0,24,16">
       <Grid.ColumnDefinitions><ColumnDefinition x:Name="SourceColumn" Width="0" /><ColumnDefinition x:Name="SourceGapColumn" Width="0" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
       <Border x:Name="SourcePane" Style="{StaticResource Surface}" Padding="{StaticResource PanelPadding}" Visibility="Collapsed">
-        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
           <StackPanel>
             <TextBlock Text="素材" Style="{StaticResource SectionTitle}" Margin="0,0,0,16" />
-            <Border Background="{StaticResource ColorNeutralBackground3}" CornerRadius="4" Height="108" ClipToBounds="True">
+            <Border x:Name="SourceThumbnailFrame" Background="{StaticResource ColorNeutralBackground3}" CornerRadius="4" Height="108" ClipToBounds="True">
               <Image x:Name="Thumbnail" Stretch="UniformToFill" />
             </Border>
-            <TextBlock x:Name="FileNameText" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,12,0,4" />
+            <TextBlock x:Name="FileNameText" FontWeight="SemiBold" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="40" Margin="0,12,0,4" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
             <TextBlock x:Name="SourceSummaryText" Style="{StaticResource Caption}" />
             <Expander x:Name="SourceDetailsExpander" Header="素材信息" Margin="0,16,0,0" IsExpanded="False" HorizontalAlignment="Stretch">
               <TextBlock x:Name="MediaDetailsText" Style="{StaticResource Caption}" Margin="0,8,0,0" />
             </Expander>
-            <StackPanel x:Name="SelectionPanel" Visibility="Collapsed">
-              <Border Height="1" Background="{StaticResource ColorNeutralStroke2}" Margin="0,24,0,20" />
+          </StackPanel>
+          </ScrollViewer>
+            <StackPanel x:Name="SelectionPanel" Grid.Row="1" Visibility="Collapsed">
+              <Border Height="1" Background="{StaticResource ColorNeutralStroke2}" Margin="0,16,0,12" />
               <TextBlock x:Name="SelectionText" Style="{StaticResource SectionTitle}" />
-              <TextBlock Text="片段时长" Style="{StaticResource Caption}" Margin="0,12,0,4" />
-              <TextBlock x:Name="LengthText" FontFamily="{StaticResource FontFamilyMono}" FontSize="20" />
-              <Expander x:Name="SelectionDetailsExpander" Header="时间信息" IsExpanded="False" Margin="0,16,0,0" HorizontalAlignment="Stretch">
+              <Grid Margin="0,8,0,0">
+                <TextBlock Text="时长" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                <TextBlock x:Name="LengthText" FontFamily="{StaticResource FontFamilyMono}" FontSize="14" HorizontalAlignment="Right" />
+              </Grid>
+              <Expander x:Name="SelectionDetailsExpander" Header="时间信息" IsExpanded="False" Margin="0,12,0,0" HorizontalAlignment="Stretch">
                 <StackPanel Margin="0,8,0,0">
                   <TextBlock Text="源视频入点" Style="{StaticResource Caption}" /><TextBlock x:Name="InText" Style="{StaticResource TimeValue}" Margin="0,4,0,12" />
                   <TextBlock Text="源视频出点" Style="{StaticResource Caption}" /><TextBlock x:Name="OutText" Style="{StaticResource TimeValue}" Margin="0,4,0,0" />
                 </StackPanel>
               </Expander>
             </StackPanel>
-          </StackPanel>
-        </ScrollViewer>
+        </Grid>
       </Border>
 
       <Border Grid.Column="2" Style="{StaticResource Surface}" ClipToBounds="True">

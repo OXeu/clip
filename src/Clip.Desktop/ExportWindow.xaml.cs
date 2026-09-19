@@ -75,6 +75,16 @@ public partial class ExportWindow : Window
     }
 
     private void DimensionsEdited(object sender, TextChangedEventArgs e) => ClearValidation();
+
+    private void AdvancedExpanded(object sender, RoutedEventArgs e)
+    {
+        // Wait for the newly disclosed controls to be measured before revealing them.
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            if (AdvancedExpander.IsExpanded) ExportScroll.ScrollToEnd();
+        }, System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
     private void ClearValidation()
     {
         if (ValidationPanel is not null) ValidationPanel.Visibility = Visibility.Collapsed;
@@ -96,6 +106,7 @@ public partial class ExportWindow : Window
         {
             ValidationText.Text = exception.Message;
             ValidationPanel.Visibility = Visibility.Visible;
+            ValidationPanel.BringIntoView();
         }
     }
 
@@ -115,6 +126,12 @@ public partial class ExportWindow : Window
         if (ValidationPanel.Visibility != Visibility.Visible) throw new InvalidOperationException("Invalid dimensions did not show inline feedback.");
         WidthBox.Text = "1280";
         HeightBox.Text = "720";
+        UpdateLayout();
+        ExportScroll.ScrollToEnd();
+        UpdateLayout();
+        var hardwareBounds = HardwareDecodeBox.TransformToAncestor(ExportScroll).TransformBounds(new Rect(HardwareDecodeBox.RenderSize));
+        if (hardwareBounds.Top < 0 || hardwareBounds.Bottom > ExportScroll.ActualHeight)
+            throw new InvalidOperationException("Expanded export controls are outside the viewport.");
         UiCapture.Save(DialogRoot, "smoke-export-advanced.png");
     }
 }

@@ -49,7 +49,8 @@ public sealed class TimelineControl : FrameworkElement
             var time = TimeSpan.FromSeconds(t);
             var label = t >= 3600 ? $"{(int)time.TotalHours:00}:{time.Minutes:00}:{time.Seconds:00}" :
                 $"{(int)time.TotalMinutes:00}:{time.Seconds:00}" + (interval < 1 ? $".{time.Milliseconds / 100}" : "");
-            DrawText(dc, label, x + 4, 6, 12, "ColorNeutralForeground3");
+            if (x + 4 + label.Length * 7 <= ActualWidth - Inset)
+                DrawText(dc, label, x + 4, 6, 12, "ColorNeutralForeground3");
         }
         double offset = 0;
         for (var i = 0; i < Segments.Count; i++)
