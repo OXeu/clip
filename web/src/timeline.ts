@@ -2,7 +2,7 @@
  * 时间轴绘制与交互，移植自 src/Clip.Desktop/TimelineControl.cs。
  *
  * 保留桌面端的几何常量与交互模型：
- *   行高 68、片段高 48、标尺高 28、内容内边距 32；
+ *   视频行高 68、音频行高 34、标尺高 28、内容内边距 32；
  *   点击片段只选中片段，点击轨道空白处才选中整轨；
  *   拖拽跨轨移动，拖到边缘自动滚动。
  *
@@ -22,7 +22,9 @@ import {
 
 export const RULER_HEIGHT = 28;
 export const ROW_HEIGHT = 68;
+export const AUDIO_ROW_HEIGHT = ROW_HEIGHT / 2;
 export const CLIP_HEIGHT = 48;
+export const AUDIO_CLIP_HEIGHT = CLIP_HEIGHT / 2;
 export const CONTENT_INSET = 32;
 export const TRACK_HANDLE_WIDTH = 24;
 
@@ -169,10 +171,35 @@ export class TimelineView {
     return CONTENT_INSET + Math.min(Math.max(time, 0), this.duration) * this.scale();
   }
 
+  private rowHeight(track: VideoTrack): number {
+    return track.kind === TrackKind.Audio ? AUDIO_ROW_HEIGHT : ROW_HEIGHT;
+  }
+
+  private trackTop(index: number): number {
+    const tracks = this.project?.allTracks ?? [];
+    return RULER_HEIGHT + tracks.slice(0, index)
+      .reduce((height, track) => height + this.rowHeight(track), 0);
+  }
+
+  private trackAtY(y: number): { index: number; track: VideoTrack; top: number; height: number } | null {
+    const tracks = this.project?.allTracks ?? [];
+    let top = RULER_HEIGHT;
+    for (let index = 0; index < tracks.length; index++) {
+      const track = tracks[index]!;
+      const height = this.rowHeight(track);
+      if (y >= top && y < top + height) return { index, track, top, height };
+      top += height;
+    }
+    return null;
+  }
+
   /** 内容总高度，用于撑开滚动容器。 */
   contentHeight(): number {
-    const rows = this.project ? this.project.allTracks.length : 1;
-    return RULER_HEIGHT + rows * ROW_HEIGHT + 8;
+    const tracks = this.project?.allTracks;
+    const trackHeight = tracks
+      ? tracks.reduce((height, track) => height + this.rowHeight(track), 0)
+      : ROW_HEIGHT;
+    return RULER_HEIGHT + trackHeight + 8;
   }
 
   private cssWidth(): number {
@@ -216,11 +243,14 @@ export class TimelineView {
     const found = project.findClip(clipId);
     if (!found) return null;
     const row = project.allTracks.findIndex((track) => track.id === found.trackId);
+    const track = project.allTracks[row]!;
+    const height = track.kind === TrackKind.Audio ? AUDIO_CLIP_HEIGHT : CLIP_HEIGHT;
+    const top = this.trackTop(row);
     return {
       x: this.xAtTime(found.timelineStart),
-      y: RULER_HEIGHT + row * ROW_HEIGHT + 10,
+      y: top + (this.rowHeight(track) - height) / 2,
       width: Math.max(2, clipDuration(found.clip) * this.scale() - 3),
-      height: CLIP_HEIGHT,
+      height,
     };
   }
 
@@ -229,9 +259,9 @@ export class TimelineView {
     const project = this.project;
     if (!project) return null;
     if (y < RULER_HEIGHT) return null;
-    const row = Math.floor((y - RULER_HEIGHT) / ROW_HEIGHT);
-    if (row < 0 || row >= project.allTracks.length) return null;
-    const track = project.allTracks[row]!;
+    const hit = this.trackAtY(y);
+    if (!hit) return null;
+    const track = hit.track;
     const time = this.timeAtX(x);
     let offset = 0;
     for (let index = 0; index < track.clips.length; index++) {
@@ -245,9 +275,8 @@ export class TimelineView {
   trackInsertionAt(y: number): number | null {
     const project = this.project;
     if (!project || y < RULER_HEIGHT) return null;
-    const raw = Math.round((y - RULER_HEIGHT) / ROW_HEIGHT);
     return project.trackInsertionBoundaries().reduce((best, boundary) =>
-      Math.abs(boundary - raw) <= Math.abs(best - raw) ? boundary : best);
+      Math.abs(this.trackTop(boundary) - y) <= Math.abs(this.trackTop(best) - y) ? boundary : best);
   }
 
   private roundedRect(
@@ -284,27 +313,30 @@ export class TimelineView {
     context.textBaseline = 'alphabetic';
 
     project.allTracks.forEach((track, row) => {
-      const top = RULER_HEIGHT + row * ROW_HEIGHT;
+      const top = this.trackTop(row);
+      const rowHeight = this.rowHeight(track);
+      const clipHeight = track.kind === TrackKind.Audio ? AUDIO_CLIP_HEIGHT : CLIP_HEIGHT;
+      const clipTop = top + (rowHeight - clipHeight) / 2;
       const multiSelected = this.multiSelectedTrackIds.has(track.id);
       if (track.id === this.selectedTrackId || multiSelected) {
         context.fillStyle = colors.trackSelected;
-        context.fillRect(0, top, width, ROW_HEIGHT);
+        context.fillRect(0, top, width, rowHeight);
       } else if (track.id === this.activeTrackId) {
         context.fillStyle = colors.track;
-        context.fillRect(0, top, width, ROW_HEIGHT);
+        context.fillRect(0, top, width, rowHeight);
       }
       context.strokeStyle = colors.subtle;
       context.lineWidth = 1;
       context.beginPath();
-      context.moveTo(0, top + ROW_HEIGHT + 0.5);
-      context.lineTo(width, top + ROW_HEIGHT + 0.5);
+      context.moveTo(0, top + rowHeight + 0.5);
+      context.lineTo(width, top + rowHeight + 0.5);
       context.stroke();
 
       if (track.clips.length === 0) {
         context.fillStyle = track.id === this.selectedTrackId ? colors.selectionForeground : colors.foregroundMuted;
         context.fillText(track.kind === TrackKind.Audio && track.companionGroupId
           ? '伴生音频槽（当前无片段）'
-          : '拖拽片段到这里', CONTENT_INSET, top + 32);
+          : '拖拽片段到这里', CONTENT_INSET, top + rowHeight / 2 + 4);
       }
 
       let offset = 0;
@@ -312,7 +344,7 @@ export class TimelineView {
         const x = this.xAtTime(offset);
         const rectWidth = Math.max(2, clipDuration(clip) * this.scale() - 3);
         offset += clipDuration(clip);
-        this.drawClip(context, track, clip, x, top + 10, rectWidth, clip.id === this.selectedClipId);
+        this.drawClip(context, track, clip, x, clipTop, rectWidth, clipHeight, clip.id === this.selectedClipId);
       }
 
       const handleX = this.container.scrollLeft + 5;
@@ -323,28 +355,30 @@ export class TimelineView {
       context.fillStyle = track.id === this.selectedTrackId || multiSelected
         ? colors.trackSelected
         : track.id === this.activeTrackId ? colors.track : colors.background;
-      context.fillRect(this.container.scrollLeft, top, TRACK_HANDLE_WIDTH + 4, ROW_HEIGHT);
+      context.fillRect(this.container.scrollLeft, top, TRACK_HANDLE_WIDTH + 4, rowHeight);
       if (isCompanionAudio) {
         context.strokeStyle = draggingGroup ? colors.brand : colors.foregroundMuted;
         context.fillStyle = draggingGroup ? colors.brand : colors.foregroundMuted;
         context.lineWidth = 1.5;
         context.beginPath();
         context.moveTo(handleX + 7, top);
-        context.lineTo(handleX + 7, top + ROW_HEIGHT / 2);
-        context.lineTo(handleX + 14, top + ROW_HEIGHT / 2);
+        context.lineTo(handleX + 7, top + rowHeight / 2);
+        context.lineTo(handleX + 14, top + rowHeight / 2);
         context.stroke();
         context.beginPath();
-        context.arc(handleX + 14, top + ROW_HEIGHT / 2, 2.5, 0, Math.PI * 2);
+        context.arc(handleX + 14, top + rowHeight / 2, 2.5, 0, Math.PI * 2);
         context.fill();
       } else if (track.clips.length > 0 || track.companionGroupId) {
-        this.roundedRect(context, handleX, top + 21, 14, 26, 5);
+        const handleHeight = Math.min(26, rowHeight - 8);
+        const handleTop = top + (rowHeight - handleHeight) / 2;
+        this.roundedRect(context, handleX, handleTop, 14, handleHeight, 5);
         context.fillStyle = draggingGroup ? colors.brand : colors.track;
         context.fill();
         context.strokeStyle = draggingGroup
           ? colors.selectionForeground
           : colors.foregroundMuted;
         context.lineWidth = 1;
-        for (const handleY of [top + 28, top + 34, top + 40]) {
+        for (const handleY of [top + rowHeight / 2 - 6, top + rowHeight / 2, top + rowHeight / 2 + 6]) {
           context.beginPath();
           context.moveTo(handleX + 4, handleY);
           context.lineTo(handleX + 10, handleY);
@@ -356,19 +390,20 @@ export class TimelineView {
         context.strokeStyle = colors.binding;
         context.lineWidth = 2;
         context.beginPath();
-        context.moveTo(handleX + 18, top + 12);
-        context.lineTo(handleX + 18, top + ROW_HEIGHT - 12);
+        const bindingInset = Math.min(12, rowHeight / 4);
+        context.moveTo(handleX + 18, top + bindingInset);
+        context.lineTo(handleX + 18, top + rowHeight - bindingInset);
         context.stroke();
         context.fillStyle = colors.binding;
         context.beginPath();
-        context.arc(handleX + 18, top + ROW_HEIGHT / 2, 3, 0, Math.PI * 2);
+        context.arc(handleX + 18, top + rowHeight / 2, 3, 0, Math.PI * 2);
         context.fill();
       }
 
       if (track.id === this.exportPreviewTrackId) {
         context.strokeStyle = colors.brand;
         context.lineWidth = 2;
-        context.strokeRect(1, top + 1, Math.max(0, width - 2), ROW_HEIGHT - 2);
+        context.strokeRect(1, top + 1, Math.max(0, width - 2), rowHeight - 2);
       }
 
       if (this.dropTarget?.trackId === track.id) {
@@ -379,7 +414,7 @@ export class TimelineView {
         context.lineWidth = 3;
         context.beginPath();
         context.moveTo(dropX, top + 2);
-        context.lineTo(dropX, top + ROW_HEIGHT - 2);
+        context.lineTo(dropX, top + rowHeight - 2);
         context.stroke();
         context.fillStyle = colors.brand;
         context.beginPath();
@@ -389,7 +424,7 @@ export class TimelineView {
     });
 
     if (this.trackDropIndex !== null) {
-      const y = RULER_HEIGHT + this.trackDropIndex * ROW_HEIGHT;
+      const y = this.trackTop(this.trackDropIndex);
       context.strokeStyle = colors.brand;
       context.lineWidth = 3;
       context.beginPath();
@@ -409,12 +444,13 @@ export class TimelineView {
     x: number,
     y: number,
     width: number,
+    height: number,
     selected: boolean,
   ): void {
     const colors = this.colors;
     const foreground = selected ? colors.selectionForeground : colors.foreground;
     context.globalAlpha = this.dragging?.clipId === clip.id ? 0.45 : 1;
-    this.roundedRect(context, x, y, width, CLIP_HEIGHT, 6);
+    this.roundedRect(context, x, y, width, height, 6);
     context.fillStyle = selected ? colors.clipSelected : colors.clip;
     context.fill();
     context.strokeStyle = selected ? colors.clipSelectedBorder : colors.clipBorder;
@@ -422,12 +458,12 @@ export class TimelineView {
     context.stroke();
 
     if (track.kind === TrackKind.Audio) {
-      this.drawWaveform(context, clip, x, y, width, selected);
+      this.drawWaveform(context, clip, x, y, width, height, selected);
     }
 
     if (width > 44) {
       context.save();
-      this.roundedRect(context, x, y, width, CLIP_HEIGHT, 6);
+      this.roundedRect(context, x, y, width, height, 6);
       context.clip();
       context.fillStyle = foreground;
       const name = displayName(clip);
@@ -453,15 +489,16 @@ export class TimelineView {
     x: number,
     y: number,
     width: number,
+    clipHeight: number,
     selected: boolean,
   ): void {
     const peaks = this.waveforms.get(clip.media.path.toLowerCase());
     if (!peaks || peaks.length === 0 || width < 3) return;
-    const center = y + 32;
-    const amplitude = 10;
+    const center = y + clipHeight / 2;
+    const amplitude = Math.min(10, Math.max(2, clipHeight / 2 - 2));
     const bars = Math.max(1, Math.floor(width / 3));
     context.save();
-    this.roundedRect(context, x, y, width, CLIP_HEIGHT, 6);
+    this.roundedRect(context, x, y, width, clipHeight, 6);
     context.clip();
     context.strokeStyle = selected ? this.colors.selectionForeground : this.colors.waveform;
     context.globalAlpha = selected ? 0.72 : 0.8;
@@ -609,9 +646,9 @@ export class TimelineView {
       return;
     }
 
-    const row = Math.floor((point.y - RULER_HEIGHT) / ROW_HEIGHT);
-    if (row < 0 || row >= project.allTracks.length) return;
-    const track = project.allTracks[row]!;
+    const row = this.trackAtY(point.y);
+    if (!row) return;
+    const track = row.track;
     if (this.multiSelectMode) {
       event.preventDefault();
       this.callbacks.onToggleTrack(track.id);

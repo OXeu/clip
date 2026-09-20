@@ -512,8 +512,10 @@ export class EditProject {
   }
 
   split(trackId: string, time: number): string | undefined {
-    const tracks = this.synchronizedTracks(trackId);
-    if (tracks.length === 0) return undefined;
+    const requested = this.findTrack(trackId);
+    if (!requested || requested.clips.length === 0) return undefined;
+    // 空的伴生音轨/对齐轨没有可切内容，不应阻止当前轨道分割。
+    const tracks = this.synchronizedTracks(trackId).filter((track) => track.clips.length > 0);
     const cuts = tracks.map((track) => {
       const position = this.locate(track.id, time);
       if (!position) return undefined;

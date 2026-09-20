@@ -3,9 +3,11 @@ import { describe, it } from 'node:test';
 
 import {
   FrameQueue,
+  isNonMonotonicDtsError,
   muxerFrameRate,
   preferredWebCodecsAudioCodec,
   videoMuxerReadinessError,
+  webCodecsVideoConfig,
 } from '../src/exporter.ts';
 
 const fakeFrame = (): VideoFrame => ({ close() {} }) as VideoFrame;
@@ -38,6 +40,21 @@ describe('mp4-muxer 视频元数据', () => {
 
   it('有编码块与 decoderConfig 时可安全封装', () => {
     assert.equal(videoMuxerReadinessError(1, true), null);
+  });
+});
+
+describe('WebCodecs 视频时间戳', () => {
+  it('使用 realtime 模式防止硬件编码器输出 B 帧重排', () => {
+    const config = webCodecsVideoConfig('avc1.640028', 1920, 1080, 8_000_000, 60);
+    assert.equal(config.latencyMode, 'realtime');
+    assert.equal(config.framerate, 60);
+  });
+
+  it('识别 mp4-muxer 的 DTS 回退错误以触发安全回退', () => {
+    assert.equal(isNonMonotonicDtsError(
+      new Error('Timestamps must be monotonically increasing (DTS went from 33361.999 to 16681).'),
+    ), true);
+    assert.equal(isNonMonotonicDtsError(new Error('decoderConfig is null')), false);
   });
 });
 

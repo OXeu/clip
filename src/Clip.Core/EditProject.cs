@@ -146,9 +146,12 @@ public sealed class EditProject
 
     public Guid? Split(Guid trackId, double time)
     {
+        if (FindTrack(trackId) is not { Clips.Count: > 0 }) return null;
         var cuts = new List<(VideoTrack Track, ClipPosition Position, double Cut)>();
         foreach (var track in SynchronizedTracks(trackId))
         {
+            // 空的伴生音轨/对齐轨没有可切内容，不应阻止当前轨道分割。
+            if (track.Clips.Count == 0) continue;
             if (Locate(track.Id, time) is not { } position) return null;
             var frame = 1 / position.Clip.Media.FrameRate;
             var cut = Math.Round(position.SourceTime / frame) * frame;

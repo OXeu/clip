@@ -90,6 +90,29 @@ Test("silent video still owns a companion audio slot", () =>
         "Silent video did not retain a companion audio slot");
 });
 
+Test("empty companion audio tracks do not block video splits", () =>
+{
+    var project = new EditProject();
+    var imported = project.ImportSeparated(media);
+    Check(project.Delete(imported.AudioTrack.Clips[0].Id), "Audio slot could not be emptied");
+    var right = project.Split(imported.VideoTrack.Id, 4);
+    Check(right.HasValue && project.FindTrack(imported.VideoTrack.Id)!.Clips.Count == 2,
+        "Empty companion audio track blocked the video split");
+    Check(project.FindTrack(imported.AudioTrack.Id)!.Clips.Count == 0,
+        "Splitting video unexpectedly populated the empty audio track");
+});
+
+Test("nonempty companion tracks still require coverage at the split point", () =>
+{
+    var project = new EditProject();
+    var imported = project.ImportSeparated(media);
+    var audioRight = project.Split(imported.AudioTrack.Id, 3)
+        ?? throw new Exception("Initial companion split failed");
+    Check(project.Delete(audioRight), "Audio tail could not be deleted");
+    Check(project.Split(imported.VideoTrack.Id, 5) is null,
+        "A nonempty companion track missing the split point was ignored");
+});
+
 Test("boundary splits do not create empty segments", () =>
 {
     var timeline = new Timeline();

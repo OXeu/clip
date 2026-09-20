@@ -706,11 +706,12 @@ function togglePlay(): void {
 function split(): void {
   if (operation || multiSelectMode) return;
   if (playing) tick();
-  const synchronized = project.synchronizedTracks(activeTrackId).length;
+  const synchronized = project.synchronizedTracks(activeTrackId)
+    .filter((track) => track.clips.length > 0).length;
   const id = project.split(activeTrackId, position);
   if (!id) {
     status(synchronized > 1
-      ? '关联轨道无法在此时间点同时分割，请检查伴生音轨和对齐轨是否都覆盖该位置。'
+      ? '关联轨道无法在此时间点同时分割，请检查有内容的伴生音轨和对齐轨是否覆盖该位置。'
       : '请将播放头移到当前轨道的片段内部再分割。');
     return;
   }
@@ -1534,7 +1535,7 @@ window.addEventListener('drop', (event) => {
   else if (!operation) void importFiles(Array.from(event.dataTransfer.files));
 });
 
-// 滚轮缩放；Shift + 滚轮横向移动时间轴窗口。
+// 普通滚轮纵向浏览轨道；Shift 横向移动；Ctrl 以指针为锚缩放。
 timelineScroll.addEventListener(
   'wheel',
   (event) => {
@@ -1545,18 +1546,20 @@ timelineScroll.addEventListener(
         ? timelineScroll.clientHeight
         : 1;
 
-    if (event.shiftKey || (event.deltaY === 0 && event.deltaX !== 0)) {
+    const rawDelta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+    if (rawDelta === 0) return;
+
+    if (event.ctrlKey) {
       event.preventDefault();
-      const rawDelta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
-      timelineScroll.scrollLeft += rawDelta * unit;
+      const factor = Math.pow(1.2, -(rawDelta * unit) / 120);
+      const rect = timelineScroll.getBoundingClientRect();
+      setZoom(timeline.zoom * factor, event.clientX - rect.left);
       return;
     }
 
-    if (event.deltaY === 0) return;
     event.preventDefault();
-    const factor = Math.pow(1.2, -(event.deltaY * unit) / 120);
-    const rect = timelineScroll.getBoundingClientRect();
-    setZoom(timeline.zoom * factor, event.clientX - rect.left);
+    if (event.shiftKey) timelineScroll.scrollLeft += rawDelta * unit;
+    else timelineScroll.scrollTop += rawDelta * unit;
   },
   { passive: false },
 );

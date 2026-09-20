@@ -27,12 +27,12 @@ public partial class MainWindow
     {
         if (_operation is not null || _multiSelectMode) return;
         if (_playing) Tick(this, EventArgs.Empty);
-        var synchronized = _project.SynchronizedTracks(_activeTrackId).Count;
+        var synchronized = _project.SynchronizedTracks(_activeTrackId).Count(track => track.Clips.Count > 0);
         var id = _project.Split(_activeTrackId, _position);
         if (id is null)
         {
             StatusText.Text = synchronized > 1
-                ? "关联轨道无法在此时间点同时分割，请检查伴生音轨和对齐轨是否都覆盖该位置。"
+                ? "关联轨道无法在此时间点同时分割，请检查有内容的伴生音轨和对齐轨是否覆盖该位置。"
                 : "请将播放头移到当前轨道的片段内部再分割。";
             return;
         }

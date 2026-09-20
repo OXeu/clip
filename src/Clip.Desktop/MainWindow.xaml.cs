@@ -354,8 +354,7 @@ public partial class MainWindow : Window
     {
         if (_operation is not null || _project.Sources.Count == 0 || delta == 0) return false;
         var notches = delta / 120.0;
-        if (modifiers.HasFlag(ModifierKeys.Alt)) TimelineScroll.ScrollToVerticalOffset(TimelineScroll.VerticalOffset - notches * 48);
-        else if ((modifiers & (ModifierKeys.Shift | ModifierKeys.Control)) != 0)
+        if (modifiers.HasFlag(ModifierKeys.Control))
         {
             var anchorX = Math.Clamp(pointerX, 0, TimelineScroll.ViewportWidth);
             var anchorTime = TimelineView.TimeAtX(TimelineScroll.HorizontalOffset + anchorX);
@@ -365,10 +364,15 @@ public partial class MainWindow : Window
             TimelineScroll.UpdateLayout();
             TimelineScroll.ScrollToHorizontalOffset(TimelineView.XAtTime(anchorTime) - anchorX);
         }
-        else
+        else if (modifiers.HasFlag(ModifierKeys.Shift))
         {
             var step = SystemParameters.WheelScrollLines < 0 ? TimelineScroll.ViewportWidth * 0.9 : SystemParameters.WheelScrollLines * 24.0;
             TimelineScroll.ScrollToHorizontalOffset(TimelineScroll.HorizontalOffset - notches * step);
+        }
+        else
+        {
+            var step = SystemParameters.WheelScrollLines < 0 ? TimelineScroll.ViewportHeight * 0.9 : SystemParameters.WheelScrollLines * 24.0;
+            TimelineScroll.ScrollToVerticalOffset(TimelineScroll.VerticalOffset - notches * step);
         }
         return true;
     }
@@ -390,7 +394,7 @@ public partial class MainWindow : Window
     {
         UpdateLayout();
         var index = _project.Tracks.ToList().FindIndex(t => t.Id == id);
-        TimelineScroll.ScrollToVerticalOffset(Math.Max(0, (index + 1) * TimelineControl.RowHeight + TimelineControl.RulerHeight - TimelineScroll.ViewportHeight + 8));
+        TimelineScroll.ScrollToVerticalOffset(Math.Max(0, TimelineView.TrackTop(index + 1) - TimelineScroll.ViewportHeight + 8));
     }
     private void AutoScrollTimeline(Point point)
     {

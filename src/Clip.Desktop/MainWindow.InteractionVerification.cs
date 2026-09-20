@@ -31,25 +31,32 @@ public partial class MainWindow
         UpdateLayout();
         var anchor = TimelineScroll.ViewportWidth * 0.6;
         var time = TimelineView.TimeAtX(anchor);
-        ApplyTimelineWheel(120, ModifierKeys.Shift, anchor);
+        ApplyTimelineWheel(120, ModifierKeys.Control, anchor);
         UpdateLayout();
         var pixelTime = TimelineView.TimeAtX(TimelineControl.ContentInset + 2);
         Require(_timelineZoom > 1 && Math.Abs(TimelineView.TimeAtX(TimelineScroll.HorizontalOffset + anchor) - time) <= pixelTime,
-            "Shift-wheel lost its time anchor.");
+            "Ctrl-wheel lost its time anchor.");
         var zoom = _timelineZoom;
-        var offset = TimelineScroll.HorizontalOffset;
+        var horizontalOffset = TimelineScroll.HorizontalOffset;
+        ApplyTimelineWheel(-120, ModifierKeys.Shift, anchor);
+        UpdateLayout();
+        Require((SystemParameters.WheelScrollLines == 0 || TimelineScroll.HorizontalOffset > horizontalOffset) && _timelineZoom == zoom,
+            "Shift-wheel did not pan the timeline horizontally.");
+        horizontalOffset = TimelineScroll.HorizontalOffset;
+        var verticalOffset = TimelineScroll.VerticalOffset;
         var wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120) { RoutedEvent = Mouse.PreviewMouseWheelEvent };
         TimelineView.RaiseEvent(wheel);
         UpdateLayout();
-        Require(wheel.Handled && (SystemParameters.WheelScrollLines == 0 || TimelineScroll.HorizontalOffset > offset) && _timelineZoom == zoom,
-            "Routed wheel did not pan the timeline.");
+        Require(wheel.Handled && TimelineScroll.HorizontalOffset == horizontalOffset && _timelineZoom == zoom &&
+            (TimelineScroll.ScrollableHeight == 0 || SystemParameters.WheelScrollLines == 0 || TimelineScroll.VerticalOffset > verticalOffset),
+            "Routed wheel did not scroll the timeline vertically.");
         ApplyTimelineWheel(-60, ModifierKeys.Control, anchor);
         UpdateLayout();
         Require(_timelineZoom < zoom, "Fractional Ctrl-wheel did not zoom.");
-        ApplyTimelineWheel(120000, ModifierKeys.Shift, anchor);
+        ApplyTimelineWheel(120000, ModifierKeys.Control, anchor);
         UpdateLayout();
         Require(_timelineZoom == MaximumTimelineZoom, "Zoom maximum failed.");
-        ApplyTimelineWheel(-120000, ModifierKeys.Shift, anchor);
+        ApplyTimelineWheel(-120000, ModifierKeys.Control, anchor);
         UpdateLayout();
         Require(_timelineZoom == 1 && TimelineScroll.HorizontalOffset == 0, "Zoom did not return to fit.");
 
@@ -58,7 +65,8 @@ public partial class MainWindow
         var main = _project.MainTrack;
         TimelineScroll.ScrollToHorizontalOffset(TimelineView.XAtTime(main.Clips[0].Duration * 0.75) - 1);
         UpdateLayout();
-        var leftEdge = new Point(TimelineScroll.HorizontalOffset + 1, TimelineControl.RulerHeight + TimelineControl.RowHeight / 2);
+        var leftEdge = new Point(TimelineScroll.HorizontalOffset + 1,
+            TimelineView.TrackTop(0) + TimelineControl.RowHeightFor(main) / 2);
         Require(TimelineView.InsertionAt(leftEdge) == (main.Id, 1),
             "A scrolled drop at the left viewport edge still hit an invisible track-name column.");
         ResetTimelineZoom();
@@ -113,7 +121,7 @@ public partial class MainWindow
         var track = _project.FindTrack(trackId)!;
         var row = _project.Tracks.ToList().FindIndex(t => t.Id == trackId);
         var x = TimelineView.XAtTime(track.Clips.Take(index).Sum(c => c.Duration)) + 5;
-        var target = new Point(x, TimelineControl.RulerHeight + row * TimelineControl.RowHeight + 34);
+        var target = new Point(x, TimelineView.TrackTop(row) + TimelineControl.RowHeightFor(track) / 2);
         Require(TimelineView.InsertionAt(target) == (trackId, index), "Drop insertion slot did not match its visual marker.");
         if (!realInput) { MoveClip(clipId, trackId, index); return; }
         Activate();
@@ -218,7 +226,8 @@ public partial class MainWindow
         TimelineScroll.ScrollToVerticalOffset(0);
         Seek(_project.MainTrack.Id, 0);
         var before = _project.Tracks.ToArray();
-        await OpenTimelineMenuAsync(TimelineView, new Point(80, TimelineControl.RulerHeight + 34), realInput);
+        await OpenTimelineMenuAsync(TimelineView,
+            new Point(80, TimelineView.TrackTop(0) + TimelineControl.RowHeightFor(_project.Tracks[0]) / 2), realInput);
         Require(!SplitMenuItem.IsEnabled && !DeleteMenuItem.IsEnabled && !CopyMenuItem.IsEnabled && !RenameMenuItem.IsEnabled && UndoMenuItem.IsEnabled && !RedoMenuItem.IsEnabled,
             "An empty track exposed invalid editing actions or hid undo history.");
         TimelineMenu.IsOpen = false;
@@ -362,7 +371,7 @@ public partial class MainWindow
         {
             // The strip above clips is part of the track and remains clickable for a full-length clip.
             var row = _project.Tracks.ToList().FindIndex(candidate => candidate.Id == track.Id);
-            var point = TimelineView.PointToScreen(new Point(100, TimelineControl.RulerHeight + row * TimelineControl.RowHeight + 4));
+            var point = TimelineView.PointToScreen(new Point(100, TimelineView.TrackTop(row) + 4));
             await Task.Run(() =>
             {
                 NativeMouse.SetCursorPos((int)point.X, (int)point.Y);
@@ -432,10 +441,18 @@ public partial class MainWindow
         Require(videoTracks.Length == 2 && audioTracks.Length == videoTracks.Length &&
             _project.MainTrack.Clips.Count == 0 && ExportButton.IsEnabled && ExportTracksButton.IsVisible &&
             _activeTrackId == videoTracks[1].Id, "Imports must create video tracks with companion audio slots and preview the last video track.");
+        var firstVideoRow = _project.Tracks.ToList().FindIndex(track => track.Id == videoTracks[0].Id);
+        var firstAudioRow = _project.Tracks.ToList().FindIndex(track => track.Id == audioTracks[0].Id);
+        var videoHeight = TimelineView.TrackTop(firstVideoRow + 1) - TimelineView.TrackTop(firstVideoRow);
+        var audioHeight = TimelineView.TrackTop(firstAudioRow + 1) - TimelineView.TrackTop(firstAudioRow);
+        Require(Math.Abs(videoHeight - audioHeight * 2) < 0.001 &&
+            Math.Abs(TimelineView.ClipBounds(videoTracks[0].Clips[0].Id).Height -
+                TimelineView.ClipBounds(audioTracks[0].Clips[0].Id).Height * 2) < 0.001,
+            "Audio rows and clips must render at exactly half the video height.");
         if (audioTracks.Length >= 2)
         {
             var videoIndex = _project.Tracks.ToList().FindIndex(track => track.Id == videoTracks[0].Id);
-            Require(TimelineView.TrackInsertionAt(new Point(10, TimelineControl.RulerHeight + videoIndex * TimelineControl.RowHeight + 2)) == videoIndex,
+            Require(TimelineView.TrackInsertionAt(new Point(10, TimelineView.TrackTop(videoIndex) + 2)) == videoIndex,
                 "Track drop geometry did not target the requested row.");
             MoveTrack(audioTracks[1].Id, videoIndex);
             Require(_project.Tracks[videoIndex].Id == videoTracks[1].Id && _project.Tracks[videoIndex + 1].Id == audioTracks[1].Id &&

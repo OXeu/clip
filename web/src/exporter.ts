@@ -105,6 +105,34 @@ export function muxerFrameRate(frameRate: number): number | undefined {
 }
 
 /**
+ * mp4-muxer 直接消费 VideoEncoder 的输出顺序，而 WebCodecs 不会额外提供 DTS。
+ * quality 模式在部分硬件 H.264 编码器上会生成 B 帧，使回调里的 PTS 出现
+ * 0 → 2 → 1 这样的回退。realtime 模式要求低延迟输出，避免这类帧重排。
+ */
+export function webCodecsVideoConfig(
+  codec: string,
+  width: number,
+  height: number,
+  bitrate: number,
+  frameRate: number,
+): VideoEncoderConfig {
+  return {
+    codec,
+    width,
+    height,
+    bitrate,
+    framerate: frameRate,
+    latencyMode: 'realtime',
+  };
+}
+
+/** 识别 mp4-muxer 对帧重排的拒绝，便于安全回退到 ffmpeg.wasm。 */
+export function isNonMonotonicDtsError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Timestamps must be monotonically increasing|DTS went from/i.test(message);
+}
+
+/**
  * mp4-muxer 必须从 VideoEncoder 的输出元数据取得 avcC；部分浏览器虽然声称
  * 支持 H.264 编码，却可能不输出 chunk，或省略 decoderConfig。继续 finalize()
  * 会在依赖内部以 `decoderConfig is null` 崩溃，因此应先回退到 wasm 路线。
@@ -399,13 +427,8 @@ async function encodeVideoTrack(
   if (typeof VideoEncoder === 'undefined') {
     throw new WebCodecsUnavailableError('此浏览器没有 VideoEncoder。');
   }
-  const supported = await VideoEncoder.isConfigSupported({
-    codec,
-    width,
-    height,
-    bitrate,
-    framerate: fps,
-  });
+  const encoderConfig = webCodecsVideoConfig(codec, width, height, bitrate, fps);
+  const supported = await VideoEncoder.isConfigSupported(encoderConfig);
   if (!supported.supported) {
     throw new WebCodecsUnavailableError(`WebCodecs 不支持 ${codec} @ ${width}×${height}。`);
   }
@@ -453,14 +476,18 @@ async function encodeVideoTrack(
       encoderError = error instanceof Error ? error : new Error(String(error));
     },
   });
-  encoder.configure({
-    codec,
-    width,
-    height,
-    bitrate,
-    framerate: fps,
-    latencyMode: 'quality',
-  });
+  encoder.configure(encoderConfig);
+
+  const throwIfEncoderFailed = (): void => {
+    const failure = encoderError;
+    if (!failure) return;
+    if (isNonMonotonicDtsError(failure)) {
+      throw new WebCodecsUnavailableError(
+        '当前浏览器的视频编码器输出了重排帧，已改用 ffmpeg.wasm 保证时间戳正确。',
+      );
+    }
+    throw failure;
+  };
 
   const totalFrames = clips.reduce(
     (total, clip) => total + Math.max(1, Math.round(clipDuration(clip) * fps)),
@@ -481,7 +508,7 @@ async function encodeVideoTrack(
    * 以原始 YUV 为准可以确认采样本身是一致的。
    */
   const emit = async (frame: VideoFrame): Promise<void> => {
-    if (encoderError) throw encoderError;
+    throwIfEncoderFailed();
     const needsResample = frame.displayWidth !== width || frame.displayHeight !== height;
     let source: CanvasImageSource = frame;
     if (needsResample) {
@@ -519,7 +546,7 @@ async function encodeVideoTrack(
     // 编码队列有界，避免内存无限增长，同时让出主线程。
     while (encoder.encodeQueueSize > 8) {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      if (encoderError) throw encoderError;
+      throwIfEncoderFailed();
       checkAborted(signal);
     }
   };
@@ -528,7 +555,7 @@ async function encodeVideoTrack(
   try {
     for (const clip of clips) {
       checkAborted(signal);
-      if (encoderError) throw encoderError;
+      throwIfEncoderFailed();
       const key = clip.media.path.toLowerCase();
       let source = openDecoders.get(key);
       if (!source) {
@@ -592,7 +619,7 @@ async function encodeVideoTrack(
     }
 
     await encoder.flush();
-    if (encoderError) throw encoderError;
+    throwIfEncoderFailed();
     const readinessError = videoMuxerReadinessError(encodedChunkCount, receivedDecoderConfig);
     if (readinessError) throw new WebCodecsUnavailableError(readinessError);
     report({ fraction: 1, message: '画面编码完成' });

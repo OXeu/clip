@@ -127,6 +127,36 @@ describe('音视频分轨与对齐绑定', () => {
     assert.equal(imported.audioTrack.companionGroupId, imported.videoTrack.companionGroupId);
   });
 
+  it('空伴生音轨不阻止视频分割，也不会被凭空填充', () => {
+    const project = new EditProject();
+    const imported = project.importSeparated(media);
+    assert.ok(project.delete(imported.audioTrack.clips[0]!.id));
+    assert.ok(project.split(imported.videoTrack.id, 4));
+    assert.equal(project.findTrack(imported.videoTrack.id)!.clips.length, 2);
+    assert.equal(project.findTrack(imported.audioTrack.id)!.clips.length, 0);
+  });
+
+  it('非空伴生轨不覆盖切点时仍拒绝原子分割', () => {
+    const project = new EditProject();
+    const imported = project.importSeparated(media);
+    const audioRight = project.split(imported.audioTrack.id, 3);
+    assert.ok(audioRight);
+    assert.ok(project.delete(audioRight));
+    assert.equal(project.split(imported.videoTrack.id, 5), undefined);
+  });
+
+  it('删空视频轨后导入新素材不会占用原伴生槽', () => {
+    const project = new EditProject();
+    const first = project.importSeparated(media);
+    const firstGroup = first.videoTrack.companionGroupId;
+    assert.ok(project.delete(first.videoTrack.clips[0]!.id));
+    const second = project.importSeparated({ ...media, path: 'angle-b.mp4' });
+    assert.equal(project.findTrack(first.videoTrack.id)?.companionGroupId, firstGroup);
+    assert.equal(project.companionTracks(first.videoTrack.id).length, 2);
+    assert.notEqual(second.videoTrack.id, first.videoTrack.id);
+    assert.notEqual(second.videoTrack.companionGroupId, firstGroup);
+  });
+
   it('拖动任一伴生轨都会整组排序，音频槽不会脱离视频轨', () => {
     const project = new EditProject();
     const first = project.importSeparated(media);

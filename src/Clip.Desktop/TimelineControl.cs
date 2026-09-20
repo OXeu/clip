@@ -13,8 +13,10 @@ public sealed class TimelineControl : FrameworkElement
     public const double ContentInset = 32;
     public const double RulerHeight = 28;
     public const double RowHeight = 68;
+    public const double AudioRowHeight = RowHeight / 2;
     public const double TrackHandleWidth = 24;
     private const double ClipHeight = 48;
+    private const double AudioClipHeight = ClipHeight / 2;
     private Point _mouseDown;
     private Guid? _pressedClip;
     private Guid? _draggedClip;
@@ -40,11 +42,27 @@ public sealed class TimelineControl : FrameworkElement
     public event Action<Guid, Guid, int>? MoveRequested;
     public event Action<Guid, int>? TrackMoveRequested;
     public event Action<Point>? AutoScrollRequested;
-    public double ContentHeight => RulerHeight + (Project?.Tracks.Count ?? 1) * RowHeight + 8;
+    public double ContentHeight => RulerHeight + (Project?.Tracks.Sum(RowHeightFor) ?? RowHeight) + 8;
     public double Duration { get; set; }
     private double Scale => Math.Max(1, ActualWidth - ContentInset - 20) / Math.Max(Duration, 1);
     public double TimeAtX(double x) => Math.Clamp((x - ContentInset) / Scale, 0, Duration);
     public double XAtTime(double time) => ContentInset + Math.Clamp(time, 0, Duration) * Scale;
+    public static double RowHeightFor(VideoTrack track) => track.Kind == TrackKind.Audio ? AudioRowHeight : RowHeight;
+    public double TrackTop(int index) => RulerHeight + (Project?.Tracks.Take(index).Sum(RowHeightFor) ?? index * RowHeight);
+
+    private (int Index, VideoTrack Track, double Top, double Height)? TrackAtY(double y)
+    {
+        if (Project is null) return null;
+        var top = RulerHeight;
+        for (var index = 0; index < Project.Tracks.Count; index++)
+        {
+            var track = Project.Tracks[index];
+            var height = RowHeightFor(track);
+            if (y >= top && y < top + height) return (index, track, top, height);
+            top += height;
+        }
+        return null;
+    }
 
     public TimelineControl()
     {
@@ -58,16 +76,18 @@ public sealed class TimelineControl : FrameworkElement
     {
         if (Project?.FindClip(id) is not { } p) return Rect.Empty;
         var row = Project.Tracks.ToList().FindIndex(t => t.Id == p.TrackId);
-        return new Rect(XAtTime(p.TimelineStart), RulerHeight + row * RowHeight + 10,
-            Math.Max(2, p.Clip.Duration * Scale - 3), ClipHeight);
+        var track = Project.Tracks[row];
+        var rowHeight = RowHeightFor(track);
+        var clipHeight = track.Kind == TrackKind.Audio ? AudioClipHeight : ClipHeight;
+        return new Rect(XAtTime(p.TimelineStart), TrackTop(row) + (rowHeight - clipHeight) / 2,
+            Math.Max(2, p.Clip.Duration * Scale - 3), clipHeight);
     }
 
     public (Guid Track, int Index)? InsertionAt(Point point)
     {
         if (Project is null || point.Y < VerticalOffset + RulerHeight) return null;
-        var row = (int)((point.Y - RulerHeight) / RowHeight);
-        if (row < 0 || row >= Project.Tracks.Count) return null;
-        var track = Project.Tracks[row];
+        if (TrackAtY(point.Y) is not { } hit) return null;
+        var track = hit.Track;
         var time = TimeAtX(point.X);
         double offset = 0;
         for (var i = 0; i < track.Clips.Count; i++)
@@ -81,9 +101,8 @@ public sealed class TimelineControl : FrameworkElement
     public int? TrackInsertionAt(Point point)
     {
         if (Project is null || point.Y < VerticalOffset + RulerHeight) return null;
-        var raw = (int)Math.Floor((point.Y - RulerHeight) / RowHeight + 0.5);
         return Project.TrackInsertionBoundaries()
-            .OrderBy(boundary => Math.Abs(boundary - raw))
+            .OrderBy(boundary => Math.Abs(TrackTop(boundary) - point.Y))
             .ThenByDescending(boundary => boundary)
             .First();
     }
@@ -96,23 +115,26 @@ public sealed class TimelineControl : FrameworkElement
         for (var row = 0; row < Project.Tracks.Count; row++)
         {
             var track = Project.Tracks[row];
-            var top = RulerHeight + row * RowHeight;
+            var top = TrackTop(row);
+            var rowHeight = RowHeightFor(track);
+            var clipHeight = track.Kind == TrackKind.Audio ? AudioClipHeight : ClipHeight;
+            var clipTop = top + (rowHeight - clipHeight) / 2;
             if (track.Id == SelectedTrackId || MultiSelectedTrackIds.Contains(track.Id))
             {
-                dc.DrawRectangle(Brush("ColorSelectionBackground"), null, new Rect(0, top, ActualWidth, RowHeight));
+                dc.DrawRectangle(Brush("ColorSelectionBackground"), null, new Rect(0, top, ActualWidth, rowHeight));
             }
             else if (track.Id == ActiveTrackId)
-                dc.DrawRectangle(Brush("ColorNeutralBackground2"), null, new Rect(0, top, ActualWidth, RowHeight));
-            dc.DrawLine(new Pen(Brush("ColorSubtleStroke"), 1), new Point(0, top + RowHeight), new Point(ActualWidth, top + RowHeight));
+                dc.DrawRectangle(Brush("ColorNeutralBackground2"), null, new Rect(0, top, ActualWidth, rowHeight));
+            dc.DrawLine(new Pen(Brush("ColorSubtleStroke"), 1), new Point(0, top + rowHeight), new Point(ActualWidth, top + rowHeight));
             if (track.Clips.Count == 0)
                 Text(dc, track.Kind == TrackKind.Audio && track.CompanionGroupId.HasValue
                     ? "伴生音频槽（当前无片段）"
-                    : "拖拽片段到这里", HorizontalOffset + ContentInset, top + 25, 12,
+                    : "拖拽片段到这里", HorizontalOffset + ContentInset, top + (rowHeight - 14) / 2, 12,
                     track.Id == SelectedTrackId ? "ColorSelectionForeground" : "ColorNeutralForeground3");
             double offset = 0;
             foreach (var clip in track.Clips)
             {
-                var rect = new Rect(XAtTime(offset), top + 10, Math.Max(2, clip.Duration * Scale - 3), ClipHeight);
+                var rect = new Rect(XAtTime(offset), clipTop, Math.Max(2, clip.Duration * Scale - 3), clipHeight);
                 offset += clip.Duration;
                 var selected = clip.Id == SelectedId;
                 var foreground = selected ? "ColorSelectionForeground" : "ColorNeutralForeground1";
@@ -148,42 +170,44 @@ public sealed class TimelineControl : FrameworkElement
             var rail = track.Id == SelectedTrackId || MultiSelectedTrackIds.Contains(track.Id)
                 ? "ColorSelectionBackground"
                 : track.Id == ActiveTrackId ? "ColorNeutralBackground2" : "ColorNeutralBackground1";
-            dc.DrawRectangle(Brush(rail), null, new Rect(HorizontalOffset, top, TrackHandleWidth + 4, RowHeight));
+            dc.DrawRectangle(Brush(rail), null, new Rect(HorizontalOffset, top, TrackHandleWidth + 4, rowHeight));
             if (isCompanionAudio)
             {
                 var companionBrush = Brush(draggingGroup ? "ColorBrandBackground" : "ColorNeutralForeground3");
                 var companionPen = new Pen(companionBrush, 1.5);
-                dc.DrawLine(companionPen, new Point(handleX + 7, top), new Point(handleX + 7, top + RowHeight / 2));
-                dc.DrawLine(companionPen, new Point(handleX + 7, top + RowHeight / 2), new Point(handleX + 14, top + RowHeight / 2));
-                dc.DrawEllipse(companionBrush, null, new Point(handleX + 14, top + RowHeight / 2), 2.5, 2.5);
+                dc.DrawLine(companionPen, new Point(handleX + 7, top), new Point(handleX + 7, top + rowHeight / 2));
+                dc.DrawLine(companionPen, new Point(handleX + 7, top + rowHeight / 2), new Point(handleX + 14, top + rowHeight / 2));
+                dc.DrawEllipse(companionBrush, null, new Point(handleX + 14, top + rowHeight / 2), 2.5, 2.5);
             }
             else if (track.Clips.Count > 0 || track.CompanionGroupId.HasValue)
             {
-                var handleRect = new Rect(handleX, top + 21, 14, 26);
+                var handleHeight = Math.Min(26, rowHeight - 8);
+                var handleRect = new Rect(handleX, top + (rowHeight - handleHeight) / 2, 14, handleHeight);
                 dc.DrawRoundedRectangle(Brush(draggingGroup ? "ColorBrandBackground" : "ColorNeutralBackground2"),
                     null, handleRect, 5, 5);
                 var handlePen = new Pen(Brush(draggingGroup ? "ColorSelectionForeground" : "ColorNeutralForeground3"), 1);
-                foreach (var handleY in new[] { top + 28, top + 34, top + 40 })
+                foreach (var handleY in new[] { top + rowHeight / 2 - 6, top + rowHeight / 2, top + rowHeight / 2 + 6 })
                     dc.DrawLine(handlePen, new Point(handleX + 4, handleY), new Point(handleX + 10, handleY));
             }
             if (track.BindingId.HasValue)
             {
                 var binding = Brush("ColorBrandStroke");
-                dc.DrawLine(new Pen(binding, 2), new Point(handleX + 18, top + 12), new Point(handleX + 18, top + RowHeight - 12));
-                dc.DrawEllipse(binding, null, new Point(handleX + 18, top + RowHeight / 2), 3, 3);
+                var bindingInset = Math.Min(12, rowHeight / 4);
+                dc.DrawLine(new Pen(binding, 2), new Point(handleX + 18, top + bindingInset), new Point(handleX + 18, top + rowHeight - bindingInset));
+                dc.DrawEllipse(binding, null, new Point(handleX + 18, top + rowHeight / 2), 3, 3);
             }
             if (track.Id == ExportPreviewTrackId)
-                dc.DrawRectangle(null, new Pen(Brush("ColorBrandStroke"), 2), new Rect(1, top + 1, Math.Max(0, ActualWidth - 2), RowHeight - 2));
+                dc.DrawRectangle(null, new Pen(Brush("ColorBrandStroke"), 2), new Rect(1, top + 1, Math.Max(0, ActualWidth - 2), rowHeight - 2));
             if (_drop is { } drop && drop.Track == track.Id)
             {
                 var x = XAtTime(track.Clips.Take(drop.Index).Sum(c => c.Duration));
-                dc.DrawLine(new Pen(Brush("ColorBrandBackground"), 3), new Point(x, top + 2), new Point(x, top + RowHeight - 2));
+                dc.DrawLine(new Pen(Brush("ColorBrandBackground"), 3), new Point(x, top + 2), new Point(x, top + rowHeight - 2));
                 dc.DrawEllipse(Brush("ColorBrandBackground"), null, new Point(x, top + 3), 4, 4);
             }
         }
         if (_trackDrop is { } trackDrop)
         {
-            var y = RulerHeight + trackDrop * RowHeight;
+            var y = TrackTop(trackDrop);
             dc.DrawLine(new Pen(Brush("ColorBrandBackground"), 3),
                 new Point(HorizontalOffset + 3, y), new Point(Math.Max(HorizontalOffset + 3, ActualWidth - 3), y));
         }
@@ -227,9 +251,8 @@ public sealed class TimelineControl : FrameworkElement
         }
         else
         {
-            var row = (int)((point.Y - RulerHeight) / RowHeight);
-            if (row < 0 || row >= Project.Tracks.Count) return;
-            var track = Project.Tracks[row];
+            if (TrackAtY(point.Y) is not { } hit) return;
+            var track = hit.Track;
             if (MultiSelectMode && e.ChangedButton == MouseButton.Left)
             {
                 TrackToggled?.Invoke(track.Id);
@@ -357,8 +380,8 @@ public sealed class TimelineControl : FrameworkElement
     {
         if (!Waveforms.TryGetValue(clip.Media.Path, out var peaks) || peaks.Length == 0 || rect.Width < 3) return;
         var pen = new Pen(Brush(selected ? "ColorSelectionForeground" : "ColorBrandForeground"), 1.3);
-        var center = rect.Top + 32;
-        const double amplitude = 10;
+        var center = rect.Top + rect.Height / 2;
+        var amplitude = Math.Min(10, Math.Max(2, rect.Height / 2 - 2));
         var bars = Math.Max(1, (int)(rect.Width / 3));
         dc.PushClip(new RectangleGeometry(rect, 6, 6));
         for (var bar = 0; bar < bars; bar++)

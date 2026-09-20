@@ -735,7 +735,8 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
         () => {
           const text = document.getElementById('timeline-summary')?.textContent ?? '';
           const seconds = Number(/([\d.]+)\s*秒/.exec(text)?.[1] ?? '0');
-          return seconds > 0.5;
+          const progress = document.getElementById('progress') as HTMLProgressElement | null;
+          return seconds > 0.5 && progress?.hidden === true;
         },
         undefined,
         { timeout: 120_000 },
@@ -781,7 +782,13 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
         `${scheme}: 双击应恢复 content-fit`,
       );
 
-      // 普通滚轮以指针为锚缩放，不能在旧画布宽度上重复累乘。
+      // 普通滚轮只纵向浏览轨道，不改变缩放或水平位置。
+      await page.locator('#timeline-scroll').evaluate((element) => {
+        const scroll = element as HTMLElement;
+        scroll.style.height = '120px';
+        scroll.style.maxHeight = '120px';
+        scroll.scrollTop = 0;
+      });
       const timelineBox = await page.locator('#timeline-scroll').boundingBox();
       assert.ok(timelineBox, `${scheme}: 应能读取时间轴位置`);
       const timelineBefore = await page.evaluate(() => {
@@ -792,6 +799,9 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
           anchor,
           clientWidth: scroll.clientWidth,
           canvasWidth: canvas.clientWidth,
+          scrollLeft: scroll.scrollLeft,
+          scrollTop: scroll.scrollTop,
+          hasVerticalOverflow: scroll.scrollHeight > scroll.clientHeight,
           // 与时间轴的 32px 左侧轨道把手区和 20px 右侧留白一致。
           normalizedAnchor: (scroll.scrollLeft + anchor - 32) / Math.max(1, canvas.clientWidth - 52),
         };
@@ -800,8 +810,26 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
         clientX: timelineBox!.x + timelineBefore.anchor,
         clientY: timelineBox!.y + 40,
       };
+      assert.equal(timelineBefore.hasVerticalOverflow, true, `${scheme}: 测试时间轴应具有纵向滚动空间`);
+      await page.locator('#timeline-scroll').dispatchEvent('wheel', { ...wheelPoint, deltaY: 120 });
+      const timelineVerticallyScrolled = await page.evaluate(() => {
+        const scroll = document.getElementById('timeline-scroll')!;
+        return {
+          canvasWidth: document.getElementById('timeline')!.clientWidth,
+          scrollLeft: scroll.scrollLeft,
+          scrollTop: scroll.scrollTop,
+        };
+      });
+      assert.equal(timelineVerticallyScrolled.canvasWidth, timelineBefore.canvasWidth,
+        `${scheme}: 普通滚轮不应缩放时间轴`);
+      assert.equal(timelineVerticallyScrolled.scrollLeft, timelineBefore.scrollLeft,
+        `${scheme}: 普通滚轮不应水平移动`);
+      assert.ok(timelineVerticallyScrolled.scrollTop > timelineBefore.scrollTop,
+        `${scheme}: 普通滚轮应纵向滚动`);
+
+      // Ctrl + 滚轮以指针为锚缩放，不能在旧画布宽度上重复累乘。
       for (let index = 0; index < 8; index++) {
-        await page.locator('#timeline-scroll').dispatchEvent('wheel', { ...wheelPoint, deltaY: -120 });
+        await page.locator('#timeline-scroll').dispatchEvent('wheel', { ...wheelPoint, deltaY: -120, ctrlKey: true });
       }
       const timelineZoomed = await page.evaluate((anchor) => {
         const scroll = document.getElementById('timeline-scroll')!;
@@ -838,9 +866,9 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
       assert.equal(timelineShifted.canvasWidth, timelineZoomed.canvasWidth, `${scheme}: Shift + 滚轮不应改变缩放`);
       assert.equal(timelineShifted.scrollLeft - timelineZoomed.scrollLeft, 120, `${scheme}: Shift + 滚轮应横向滚动`);
 
-      // 向下滚动回到适应状态，画布必须重新等于窗口宽度且仍有内容。
+      // Ctrl + 向下滚动回到适应状态，画布必须重新等于窗口宽度且仍有内容。
       for (let index = 0; index < 30; index++) {
-        await page.locator('#timeline-scroll').dispatchEvent('wheel', { ...wheelPoint, deltaY: 120 });
+        await page.locator('#timeline-scroll').dispatchEvent('wheel', { ...wheelPoint, deltaY: 120, ctrlKey: true });
       }
       const timelineFitted = await page.evaluate(() => {
         const scroll = document.getElementById('timeline-scroll')!;
@@ -974,7 +1002,8 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     assert.equal(editorLayout.documentWidth, editorLayout.viewportWidth, '导入后也不应撑宽页面');
     assert.equal(editorLayout.timelineRight, editorLayout.viewportWidth, '时间轴应完整收在视口内');
     assert.ok(editorLayout.toolbarScrollWidth > editorLayout.toolbarWidth, '窄屏时操作栏应在内部横向滚动');
-    assert.equal(editorLayout.timelineCanvasHeight, 240, '有声素材应显示视频轨、音频轨和一条末尾空轨');
+    assert.equal(editorLayout.timelineCanvasHeight, 206,
+      '有声素材应显示两条 68px 视频轨和一条半高的 34px 音频轨');
     assert.match(editorLayout.tapHighlight, /rgba\(0, 0, 0, 0\)|transparent/, '时间轴触摸不应出现蓝色点击层');
 
     await page.waitForFunction(() => sessionStorage.getItem('clip.edit-session.v1') !== null);
