@@ -8,3 +8,8 @@ artifacts/
 *.user
 *.suo
 TestResults/
+web/node_modules/
+web/dist/
+# ffmpeg.wasm 核心体积大且可由 web/scripts/copy-ffmpeg-core.mjs 重新生成。
+web/public/ffmpeg/
+web/e2e-env.txt

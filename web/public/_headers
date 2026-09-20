@@ -1,0 +1,5 @@
+# Netlify / Cloudflare Pages 会从构建产物根目录读取此文件。
+# ffmpeg.wasm 的多线程核心依赖 SharedArrayBuffer 和跨源隔离。
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp

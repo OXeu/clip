@@ -7,4 +7,7 @@
     <Project Path="tests/Clip.Tests/Clip.Tests.csproj" />
     <Project Path="tests/Clip.UpdateTests/Clip.UpdateTests.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Clip.Conformance/Clip.Conformance.csproj" />
+  </Folder>
 </Solution>

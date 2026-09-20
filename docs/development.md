@@ -14,7 +14,29 @@ dotnet run --project src/Clip.Desktop
 
 下载脚本会校验 [ffmpeg-version.json](../scripts/ffmpeg-version.json) 中固定的 SHA-256。已有 FFmpeg 时，也可以将 `CLIP_FFMPEG_DIR` 指向同时包含 FFmpeg 和 FFprobe 的目录，或通过 PATH 提供它们。
 
-Linux 可以运行核心测试、FFmpeg 集成测试和交叉编译；WPF 窗口只能在 Windows 上运行。
+Linux 可以运行核心测试、FFmpeg 集成测试、网页版测试和交叉编译；WPF 窗口只能在 Windows 上运行。
+
+## 网页版
+
+[`web/`](../web/README.md) 是浏览器实现，与桌面版共用同一套编辑语义。
+
+```bash
+cd web
+npm install
+npm test                                    # 模型与 filter graph 一致性（无需浏览器）
+node --experimental-strip-types --test test/e2e.test.ts   # 真实 Chromium + FFprobe
+npm run build                               # 输出 web/dist
+```
+
+网页版的一致性由 [`tools/Clip.Conformance`](../tools/Clip.Conformance) 保证：它用
+`src/Clip.Core` 里真正的 `ExportService` 生成 filter graph 基准，网页版测试逐字对比。
+修改 `ExportService` 后需要重新生成基准：
+
+```bash
+dotnet run --project tools/Clip.Conformance -c Release -- web/test/fixtures/conformance.json
+```
+
+CI 会重跑一次并要求无差异；未同步更新基准会导致构建失败。
 
 ## 测试
 
@@ -80,6 +102,8 @@ node --test scripts/publish-release.test.cjs
 | --- | --- |
 | [src/Clip.Core](../src/Clip.Core) | 时间轴、媒体探测、FFmpeg 导出与更新逻辑 |
 | [src/Clip.Desktop](../src/Clip.Desktop) | WPF 窗口、预览、时间轴交互、资源管理器集成 |
+| [web](../web) | 静态网页版：编辑模型、WebCodecs 导出、ffmpeg.wasm 兜底 |
+| [tools/Clip.Conformance](../tools/Clip.Conformance) | 用桌面端实现生成网页版一致性基准 |
 | [tests/Clip.Tests](../tests/Clip.Tests) | 核心编辑与 FFmpeg 集成测试 |
 | [tests/Clip.UpdateTests](../tests/Clip.UpdateTests) | 更新检测、安装、回滚与 Windows 进程测试 |
 | [scripts](../scripts) | FFmpeg 下载、Windows 发布、打包和启动诊断 |

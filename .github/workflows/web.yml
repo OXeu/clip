@@ -1,0 +1,105 @@
+name: Web build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
+
+jobs:
+  web:
+    name: Web tests and static build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Install Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: web
+        run: npm run typecheck
+
+      # 一致性基准必须与桌面端实现保持同步：重新生成后若无差异即通过。
+      - name: Verify filter graph conformance fixture is current
+        run: |
+          dotnet run --project tools/Clip.Conformance -c Release -- web/test/fixtures/conformance.json
+          git diff --exit-code -- web/test/fixtures/conformance.json
+
+      - name: Unit tests (model and conformance)
+        working-directory: web
+        run: node --experimental-strip-types --test test/model.test.ts test/conformance.test.ts
+
+      - name: Install Playwright Chromium
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      - name: Download FFmpeg for end-to-end verification
+        working-directory: web
+        run: |
+          # ffmpeg-static / ffprobe-static 提供固定的 Linux x64 构建，
+          # 避免依赖 runner 预装的 FFmpeg 版本。
+          npm install --no-save ffmpeg-static ffprobe-static
+          node -e "
+            const { writeFileSync } = require('fs');
+            writeFileSync('e2e-env.txt',
+              'CLIP_FFMPEG=' + require('ffmpeg-static') + '\n' +
+              'CLIP_FFPROBE=' + require('ffprobe-static').path + '\n');
+          "
+          cat e2e-env.txt
+
+      - name: End-to-end export tests (real Chromium + FFprobe)
+        working-directory: web
+        run: |
+          set -a
+          . ./e2e-env.txt
+          set +a
+          node --experimental-strip-types --test test/e2e.test.ts
+
+      - name: Build static site
+        working-directory: web
+        run: npm run build
+
+      - name: Upload static site
+        uses: actions/upload-artifact@v5
+        with:
+          name: Clip-web-static
+          path: web/dist
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload verification artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: Clip-web-verification
+          path: web/test/artifacts
+          retention-days: 14
+          if-no-files-found: ignore

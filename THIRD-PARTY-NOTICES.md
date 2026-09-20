@@ -26,3 +26,32 @@ The distributor identifies this essentials distribution as GPL v3. It contains G
 The application package also contains Microsoft .NET runtime components, under their included license terms. Microsoft .NET source and notices: https://github.com/dotnet/runtime and https://github.com/dotnet/wpf.
 
 NVIDIA NVENC/NVDEC execution requires a supported NVIDIA GPU and driver supplied by the end user. No NVIDIA driver or CUDA toolkit is bundled.
+
+## Web 版（Clip Web）
+
+`web/` 目录是 Clip 的浏览器实现，自有代码同样采用 MIT License。它引入以下第三方组件：
+
+### ffmpeg.wasm
+
+[ffmpeg.wasm](https://github.com/ffmpegwasm/ffmpeg)（`@ffmpeg/ffmpeg`、`@ffmpeg/core`、
+`@ffmpeg/core-mt`，0.12.10 系列）在浏览器中通过 WebAssembly 运行 FFmpeg，采用
+[MIT License](https://github.com/ffmpegwasm/ffmpeg/blob/main/LICENSE)。
+
+构建产物包含 `${package}/dist/esm/ffmpeg-core.wasm` 等**未经修改的**核心文件，由
+`web/scripts/copy-ffmpeg-core.mjs` 复制到 `web/public/ffmpeg/`，部署时随站点一起托管。
+这些核心内嵌了 GPL 组件（含 **libx264**），因此**分发站点时必须满足 FFmpeg 的 GPL 义务**，
+包括提供对应源码。上游 FFmpeg 源码本身可能不足以满足全部义务，需以实际构建的对应源码为准。
+
+### mp4box.js
+
+[mp4box.js](https://github.com/gpac/mp4box.js)（2.4.1；包含 1.0.6 起发布的 QuickTime `meta` 解析修复）用于 MP4/MOV 解封装，采用
+[BSD-3-Clause](https://github.com/gpac/mp4box.js/blob/master/LICENSE)。
+
+### mp4-muxer
+
+[mp4-muxer](https://github.com/Vanilagy/mp4-muxer)（5.2.2）用于把 WebCodecs 产出的
+编码块封装成 MP4，采用 [MIT License](https://github.com/Vanilagy/mp4-muxer/blob/main/LICENSE)。
+
+### 构建工具
+
+包括 [Vite](https://vite.dev/) 与 TypeScript；Playwright 仅用于测试，不会进入发布产物。

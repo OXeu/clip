@@ -65,6 +65,20 @@ public partial class MainWindow
         UpdateLayout();
     }
 
+    private void VerifyPreviewZoom()
+    {
+        SetPreviewZoom(1, false);
+        Require(ApplyPreviewWheel(120) && _previewZoom > 1 &&
+            PreviewScale.ScaleX == _previewZoom && PreviewPosterScale.ScaleX == _previewZoom,
+            "Preview wheel did not zoom both the video and fallback poster from content-fit.");
+        var wheel = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120)
+            { RoutedEvent = Mouse.PreviewMouseWheelEvent };
+        PreviewCanvas.RaiseEvent(wheel);
+        Require(wheel.Handled && Math.Abs(_previewZoom - 1) < 0.001,
+            "Routed preview wheel was not handled or did not restore content-fit.");
+        SetPreviewZoom(1, false);
+    }
+
     private void RaiseEditorKey(Key key, UIElement? target = null, bool handled = true)
     {
         target ??= TimelineView;
@@ -435,6 +449,7 @@ public partial class MainWindow
         Restore(false);
         var mainDuration = _project.MainTrack.Duration;
         VerifyWheelNavigation();
+        VerifyPreviewZoom();
 
         if (realMedia)
         {

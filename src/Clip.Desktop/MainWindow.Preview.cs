@@ -23,6 +23,37 @@ public partial class MainWindow
     private Guid? _playbackClip;
     private double? _pendingSeek;
     private DateTime _seekStarted;
+    private double _previewZoom = 1;
+    private const double MinimumPreviewZoom = 0.25;
+    private const double MaximumPreviewZoom = 4;
+
+    private void PreviewCanvasMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e) =>
+        e.Handled = ApplyPreviewWheel(e.Delta);
+
+    private void PreviewCanvasMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2 || _project.Sources.Count == 0) return;
+        SetPreviewZoom(1);
+        e.Handled = true;
+    }
+
+    private bool ApplyPreviewWheel(int delta)
+    {
+        if (_project.Sources.Count == 0 || delta == 0) return false;
+        SetPreviewZoom(_previewZoom * Math.Pow(1.12, delta / 120.0));
+        return true;
+    }
+
+    /// <summary>1× is always Stretch.Uniform/content-fit; zoom is relative to that fitted frame.</summary>
+    private void SetPreviewZoom(double zoom, bool announce = true)
+    {
+        if (!double.IsFinite(zoom)) return;
+        _previewZoom = Math.Clamp(zoom, MinimumPreviewZoom, MaximumPreviewZoom);
+        PreviewScale.ScaleX = PreviewScale.ScaleY = _previewZoom;
+        PreviewPosterScale.ScaleX = PreviewPosterScale.ScaleY = _previewZoom;
+        PreviewCanvas.ToolTip = $"预览 {_previewZoom:P0} · 滚轮缩放 · 双击恢复适应";
+        if (announce) StatusText.Text = _previewZoom == 1 ? "预览已恢复适应" : $"预览缩放 {_previewZoom:P0}";
+    }
 
     private PreviewAsset AssetFor(MediaInfo media)
     {

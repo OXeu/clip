@@ -55,10 +55,17 @@
 
     <Grid x:Name="PreviewRegion" Grid.Row="1" ClipToBounds="True">
       <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition x:Name="PreviewFooterRow" Height="0" /></Grid.RowDefinitions>
-      <Grid x:Name="PreviewCanvas" Background="{DynamicResource ColorNeutralBackground1}">
+      <Grid x:Name="PreviewCanvas" Background="{DynamicResource ColorNeutralBackground1}" ClipToBounds="True"
+            PreviewMouseWheel="PreviewCanvasMouseWheel" PreviewMouseLeftButtonDown="PreviewCanvasMouseDown"
+            ToolTip="滚轮缩放预览 · 双击恢复适应">
         <MediaElement x:Name="Preview" LoadedBehavior="Manual" UnloadedBehavior="Close" Stretch="Uniform" ScrubbingEnabled="True"
-                      MediaOpened="PreviewOpened" MediaEnded="PreviewEnded" MediaFailed="PreviewFailed" Visibility="Hidden" />
-        <Image x:Name="PreviewPoster" Stretch="Uniform" Visibility="Collapsed" />
+                      RenderTransformOrigin="0.5,0.5"
+                      MediaOpened="PreviewOpened" MediaEnded="PreviewEnded" MediaFailed="PreviewFailed" Visibility="Hidden">
+          <MediaElement.RenderTransform><ScaleTransform x:Name="PreviewScale" ScaleX="1" ScaleY="1" /></MediaElement.RenderTransform>
+        </MediaElement>
+        <Image x:Name="PreviewPoster" Stretch="Uniform" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
+          <Image.RenderTransform><ScaleTransform x:Name="PreviewPosterScale" ScaleX="1" ScaleY="1" /></Image.RenderTransform>
+        </Image>
         <StackPanel x:Name="EmptyPreview" HorizontalAlignment="Center" VerticalAlignment="Center" Width="440" Margin="24">
           <Border Width="64" Height="64" CornerRadius="{StaticResource RadiusHero}" Background="{DynamicResource ColorBrandBackground2}" HorizontalAlignment="Center">
             <local:RemixIcon Kind="Film" Width="28" Height="28" Foreground="{DynamicResource ColorBrandForeground}" HorizontalAlignment="Center" />

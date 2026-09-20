@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clip · 视频剪辑</title>
+    <meta name="description" content="轻量的浏览器视频剪辑工具：拖入素材，剪出需要的片段，按轨道导出 MP4。" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon.png" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="command-header">
+        <div class="brand">
+          <img src="./icon.png" alt="Clip" width="48" height="48" />
+        </div>
+        <div class="command-actions">
+          <button id="import-button" class="btn btn-quiet" type="button" aria-label="导入素材">
+            <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-import-line"></use></svg><span class="btn-label">导入素材</span>
+          </button>
+          <button id="export-button" class="btn btn-primary" type="button" disabled>
+            <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-export-line"></use></svg><span class="btn-label">导出视频</span>
+          </button>
+          <button id="cancel-button" class="btn btn-quiet" type="button" hidden>取消</button>
+          <button id="settings-button" class="btn btn-icon" type="button" title="设置" aria-label="设置">
+            <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-settings-3-line"></use></svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="preview-region is-empty" id="preview-region">
+        <div class="preview-canvas" id="preview-canvas" title="滚轮或双指缩放预览 · 双击恢复适应">
+          <canvas id="preview-frame" class="preview-frame" aria-label="视频预览画面" hidden></canvas>
+          <video
+            id="preview"
+            class="preview-decoder"
+            playsinline
+            webkit-playsinline
+            x5-playsinline
+            x5-video-player-type="h5-page"
+            x5-video-player-fullscreen="false"
+            disablepictureinpicture
+            disableremoteplayback
+            controlslist="nodownload nofullscreen noremoteplayback"
+            preload="auto"
+            tabindex="-1"
+            aria-hidden="true"
+          ></video>
+          <div class="empty-state" id="empty-state">
+            <div class="empty-badge" aria-hidden="true">
+              <svg class="ri-icon ri-icon-large"><use href="./remixicon.svg#ri-film-line"></use></svg>
+            </div>
+            <h1>留下精彩的片段</h1>
+            <p>导入视频，从这里开始剪辑。</p>
+            <button id="empty-import" class="btn btn-primary" type="button">
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-import-line"></use></svg>导入视频
+            </button>
+            <p class="empty-shortcut"><span class="keycap">Ctrl + O</span> 支持一次导入多个素材 · 全部在本机处理</p>
+          </div>
+        </div>
+        <div class="preview-footer" id="preview-footer" hidden>
+          <div>
+            <span class="timecode" id="position-text">00:00:00.000</span>
+            <span class="timecode total" id="total-text">/ 00:00:00.000</span>
+          </div>
+          <div class="playback-controls">
+            <button id="step-back" class="btn btn-icon" type="button" title="上一帧 (←)" aria-label="上一帧">
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-skip-back-mini-line"></use></svg>
+            </button>
+            <button id="play-button" class="btn btn-play" type="button" title="播放 / 暂停 (Space)" aria-label="播放或暂停" disabled>
+              <svg class="ri-icon" aria-hidden="true"><use id="play-icon" href="./remixicon.svg#ri-play-fill"></use></svg>
+            </button>
+            <button id="step-forward" class="btn btn-icon" type="button" title="下一帧 (→)" aria-label="下一帧">
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-skip-forward-mini-line"></use></svg>
+            </button>
+          </div>
+          <div class="footer-hint">
+            <span>播放 / 暂停</span>
+            <span class="keycap">Space</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="timeline-region" id="timeline-region" hidden>
+        <div class="timeline-toolbar">
+          <div class="timeline-tools">
+            <span class="section-title">时间轴</span>
+            <button id="split-button" class="btn btn-quiet" type="button" title="在播放头处分割 (S)" disabled>
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-scissors-line"></use></svg>分割
+            </button>
+            <button id="delete-button" class="btn btn-quiet" type="button" title="删除片段 (Delete)" disabled>
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-delete-bin-line"></use></svg>删除
+            </button>
+            <span class="divider" aria-hidden="true"></span>
+            <button id="undo-button" class="btn btn-icon" type="button" title="撤销 (Ctrl+Z)" aria-label="撤销" disabled>
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-arrow-go-back-line"></use></svg>
+            </button>
+            <button id="redo-button" class="btn btn-icon" type="button" title="重做 (Ctrl+Y)" aria-label="重做" disabled>
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-arrow-go-forward-line"></use></svg>
+            </button>
+            <button id="duplicate-button" class="btn btn-quiet" type="button" title="复制片段" disabled>
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-file-copy-line"></use></svg>复制
+            </button>
+            <button id="rename-button" class="btn btn-quiet" type="button" title="命名片段" disabled>
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-edit-line"></use></svg>命名
+            </button>
+          </div>
+          <div class="timeline-tools">
+            <button id="zoom-out" class="btn btn-icon" type="button" title="缩小时间轴" aria-label="缩小时间轴">
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-subtract-line"></use></svg>
+            </button>
+            <button id="zoom-fit" class="btn btn-quiet" type="button" title="显示完整时间轴">适应</button>
+            <button id="zoom-in" class="btn btn-icon" type="button" title="放大时间轴" aria-label="放大时间轴">
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-add-line"></use></svg>
+            </button>
+          </div>
+        </div>
+        <div class="timeline-scroll" id="timeline-scroll" title="滚轮或双指缩放 · Shift + 滚轮或双指横向移动">
+          <canvas id="timeline" aria-label="视频时间轴，点击片段选中，拖拽移动，双指缩放和平移"></canvas>
+        </div>
+        <div class="timeline-summary" id="timeline-summary"></div>
+      </section>
+
+      <footer class="status-bar">
+        <span class="status-text" id="status-text">就绪 · 导入视频开始剪辑</span>
+        <span class="status-text capability-text" id="capability-text"></span>
+        <progress class="progress" id="progress" max="1" value="0" hidden></progress>
+      </footer>
+    </div>
+
+    <div class="drop-overlay" id="drop-overlay" hidden>松开以导入素材</div>
+
+    <dialog id="export-dialog">
+      <form method="dialog">
+        <div class="dialog-header">
+          <h2>导出视频</h2>
+          <span class="badge">MP4</span>
+        </div>
+        <div class="dialog-body">
+          <div class="callout info" id="route-callout"></div>
+
+          <div class="field">
+            <label for="quality">画面质量</label>
+            <select id="quality">
+              <option value="original">原画 · 保留源分辨率</option>
+              <option value="high">高清</option>
+              <option value="balanced">均衡</option>
+              <option value="compact">较小文件</option>
+            </select>
+            <span class="hint" id="quality-hint"></span>
+          </div>
+
+          <div class="field">
+            <label for="size">输出尺寸</label>
+            <select id="size">
+              <option value="source">跟随源视频</option>
+              <option value="1080p">1080p</option>
+              <option value="720p">720p</option>
+              <option value="4k">4K</option>
+              <option value="custom">自定义尺寸</option>
+            </select>
+            <span class="hint" id="size-hint"></span>
+          </div>
+
+          <div class="field" id="dimensions-field" hidden>
+            <div class="dimension-row">
+              <div class="field">
+                <label for="width">宽度 (px)</label>
+                <input id="width" type="number" min="2" max="7680" step="2" />
+              </div>
+              <span style="padding-bottom: 8px">×</span>
+              <div class="field">
+                <label for="height">高度 (px)</label>
+                <input id="height" type="number" min="2" max="7680" step="2" />
+              </div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="encoder">编码器</label>
+            <select id="encoder"></select>
+            <span class="hint" id="encoder-hint"></span>
+          </div>
+
+          <div class="callout warn" id="validation-text" hidden></div>
+        </div>
+        <div class="dialog-footer">
+          <span class="hint">本机处理 · 不上传素材</span>
+          <span class="actions">
+            <button class="btn btn-quiet" type="button" id="export-cancel">取消</button>
+            <button class="btn btn-primary" type="button" id="export-confirm">开始导出</button>
+          </span>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog">
+      <form method="dialog">
+        <div class="dialog-header">
+          <h2>设置</h2>
+        </div>
+        <div class="dialog-body">
+          <div class="field">
+            <label>本机能力</label>
+            <span class="hint" id="settings-capability"></span>
+            <ul class="capability-list" id="settings-notes"></ul>
+          </div>
+          <div class="field">
+            <label for="settings-encoder">默认编码方式</label>
+            <select id="settings-encoder">
+              <option value="auto">自动（推荐）</option>
+              <option value="webcodecs-video">优先 WebCodecs 硬件编码</option>
+              <option value="wasm">始终使用 FFmpeg.wasm</option>
+            </select>
+            <span class="hint">自动模式会在 WebCodecs 不可用时回退到 FFmpeg.wasm。</span>
+          </div>
+          <div class="callout info" id="settings-ffmpeg"></div>
+        </div>
+        <div class="dialog-footer">
+          <span class="hint">设置保存在本机浏览器</span>
+          <span class="actions">
+            <button class="btn btn-primary" type="button" id="settings-close">完成</button>
+          </span>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="recovery-dialog" aria-labelledby="recovery-title">
+      <form method="dialog">
+        <div class="dialog-header recovery-header">
+          <div>
+            <span class="eyebrow">未完成的剪辑</span>
+            <h2 id="recovery-title">继续上次的工作？</h2>
+          </div>
+          <span class="badge">已自动保存</span>
+        </div>
+        <div class="dialog-body">
+          <p class="recovery-copy">
+            剪辑点和工作位置已经找回。出于浏览器隐私限制，还需要重新选择原视频才能继续。
+          </p>
+          <div class="recovery-files" aria-live="polite">
+            <div class="recovery-files-label">需要原视频</div>
+            <ul id="recovery-file-list"></ul>
+          </div>
+          <div class="callout info">
+            只读取文件头、中段和尾段的少量内容来核对视频，不会上传，也不会扫描整个大文件。
+          </div>
+          <div class="callout warn" id="recovery-error" role="alert" hidden></div>
+        </div>
+        <div class="dialog-footer recovery-footer">
+          <span class="hint" id="recovery-saved-at"></span>
+          <span class="actions">
+            <button class="btn btn-quiet" type="button" id="recovery-discard">放弃上次进度</button>
+            <button class="btn btn-primary" type="button" id="recovery-choose">
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-upload-2-line"></use></svg>
+              <span id="recovery-choose-label">重新选择原视频</span>
+            </button>
+          </span>
+        </div>
+      </form>
+    </dialog>
+
+    <input id="file-input" class="sr-only" type="file" accept="video/*,.mp4,.mov,.m4v,.mkv,.webm" multiple />
+    <input id="recovery-file-input" class="sr-only" type="file" accept="video/*,.mp4,.mov,.m4v,.mkv,.webm" multiple />
+    <script type="module" src="/src/app.ts"></script>
+  </body>
+</html>

@@ -35,7 +35,16 @@ Windows 10 / 11 x64，内置 .NET 和 FFmpeg，无需另行安装。
 
 ## 文档与参考
 
-[开发指南](https://github.com/OXeu/clip/blob/master/docs/development.md) · [更新指南](https://github.com/OXeu/clip/blob/master/docs/updates.md) · [第三方许可](THIRD-PARTY-NOTICES.md)
+[开发指南](https://github.com/OXeu/clip/blob/master/docs/development.md) · [网页版](web/README.md) · [更新指南](https://github.com/OXeu/clip/blob/master/docs/updates.md) · [第三方许可](THIRD-PARTY-NOTICES.md)
+
+## 网页版
+
+[`web/`](web/README.md) 提供同一套剪辑逻辑的浏览器实现：纯静态产物，素材不上传，
+在访问者本机完成处理。编辑语义与桌面版一致（由一致性测试强制保证），导出默认走
+WebCodecs 优先完成音视频编码；AAC 不可用时自动改用 Opus，两者均不可用时才只将音频
+回退到 ffmpeg.wasm；视频编码不可用时再回退到完整的 ffmpeg.wasm 软件编码。
+
+构造说明与部署要求见[网页版文档](web/README.md)。
 
 ## 参与贡献
 

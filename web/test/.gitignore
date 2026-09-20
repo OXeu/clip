@@ -1,0 +1,6 @@
+# 端到端测试产物（导出的 MP4、FFprobe 结果、界面截图）
+artifacts/
+# 测试素材，由 web/test/helpers.ts 的 prepareFixtures 生成
+fixtures/media/
+# CI 写入的 FFmpeg 路径
+e2e-env.txt
