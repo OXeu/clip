@@ -52,6 +52,12 @@ NVIDIA NVENC/NVDEC execution requires a supported NVIDIA GPU and driver supplied
 [mp4-muxer](https://github.com/Vanilagy/mp4-muxer)（5.2.2）用于把 WebCodecs 产出的
 编码块封装成 MP4，采用 [MIT License](https://github.com/Vanilagy/mp4-muxer/blob/main/LICENSE)。
 
+### Mediabunny
+
+[Mediabunny](https://github.com/Vanilagy/mediabunny)（1.58.1）用于在浏览器内读取
+Matroska（MKV/WebM）并准备为现有剪辑管线使用的 MP4，采用
+[Mozilla Public License 2.0](https://github.com/Vanilagy/mediabunny/blob/main/LICENSE)。
+
 ### 构建工具
 
 包括 [Vite](https://vite.dev/) 与 TypeScript；Playwright 仅用于测试，不会进入发布产物。

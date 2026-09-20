@@ -22,12 +22,16 @@ public sealed class TimelineControl : FrameworkElement
     public Guid? SelectedTrackId { get; set; }
     public Guid? ExportPreviewTrackId { get; set; }
     public Guid? SelectedId { get; set; }
+    public bool MultiSelectMode { get; set; }
+    public IReadOnlySet<Guid> MultiSelectedTrackIds { get; set; } = new HashSet<Guid>();
+    public IReadOnlyDictionary<string, float[]> Waveforms { get; set; } = new Dictionary<string, float[]>();
     public double Position { get; set; }
     public double HorizontalOffset { get; set; }
     public double VerticalOffset { get; set; }
     public event Action<Guid, double>? SeekRequested;
     public event Action<Guid, double>? SelectionChanged;
     public event Action<Guid, double>? TrackSelectionChanged;
+    public event Action<Guid>? TrackToggled;
     public event Action<Guid, Guid, int>? MoveRequested;
     public event Action<Point>? AutoScrollRequested;
     public double ContentHeight => RulerHeight + (Project?.Tracks.Count ?? 1) * RowHeight + 8;
@@ -77,7 +81,7 @@ public sealed class TimelineControl : FrameworkElement
         {
             var track = Project.Tracks[row];
             var top = RulerHeight + row * RowHeight;
-            if (track.Id == SelectedTrackId)
+            if (track.Id == SelectedTrackId || MultiSelectedTrackIds.Contains(track.Id))
             {
                 dc.DrawRectangle(Brush("ColorSelectionBackground"), null, new Rect(0, top, ActualWidth, RowHeight));
             }
@@ -98,22 +102,31 @@ public sealed class TimelineControl : FrameworkElement
                 if (_draggedClip == clip.Id) dc.PushOpacity(0.45);
                 dc.DrawRoundedRectangle(Brush(selected ? "ColorTimelineClipSelected" : "ColorTimelineClipBackground"),
                     new Pen(Brush(selected ? "ColorTimelineClipSelectedBorder" : "ColorTimelineClipBorder"), 1), rect, radius, radius);
+                if (track.Kind == TrackKind.Audio) DrawWaveform(dc, clip, rect, selected);
                 dc.PushClip(new RectangleGeometry(rect));
                 if (rect.Width > 44)
                 {
-                    if (TryFindResource("Remix.Film") is Geometry icon)
+                    if (track.Kind != TrackKind.Audio && TryFindResource("Remix.Film") is Geometry icon)
                     {
                         dc.PushTransform(new TranslateTransform(rect.X + 8, rect.Y + 8));
                         dc.PushTransform(new ScaleTransform(14.0 / 24, 14.0 / 24));
                         dc.DrawGeometry(Brush(foreground), null, icon);
                         dc.Pop(); dc.Pop();
                     }
-                    Text(dc, clip.DisplayName, rect.X + 28, rect.Y + 6, 12, foreground, rect.Width - 36);
-                    Text(dc, $"{clip.Speed:0.##}× · {clip.Duration:0.##} 秒", rect.X + 8, rect.Y + 28, 11,
-                        selected ? "ColorSelectionForeground" : "ColorNeutralForeground3", rect.Width - 16);
+                    var nameOffset = track.Kind == TrackKind.Audio ? 8 : 28;
+                    Text(dc, clip.DisplayName, rect.X + nameOffset, rect.Y + 6, 12, foreground, rect.Width - nameOffset - 8);
+                    if (track.Kind != TrackKind.Audio)
+                        Text(dc, $"{clip.Speed:0.##}× · {clip.Duration:0.##} 秒", rect.X + 8, rect.Y + 28, 11,
+                            selected ? "ColorSelectionForeground" : "ColorNeutralForeground3", rect.Width - 16);
                 }
                 dc.Pop();
                 if (_draggedClip == clip.Id) dc.Pop();
+            }
+            if (track.BindingId.HasValue)
+            {
+                var binding = Brush("ColorBrandStroke");
+                dc.DrawLine(new Pen(binding, 2), new Point(5, top + 12), new Point(5, top + RowHeight - 12));
+                dc.DrawEllipse(binding, null, new Point(5, top + RowHeight / 2), 3, 3);
             }
             if (track.Id == ExportPreviewTrackId)
                 dc.DrawRectangle(null, new Pen(Brush("ColorBrandStroke"), 2), new Rect(1, top + 1, Math.Max(0, ActualWidth - 2), RowHeight - 2));
@@ -166,6 +179,12 @@ public sealed class TimelineControl : FrameworkElement
             var row = (int)((point.Y - RulerHeight) / RowHeight);
             if (row < 0 || row >= Project.Tracks.Count) return;
             var track = Project.Tracks[row];
+            if (MultiSelectMode && e.ChangedButton == MouseButton.Left)
+            {
+                TrackToggled?.Invoke(track.Id);
+                e.Handled = true;
+                return;
+            }
             var clip = track.Clips.FirstOrDefault(c => ClipBounds(c.Id).Contains(point));
             if (clip is not null)
             {
@@ -239,6 +258,25 @@ public sealed class TimelineControl : FrameworkElement
             new Typeface(font, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal), size, Brush(token), VisualTreeHelper.GetDpi(this).PixelsPerDip);
         if (double.IsFinite(maxWidth)) { formatted.MaxTextWidth = Math.Max(1, maxWidth); formatted.MaxLineCount = 1; formatted.Trimming = TextTrimming.CharacterEllipsis; }
         dc.DrawText(formatted, new Point(x, y));
+    }
+
+    private void DrawWaveform(DrawingContext dc, VideoClip clip, Rect rect, bool selected)
+    {
+        if (!Waveforms.TryGetValue(clip.Media.Path, out var peaks) || peaks.Length == 0 || rect.Width < 3) return;
+        var pen = new Pen(Brush(selected ? "ColorSelectionForeground" : "ColorBrandForeground"), 1.3);
+        var center = rect.Top + 32;
+        const double amplitude = 10;
+        var bars = Math.Max(1, (int)(rect.Width / 3));
+        dc.PushClip(new RectangleGeometry(rect, 6, 6));
+        for (var bar = 0; bar < bars; bar++)
+        {
+            var sourceTime = clip.Start + bar / (double)Math.Max(1, bars - 1) * (clip.End - clip.Start);
+            var index = Math.Clamp((int)(sourceTime / clip.Media.Duration * peaks.Length), 0, peaks.Length - 1);
+            var height = Math.Max(1.5, peaks[index] * amplitude);
+            var x = rect.Left + bar * 3 + 1.5;
+            dc.DrawLine(pen, new Point(x, center - height), new Point(x, center + height));
+        }
+        dc.Pop();
     }
 
     private Brush Brush(string key)

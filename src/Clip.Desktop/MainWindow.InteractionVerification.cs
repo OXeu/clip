@@ -330,8 +330,9 @@ public partial class MainWindow
     {
         ResetTimelineZoom();
         TimelineScroll.ScrollToVerticalOffset(0);
-        var track = _project.Tracks[2];
-        SelectClip(_project.Tracks[1].Clips[0].Id, 1);
+        var exportable = _project.ExportableTracks.ToArray();
+        var track = exportable[1];
+        SelectClip(exportable[0].Clips[0].Id, 1);
         Require(_selectedTrackId is null && _project.ResolveExportTrack(_selectedTrackId) is null && ExportTracksButton.IsVisible,
             "Selecting a clip implicitly selected a track for export.");
         ExportClick(this, new RoutedEventArgs());
@@ -360,7 +361,8 @@ public partial class MainWindow
         if (realInput)
         {
             // The strip above clips is part of the track and remains clickable for a full-length clip.
-            var point = TimelineView.PointToScreen(new Point(100, TimelineControl.RulerHeight + 2 * TimelineControl.RowHeight + 4));
+            var row = _project.Tracks.ToList().FindIndex(candidate => candidate.Id == track.Id);
+            var point = TimelineView.PointToScreen(new Point(100, TimelineControl.RulerHeight + row * TimelineControl.RowHeight + 4));
             await Task.Run(() =>
             {
                 NativeMouse.SetCursorPos((int)point.X, (int)point.Y);
@@ -375,7 +377,7 @@ public partial class MainWindow
             _project.ResolveExportTrack(_selectedTrackId)?.Id == track.Id && !CopyMenuItem.IsEnabled,
             "Selecting the track background did not select the whole export track.");
         await VerifyTrackExportDialogAsync(() => ExportClick(this, new RoutedEventArgs()), track);
-        SelectClip(_project.Tracks[1].Clips[0].Id, 1);
+        SelectClip(exportable[0].Clips[0].Id, 1);
         Require(_selectedTrackId is null && _project.ResolveExportTrack(_selectedTrackId) is null,
             "Clicking a clip retained an implicit track selection.");
     }
@@ -420,21 +422,36 @@ public partial class MainWindow
             foreach (var media in new[] { new MediaInfo("Sample A.mp4", 12, 960, 540, 30, 0, 1, "h264"),
                 new MediaInfo("Sample B.mp4", 3.2, 540, 960, 24, 0, null, "h264") })
             {
-                var track = _project.Import(media);
+                var track = _project.ImportSeparated(media).VideoTrack;
                 AssetFor(media).StaticOnly = true;
                 ActivatePreview(_project.FindClip(track.Clips[0].Id)!.Value, false);
             }
         }
-        Require(_project.Tracks.Count == 3 && _project.MainTrack.Clips.Count == 0 && ExportButton.IsEnabled && ExportTracksButton.IsVisible &&
-            _activeTrackId == _project.Tracks[2].Id, "Imports must enter separate candidate tracks and preview the last candidate.");
+        var videoTracks = _project.Tracks.Where(track => track.Kind == TrackKind.Video && track.Clips.Count > 0).ToArray();
+        var audioTracks = _project.Tracks.Where(track => track.Kind == TrackKind.Audio).ToArray();
+        Require(videoTracks.Length == 2 && audioTracks.Length == _project.Sources.Count(source => source.HasAudio) &&
+            _project.MainTrack.Clips.Count == 0 && ExportButton.IsEnabled && ExportTracksButton.IsVisible &&
+            _activeTrackId == videoTracks[1].Id, "Imports must create separate audio/video tracks and preview the last video track.");
+        MultiSelectClick(this, new RoutedEventArgs());
+        ToggleMultiSelectedTrack(videoTracks[0].Id);
+        ToggleMultiSelectedTrack(videoTracks[1].Id);
+        Require(_multiSelectMode && BindTracksButton.IsEnabled, "Track multi-select did not enable binding.");
+        BindTracksClick(this, new RoutedEventArgs());
+        Require(videoTracks.Select(track => _project.FindTrack(track.Id)!.BindingId).Distinct().Count() == 1 &&
+            _project.FindTrack(videoTracks[0].Id)!.BindingId.HasValue, "Saving track binding did not enter alignment mode.");
+        MultiSelectClick(this, new RoutedEventArgs());
+        ToggleMultiSelectedTrack(videoTracks[0].Id);
+        ToggleMultiSelectedTrack(videoTracks[1].Id);
+        UnbindTracksClick(this, new RoutedEventArgs());
+        Require(videoTracks.All(track => _project.FindTrack(track.Id)!.BindingId is null), "Track unbinding failed.");
         VerifyBrandHeader();
         UiCapture.Save(WindowRoot, "smoke-imported.png");
         await VerifyWorkspaceResizeAsync(realMedia);
         await VerifyTimelineMenuAsync(realMedia);
         await VerifyCopyAndNamingAsync(realMedia);
         await VerifyTrackExportAsync(realMedia);
-        var candidate = _project.Tracks[1].Id;
-        var secondCandidate = _project.Tracks[2].Id;
+        var candidate = videoTracks[0].Id;
+        var secondCandidate = videoTracks[1].Id;
         Seek(candidate, 4); RaiseEditorKey(Key.S);
         Seek(candidate, 8); RaiseEditorKey(Key.S);
         Require(_project.FindTrack(candidate)!.Clips.Count == 3 && _project.MainTrack.Clips.Count == 0, "Candidate splits changed the main track.");

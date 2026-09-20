@@ -83,6 +83,15 @@ function cutBoundaryArgs(path: string): string[] {
   ];
 }
 
+function matroskaCopyArgs(input: string, output: string): string[] {
+  return [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    '-i', input,
+    '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy',
+    '-f', 'matroska', output,
+  ];
+}
+
 export interface FixtureFile {
   readonly name: string;
   readonly path: string;
@@ -115,6 +124,13 @@ export function prepareFixtures(): readonly FixtureFile[] {
     {
       file: { name: 'cut-boundary-2s-30fps.mp4', path: join(fixtureDir, 'cut-boundary-2s-30fps.mp4'), duration: 2, width: 320, height: 180, hasAudio: false },
       args: cutBoundaryArgs(join(fixtureDir, 'cut-boundary-2s-30fps.mp4')),
+    },
+    {
+      file: { name: 'landscape-4s-30fps.mkv', path: join(fixtureDir, 'landscape-4s-30fps.mkv'), duration: 4, width: 640, height: 360, hasAudio: true },
+      args: matroskaCopyArgs(
+        join(fixtureDir, 'landscape-4s-30fps.mp4'),
+        join(fixtureDir, 'landscape-4s-30fps.mkv'),
+      ),
     },
   ];
 

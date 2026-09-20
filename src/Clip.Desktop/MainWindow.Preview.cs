@@ -100,6 +100,7 @@ public partial class MainWindow
         _playbackClip = position.Clip.Id;
         _selected = _selectedTrackId is null ? position.Clip.Id : null;
         _position = position.TimelineTime;
+        Preview.IsMuted = position.Clip.Kind == ClipKind.Video;
         var asset = AssetFor(position.Clip.Media);
         _playing = _resumeOnOpen = play;
         if (_currentAsset != asset || forceSourceReload)

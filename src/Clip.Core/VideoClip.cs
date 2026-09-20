@@ -1,6 +1,9 @@
 namespace Clip.Core;
 
-public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double End, double Speed = 1)
+public enum ClipKind { Combined, Video, Audio }
+public enum TrackKind { Video, Audio }
+
+public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double End, double Speed = 1, ClipKind Kind = ClipKind.Combined)
 {
     public const double MinimumSpeed = 0.1;
     public const double MaximumSpeed = 8;
@@ -26,10 +29,13 @@ public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double En
     }
 }
 
-public sealed record VideoTrack(Guid Id, string Name, bool IsMain, IReadOnlyList<VideoClip> Clips)
+public sealed record VideoTrack(Guid Id, string Name, bool IsMain, IReadOnlyList<VideoClip> Clips,
+    TrackKind Kind = TrackKind.Video, Guid? BindingId = null)
 {
     public double Duration => Clips.Sum(c => c.Duration);
 }
+
+public readonly record struct SeparatedImport(VideoTrack VideoTrack, VideoTrack? AudioTrack);
 
 public readonly record struct ClipPosition(Guid TrackId, int Index, VideoClip Clip, double SourceTime, double TimelineStart)
 {

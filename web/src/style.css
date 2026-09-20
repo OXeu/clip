@@ -34,6 +34,8 @@
   --clip-selected: #e4e4e7;
   --clip-selected-border: #71717a;
   --playhead: #ac3863;
+  --waveform: #b64b72;
+  --binding-stroke: #b84c75;
   --scrollbar: #d1d5db;
 
   --font-base: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, 'Microsoft YaHei UI',
@@ -87,6 +89,8 @@
     --clip-selected: #3f3f43;
     --clip-selected-border: #a1a1aa;
     --playhead: #f2a0bd;
+    --waveform: #f4a7c2;
+    --binding-stroke: #f4a7c2;
     --scrollbar: #4a4a4a;
     --shadow-surface: 0 8px 28px rgb(0 0 0 / 55%);
   }
@@ -464,6 +468,21 @@ button:disabled {
   align-items: center;
   min-width: 0;
   gap: var(--space-8);
+}
+
+.btn-compact {
+  min-height: 30px;
+  padding: 5px 10px;
+}
+
+#multi-select-button[aria-pressed='true'] {
+  border-color: var(--brand-stroke);
+  background: var(--brand-background-2);
+  color: var(--brand-foreground);
+}
+
+.timeline-region.is-multi-select #timeline {
+  cursor: cell;
 }
 
 .section-title {

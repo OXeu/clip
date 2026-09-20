@@ -94,6 +94,44 @@ public sealed record FfmpegTools(string Ffmpeg, string Ffprobe)
         if (result.ExitCode != 0) throw new InvalidOperationException(result.StandardError);
     }
 
+    /// <summary>把源音频降采样为时间轴波形峰值；不保留任何临时音频。</summary>
+    public async Task<float[]> MakeWaveformAsync(MediaInfo media, int bucketCount = 2400, CancellationToken token = default)
+    {
+        if (!media.HasAudio) return [];
+        var raw = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"clip-waveform-{Guid.NewGuid():N}.pcm");
+        try
+        {
+            var result = await ProcessRunner.RunAsync(Ffmpeg,
+                ["-hide_banner", "-v", "error", "-nostdin", "-y", "-i", media.Path,
+                 "-map", $"0:{media.AudioStreamIndex}", "-vn", "-ac", "1", "-ar", "200",
+                 "-c:a", "pcm_s16le", "-f", "s16le", raw], token);
+            if (result.ExitCode != 0) throw new InvalidOperationException(result.StandardError);
+            var bytes = await File.ReadAllBytesAsync(raw, token);
+            var sampleCount = bytes.Length / 2;
+            if (sampleCount == 0) return [];
+            var buckets = Math.Clamp(bucketCount, 1, sampleCount);
+            var peaks = new float[buckets];
+            for (var bucket = 0; bucket < buckets; bucket++)
+            {
+                var start = (int)((long)bucket * sampleCount / buckets);
+                var end = Math.Max(start + 1, (int)((long)(bucket + 1) * sampleCount / buckets));
+                var peak = 0;
+                for (var sample = start; sample < end; sample++)
+                {
+                    var index = sample * 2;
+                    var value = (short)(bytes[index] | bytes[index + 1] << 8);
+                    peak = Math.Max(peak, Math.Abs((int)value));
+                }
+                peaks[bucket] = Math.Min(1, peak / 32768f);
+            }
+            return peaks;
+        }
+        finally
+        {
+            if (File.Exists(raw)) File.Delete(raw);
+        }
+    }
+
     internal static string Text(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) ? value.ToString() : "";
 

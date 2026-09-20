@@ -104,6 +104,22 @@ export function muxerFrameRate(frameRate: number): number | undefined {
   return Number.isInteger(frameRate) && frameRate > 0 ? frameRate : undefined;
 }
 
+/**
+ * mp4-muxer 必须从 VideoEncoder 的输出元数据取得 avcC；部分浏览器虽然声称
+ * 支持 H.264 编码，却可能不输出 chunk，或省略 decoderConfig。继续 finalize()
+ * 会在依赖内部以 `decoderConfig is null` 崩溃，因此应先回退到 wasm 路线。
+ */
+export function videoMuxerReadinessError(
+  encodedChunkCount: number,
+  receivedDecoderConfig: boolean,
+): string | null {
+  if (encodedChunkCount === 0) return '浏览器的视频编码器没有输出任何数据。';
+  if (!receivedDecoderConfig) {
+    return '浏览器的视频编码器没有提供 MP4 封装所需的 decoderConfig。';
+  }
+  return null;
+}
+
 /** 只有项目确实包含源音轨时才声明输出音轨。 */
 export function preferredWebCodecsAudioCodec(
   anyAudio: boolean,
@@ -418,8 +434,18 @@ async function encodeVideoTrack(
   });
 
   let encoderError: Error | null = null;
+  let encodedChunkCount = 0;
+  let receivedDecoderConfig = false;
   const encoder = new VideoEncoder({
-    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    output: (chunk, meta) => {
+      try {
+        muxer.addVideoChunk(chunk, meta);
+        encodedChunkCount++;
+        receivedDecoderConfig ||= Boolean(meta?.decoderConfig);
+      } catch (error) {
+        encoderError = error instanceof Error ? error : new Error(String(error));
+      }
+    },
     error: (error) => {
       encoderError = error instanceof Error ? error : new Error(String(error));
     },
@@ -564,6 +590,8 @@ async function encodeVideoTrack(
 
     await encoder.flush();
     if (encoderError) throw encoderError;
+    const readinessError = videoMuxerReadinessError(encodedChunkCount, receivedDecoderConfig);
+    if (readinessError) throw new WebCodecsUnavailableError(readinessError);
     report({ fraction: 1, message: '画面编码完成' });
     if (audioStage) await audioStage.encode(muxer);
     muxer.finalize();

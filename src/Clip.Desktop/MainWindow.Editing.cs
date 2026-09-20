@@ -11,8 +11,8 @@ public partial class MainWindow
     private void RefreshTimelineMenu()
     {
         var ready = _operation is null;
-        SplitMenuItem.IsEnabled = ready && ActiveTrack.Clips.Count > 0;
-        DeleteMenuItem.IsEnabled = ready && _selected is { } id && _project.FindClip(id) is not null;
+        SplitMenuItem.IsEnabled = ready && !_multiSelectMode && ActiveTrack.Clips.Count > 0;
+        DeleteMenuItem.IsEnabled = ready && !_multiSelectMode && _selected is { } id && _project.FindClip(id) is not null;
         CopyMenuItem.IsEnabled = RenameMenuItem.IsEnabled = DeleteMenuItem.IsEnabled;
         UndoMenuItem.IsEnabled = ready && _project.CanUndo;
         RedoMenuItem.IsEnabled = ready && _project.CanRedo;
@@ -25,21 +25,28 @@ public partial class MainWindow
     private void SplitClick(object sender, RoutedEventArgs e) => Split();
     private void Split()
     {
-        if (_operation is not null) return;
+        if (_operation is not null || _multiSelectMode) return;
         if (_playing) Tick(this, EventArgs.Empty);
+        var synchronized = _project.BindingTracks(_activeTrackId).Count;
         var id = _project.Split(_activeTrackId, _position);
-        if (id is null) { StatusText.Text = "请将播放头移到当前轨道的片段内部再分割。"; return; }
+        if (id is null)
+        {
+            StatusText.Text = synchronized > 1
+                ? "绑定轨道无法在此时间点同时分割，请检查各轨道是否都覆盖该位置。"
+                : "请将播放头移到当前轨道的片段内部再分割。";
+            return;
+        }
         _selectedTrackId = null;
         _selected = id;
         if (_playing) _selected = _playbackClip = _project.Locate(_activeTrackId, _position)?.Clip.Id;
         else ActivatePreview(_project.FindClip(id.Value)!.Value, false);
-        StatusText.Text = "已分割片段";
+        StatusText.Text = synchronized > 1 ? $"已同步分割 {synchronized} 条绑定轨道" : "已分割片段";
         Refresh();
     }
 
     private void MoveClip(Guid id, Guid trackId, int index)
     {
-        if (_operation is not null || _project.FindClip(id) is not { } before) return;
+        if (_operation is not null || _multiSelectMode || _project.FindClip(id) is not { } before) return;
         var source = _selected == id ? _project.Locate(_activeTrackId, _position)?.SourceTime ?? before.Clip.Start : before.Clip.Start;
         Pause();
         if (!_project.Move(id, trackId, index)) return;
@@ -52,7 +59,7 @@ public partial class MainWindow
     private void DeleteClick(object sender, RoutedEventArgs e) => DeleteSelected();
     private void DeleteSelected()
     {
-        if (_operation is not null || _selected is not { } id || _project.FindClip(id) is not { } p) return;
+        if (_operation is not null || _multiSelectMode || _selected is not { } id || _project.FindClip(id) is not { } p) return;
         Pause();
         if (!_project.Delete(id)) return;
         var position = _position >= p.TimelineStart ? Math.Max(p.TimelineStart, _position - p.Clip.Duration) : _position;
@@ -100,11 +107,61 @@ public partial class MainWindow
         }
     }
 
+    private void MultiSelectClick(object sender, RoutedEventArgs e)
+    {
+        if (_operation is not null) return;
+        _multiSelectMode = !_multiSelectMode;
+        _multiSelectedTracks.Clear();
+        if (_multiSelectMode)
+        {
+            Pause();
+            _selected = null;
+            _selectedTrackId = null;
+            StatusText.Text = "多选模式：点击需要同步分割的轨道，然后保存并对齐";
+        }
+        else StatusText.Text = "已退出多选模式";
+        Refresh();
+    }
+
+    private void ToggleMultiSelectedTrack(Guid trackId)
+    {
+        if (!_multiSelectMode || _operation is not null || _project.FindTrack(trackId) is not { Clips.Count: > 0 }) return;
+        if (!_multiSelectedTracks.Add(trackId)) _multiSelectedTracks.Remove(trackId);
+        StatusText.Text = $"已选择 {_multiSelectedTracks.Count} 条轨道" +
+            (_multiSelectedTracks.Count < 2 ? "，至少选择两条" : "，可以保存并对齐");
+        Refresh();
+    }
+
+    private void BindTracksClick(object sender, RoutedEventArgs e)
+    {
+        if (!_multiSelectMode || _operation is not null) return;
+        var count = _multiSelectedTracks.Count;
+        if (_project.BindTracks(_multiSelectedTracks) is null)
+        {
+            StatusText.Text = "请至少选择两条包含片段的轨道。";
+            return;
+        }
+        _multiSelectMode = false;
+        _multiSelectedTracks.Clear();
+        StatusText.Text = $"已进入对齐模式：{count} 条轨道的分割会同步，删除仍只影响当前片段";
+        Refresh();
+    }
+
+    private void UnbindTracksClick(object sender, RoutedEventArgs e)
+    {
+        if (!_multiSelectMode || _operation is not null || !_project.UnbindTracks(_multiSelectedTracks)) return;
+        _multiSelectMode = false;
+        _multiSelectedTracks.Clear();
+        StatusText.Text = "已解除所选轨道的绑定";
+        Refresh();
+    }
+
     private void Refresh()
     {
         var ready = _operation is null;
         var hasMedia = _project.Sources.Count > 0;
         if (_selectedTrackId is { } trackId && _project.FindTrack(trackId) is null) _selectedTrackId = null;
+        _multiSelectedTracks.RemoveWhere(id => _project.FindTrack(id) is null);
         var preview = _playbackClip is { } id ? _project.FindClip(id) : null;
         var any = ActiveTrack.Clips.Count > 0;
         TimelineView.Duration = _project.Duration;
@@ -140,9 +197,19 @@ public partial class MainWindow
         TimelineView.ActiveTrackId = _activeTrackId;
         TimelineView.SelectedId = _selected;
         TimelineView.SelectedTrackId = _selectedTrackId;
+        TimelineView.MultiSelectMode = _multiSelectMode;
+        TimelineView.MultiSelectedTrackIds = _multiSelectedTracks;
+        TimelineView.Waveforms = _waveforms;
         TimelineView.IsEnabled = ready;
         Title = hasMedia ? $"{_project.Sources.Count} 个素材 — 视频剪辑" : "视频剪辑";
-        TimelineSummaryText.Text = $"{ActiveTrack.Clips.Count} 片段 · {ActiveTrack.Duration:0.##} 秒";
+        var bound = _project.BindingTracks(ActiveTrack.Id).Count;
+        TimelineSummaryText.Text = $"{(ActiveTrack.Kind == TrackKind.Audio ? "音频轨" : "视频轨")} · {ActiveTrack.Clips.Count} 片段 · {ActiveTrack.Duration:0.##} 秒" +
+            (bound > 1 ? $" · 对齐组 {bound} 轨" : "");
+        MultiSelectButton.Content = _multiSelectMode ? "退出多选" : "多选轨道";
+        MultiSelectButton.IsEnabled = ready && _project.Tracks.Any(track => track.Clips.Count > 0);
+        BindTracksButton.Visibility = UnbindTracksButton.Visibility = _multiSelectMode ? Visibility.Visible : Visibility.Collapsed;
+        BindTracksButton.IsEnabled = ready && _multiSelectedTracks.Count >= 2;
+        UnbindTracksButton.IsEnabled = ready && _multiSelectedTracks.Any(id => _project.FindTrack(id)?.BindingId is not null);
         RefreshPosition();
     }
 

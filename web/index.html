@@ -105,6 +105,10 @@
             <button id="rename-button" class="btn btn-quiet" type="button" title="命名片段" disabled>
               <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-edit-line"></use></svg>命名
             </button>
+            <span class="divider" aria-hidden="true"></span>
+            <button id="multi-select-button" class="btn btn-quiet" type="button" aria-pressed="false" title="进入轨道多选模式">多选轨道</button>
+            <button id="bind-tracks-button" class="btn btn-primary btn-compact" type="button" hidden disabled>保存并对齐</button>
+            <button id="unbind-tracks-button" class="btn btn-quiet btn-compact" type="button" hidden disabled>解除绑定</button>
           </div>
           <div class="timeline-tools">
             <button id="zoom-out" class="btn btn-icon" type="button" title="缩小时间轴" aria-label="缩小时间轴">
@@ -117,7 +121,7 @@
           </div>
         </div>
         <div class="timeline-scroll" id="timeline-scroll" title="滚轮或双指缩放 · Shift + 滚轮或双指横向移动">
-          <canvas id="timeline" aria-label="视频时间轴，点击片段选中，拖拽移动，双指缩放和平移"></canvas>
+          <canvas id="timeline" aria-label="音视频时间轴，点击片段选中；进入多选模式后点击轨道并保存绑定"></canvas>
         </div>
         <div class="timeline-summary" id="timeline-summary"></div>
       </section>

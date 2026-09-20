@@ -104,6 +104,33 @@ describe('分割与 ripple 删除', () => {
   });
 });
 
+describe('音视频分轨与对齐绑定', () => {
+  it('导入时生成独立的视频轨和音频轨', () => {
+    const project = new EditProject();
+    const imported = project.importSeparated(media);
+    assert.equal(imported.videoTrack.kind, 'video');
+    assert.equal(imported.videoTrack.clips[0]!.kind, 'video');
+    assert.equal(imported.audioTrack?.kind, 'audio');
+    assert.equal(imported.audioTrack?.clips[0]!.kind, 'audio');
+    assert.notEqual(imported.videoTrack.clips[0]!.id, imported.audioTrack?.clips[0]!.id);
+    assert.equal(project.exportableTracks.length, 1, '音频轨不应出现在视频导出目标中');
+  });
+
+  it('绑定轨道同步分割，但删除只影响当前片段', () => {
+    const project = new EditProject();
+    const first = project.importSeparated(media).videoTrack;
+    const second = project.importSeparated({ ...media, path: 'angle-b.mp4' }).videoTrack;
+    assert.ok(project.bindTracks([first.id, second.id]));
+    const right = project.split(first.id, 4);
+    assert.ok(right);
+    assert.equal(project.findTrack(first.id)!.clips.length, 2);
+    assert.equal(project.findTrack(second.id)!.clips.length, 2);
+    assert.ok(project.delete(right));
+    assert.equal(project.findTrack(first.id)!.clips.length, 1);
+    assert.equal(project.findTrack(second.id)!.clips.length, 2, '删除不应传播到绑定轨道');
+  });
+});
+
 describe('跨轨移动', () => {
   it('把片段移到另一条轨道并从原轨移除', () => {
     const project = new EditProject();

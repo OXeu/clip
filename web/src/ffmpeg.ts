@@ -20,8 +20,21 @@ export interface ExportProgress {
 
 export interface FfmpegCoreUrls {
   readonly coreURL: string;
+  /** 原始 WASM 逻辑地址；构建产物优先提供同名 .json 分片清单。 */
   readonly wasmURL: string;
   readonly workerURL?: string;
+}
+
+interface WasmPartsManifest {
+  readonly format: 'split-wasm';
+  readonly version: 1;
+  readonly size: number;
+  readonly parts: readonly { readonly file: string; readonly size: number }[];
+}
+
+interface PreparedWasmUrl {
+  readonly url: string;
+  readonly revoke: () => void;
 }
 
 export interface FfmpegRunOptions {
@@ -56,6 +69,81 @@ export function coreUrlsFromBase(base: string, multithreaded: boolean): FfmpegCo
         coreURL: `${normalized}core/ffmpeg-core.js`,
         wasmURL: `${normalized}core/ffmpeg-core.wasm`,
       };
+}
+
+function parseWasmPartsManifest(value: unknown, url: string): WasmPartsManifest {
+  if (!value || typeof value !== 'object') throw new Error(`${url} 不是有效的 JSON 对象`);
+  const manifest = value as Partial<WasmPartsManifest>;
+  if (
+    manifest.format !== 'split-wasm' ||
+    manifest.version !== 1 ||
+    !Number.isSafeInteger(manifest.size) ||
+    (manifest.size ?? 0) <= 0 ||
+    !Array.isArray(manifest.parts) ||
+    manifest.parts.length === 0
+  ) {
+    throw new Error(`${url} 不是受支持的 ffmpeg.wasm 分片清单`);
+  }
+  for (const part of manifest.parts) {
+    if (
+      !part ||
+      typeof part.file !== 'string' ||
+      part.file.length === 0 ||
+      part.file.includes('/') ||
+      part.file.includes('\\') ||
+      !Number.isSafeInteger(part.size) ||
+      part.size <= 0
+    ) {
+      throw new Error(`${url} 包含无效的 WASM 分片记录`);
+    }
+  }
+  return manifest as WasmPartsManifest;
+}
+
+/**
+ * 优先读取构建生成的分片清单，并组合成 ffmpeg-core 可直接 fetch 的 Blob URL。
+ * 若清单不存在，则保留对传统单文件部署或外部 core 地址的兼容。
+ */
+async function prepareWasmUrl(wasmURL: string, signal: AbortSignal): Promise<PreparedWasmUrl> {
+  const manifestURL = `${wasmURL}.json`;
+  const manifestResponse = await fetch(manifestURL, { signal });
+  if (manifestResponse.status === 404) {
+    await manifestResponse.body?.cancel();
+    return { url: wasmURL, revoke: () => undefined };
+  }
+  if (!manifestResponse.ok) {
+    await manifestResponse.body?.cancel();
+    throw new Error(`无法读取 WASM 分片清单：${manifestURL} 返回 HTTP ${manifestResponse.status}`);
+  }
+
+  let manifest: WasmPartsManifest;
+  try {
+    manifest = parseWasmPartsManifest(await manifestResponse.json(), manifestURL);
+  } catch (error) {
+    throw new Error(
+      `无法解析 WASM 分片清单 ${manifestURL}：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const partBlobs = await Promise.all(manifest.parts.map(async (part) => {
+    const partURL = new URL(part.file, manifestURL).href;
+    const response = await fetch(partURL, { signal });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`无法读取 WASM 分片：${partURL} 返回 HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    if (blob.size !== part.size) {
+      throw new Error(`WASM 分片大小不匹配：${partURL} 应为 ${part.size} 字节，实际 ${blob.size} 字节`);
+    }
+    return blob;
+  }));
+  const wasm = new Blob(partBlobs, { type: 'application/wasm' });
+  if (wasm.size !== manifest.size) {
+    throw new Error(`WASM 总大小不匹配：应为 ${manifest.size} 字节，实际 ${wasm.size} 字节`);
+  }
+  const url = URL.createObjectURL(wasm);
+  return { url, revoke: () => URL.revokeObjectURL(url) };
 }
 
 /**
@@ -204,7 +292,15 @@ export class FfmpegRunner {
       signal?.addEventListener('abort', abortLoad, { once: true });
       try {
         const coreUrls = coreUrlsFromBase(base, multithreaded);
-        await ffmpeg.load(coreUrls, { signal: loadController.signal });
+        const preparedWasm = await prepareWasmUrl(coreUrls.wasmURL, loadController.signal);
+        try {
+          await ffmpeg.load(
+            { ...coreUrls, wasmURL: preparedWasm.url },
+            { signal: loadController.signal },
+          );
+        } finally {
+          preparedWasm.revoke();
+        }
         // 关键：加载成功不代表能编码，必须真的编一帧。
         const usable = await selfTest(ffmpeg, SELF_TEST_TIMEOUT_MS);
         if (signal?.aborted) {

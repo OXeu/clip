@@ -14,6 +14,7 @@ import {
   EditProject,
   type VideoClip,
   type VideoTrack,
+  TrackKind,
   clipDuration,
   displayName,
   trackDuration,
@@ -29,6 +30,7 @@ export interface TimelineCallbacks {
   onSelectClip: (clipId: string, time: number) => void;
   onSelectTrack: (trackId: string, time: number) => void;
   onMoveClip: (clipId: string, trackId: string, index: number) => void;
+  onToggleTrack: (trackId: string) => void;
 }
 
 interface ThemeColors {
@@ -46,6 +48,8 @@ interface ThemeColors {
   selectionForeground: string;
   playhead: string;
   brand: string;
+  waveform: string;
+  binding: string;
 }
 
 function readColors(element: HTMLElement): ThemeColors {
@@ -66,6 +70,8 @@ function readColors(element: HTMLElement): ThemeColors {
     selectionForeground: get('--selection-foreground'),
     playhead: get('--playhead'),
     brand: get('--brand-background'),
+    waveform: get('--waveform'),
+    binding: get('--binding-stroke'),
   };
 }
 
@@ -101,6 +107,9 @@ export class TimelineView {
   position = 0;
   zoom = 1;
   exportPreviewTrackId: string | null = null;
+  multiSelectMode = false;
+  multiSelectedTrackIds: ReadonlySet<string> = new Set();
+  private readonly waveforms = new Map<string, Float32Array>();
 
   private dragging: { clipId: string; started: boolean; origin: { x: number; y: number } } | null = null;
   private dropTarget: DropTarget | null = null;
@@ -129,6 +138,11 @@ export class TimelineView {
   /** 主题或尺寸变化后重绘。 */
   refreshTheme(): void {
     this.colors = readColors(document.documentElement);
+    this.draw();
+  }
+
+  setWaveform(path: string, peaks: Float32Array): void {
+    this.waveforms.set(path.toLowerCase(), peaks);
     this.draw();
   }
 
@@ -259,7 +273,8 @@ export class TimelineView {
 
     project.allTracks.forEach((track, row) => {
       const top = RULER_HEIGHT + row * ROW_HEIGHT;
-      if (track.id === this.selectedTrackId) {
+      const multiSelected = this.multiSelectedTrackIds.has(track.id);
+      if (track.id === this.selectedTrackId || multiSelected) {
         context.fillStyle = colors.trackSelected;
         context.fillRect(0, top, width, ROW_HEIGHT);
       } else if (track.id === this.activeTrackId) {
@@ -283,7 +298,20 @@ export class TimelineView {
         const x = this.xAtTime(offset);
         const rectWidth = Math.max(2, clipDuration(clip) * this.scale() - 3);
         offset += clipDuration(clip);
-        this.drawClip(context, clip, x, top + 10, rectWidth, clip.id === this.selectedClipId);
+        this.drawClip(context, track, clip, x, top + 10, rectWidth, clip.id === this.selectedClipId);
+      }
+
+      if (track.bindingId) {
+        context.strokeStyle = colors.binding;
+        context.lineWidth = 2;
+        context.beginPath();
+        context.moveTo(5, top + 12);
+        context.lineTo(5, top + ROW_HEIGHT - 12);
+        context.stroke();
+        context.fillStyle = colors.binding;
+        context.beginPath();
+        context.arc(5, top + ROW_HEIGHT / 2, 3, 0, Math.PI * 2);
+        context.fill();
       }
 
       if (track.id === this.exportPreviewTrackId) {
@@ -315,6 +343,7 @@ export class TimelineView {
 
   private drawClip(
     context: CanvasRenderingContext2D,
+    track: VideoTrack,
     clip: VideoClip,
     x: number,
     y: number,
@@ -331,24 +360,62 @@ export class TimelineView {
     context.lineWidth = 1;
     context.stroke();
 
+    if (track.kind === TrackKind.Audio) {
+      this.drawWaveform(context, clip, x, y, width, selected);
+    }
+
     if (width > 44) {
       context.save();
       this.roundedRect(context, x, y, width, CLIP_HEIGHT, 6);
       context.clip();
       context.fillStyle = foreground;
       const name = displayName(clip);
-      context.fillText(this.truncate(context, name, width - 36), x + 8, y + 18);
-      context.fillStyle = selected ? colors.selectionForeground : colors.foregroundMuted;
-      context.font = `11px ${getComputedStyle(document.body).fontFamily}`;
-      context.fillText(
-        `${clip.speed.toFixed(2).replace(/\.?0+$/, '')}× · ${clipDuration(clip).toFixed(2)} 秒`,
-        x + 8,
-        y + 36,
-      );
+      context.fillText(this.truncate(context, name, width - 36), x + 8, y + (track.kind === TrackKind.Audio ? 14 : 18));
+      if (track.kind !== TrackKind.Audio) {
+        context.fillStyle = selected ? colors.selectionForeground : colors.foregroundMuted;
+        context.font = `11px ${getComputedStyle(document.body).fontFamily}`;
+        context.fillText(
+          `${clip.speed.toFixed(2).replace(/\.?0+$/, '')}× · ${clipDuration(clip).toFixed(2)} 秒`,
+          x + 8,
+          y + 36,
+        );
+      }
       context.restore();
       context.font = `12px ${getComputedStyle(document.body).fontFamily}`;
     }
     context.globalAlpha = 1;
+  }
+
+  private drawWaveform(
+    context: CanvasRenderingContext2D,
+    clip: VideoClip,
+    x: number,
+    y: number,
+    width: number,
+    selected: boolean,
+  ): void {
+    const peaks = this.waveforms.get(clip.media.path.toLowerCase());
+    if (!peaks || peaks.length === 0 || width < 3) return;
+    const center = y + 32;
+    const amplitude = 10;
+    const bars = Math.max(1, Math.floor(width / 3));
+    context.save();
+    this.roundedRect(context, x, y, width, CLIP_HEIGHT, 6);
+    context.clip();
+    context.strokeStyle = selected ? this.colors.selectionForeground : this.colors.waveform;
+    context.globalAlpha = selected ? 0.72 : 0.8;
+    context.lineWidth = 1.5;
+    for (let bar = 0; bar < bars; bar++) {
+      const sourceTime = clip.start + (bar / Math.max(1, bars - 1)) * (clip.end - clip.start);
+      const index = Math.min(peaks.length - 1, Math.max(0, Math.floor(sourceTime / clip.media.duration * peaks.length)));
+      const height = Math.max(1.5, (peaks[index] ?? 0) * amplitude);
+      const barX = x + bar * 3 + 1.5;
+      context.beginPath();
+      context.moveTo(barX, center - height);
+      context.lineTo(barX, center + height);
+      context.stroke();
+    }
+    context.restore();
   }
 
   private truncate(context: CanvasRenderingContext2D, text: string, maxWidth: number): string {
@@ -484,6 +551,11 @@ export class TimelineView {
     const row = Math.floor((point.y - RULER_HEIGHT) / ROW_HEIGHT);
     if (row < 0 || row >= project.allTracks.length) return;
     const track = project.allTracks[row]!;
+    if (this.multiSelectMode) {
+      event.preventDefault();
+      this.callbacks.onToggleTrack(track.id);
+      return;
+    }
     const hit = track.clips.find((clip) => {
       const bounds = this.clipBounds(clip.id);
       return bounds ? point.x >= bounds.x && point.x <= bounds.x + bounds.width : false;

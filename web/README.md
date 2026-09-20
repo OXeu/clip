@@ -17,7 +17,9 @@
 - `web/test/model.test.ts` 覆盖分割、ripple 删除、跨轨移动、变速、撤销重做，
   以及 500 次随机编辑的不变量检查（与 `tests/Clip.Tests` 对应用例一致）。
 
-因此网页版的分割点、变速时长、补静音与拼接结果与桌面版一致。
+因此网页版的分割点、变速时长、补静音与拼接结果与桌面版一致。两端导入时都会
+生成独立的视频轨和音频波形轨；“多选轨道 → 保存并对齐”可建立多视角对齐组，组内
+分割同步执行，删除仍只作用于当前片段。
 
 预览画面默认以 `contain` 完整适应可用区域；将鼠标放在画面上滚动可在 25%–400%
 之间缩放，双击恢复适应。网页与 Windows 原生版使用相同的交互。
@@ -135,26 +137,35 @@ npm run build      # 输出到 web/dist
 
 `dist` 是自包含的：ffmpeg.wasm 核心（约 62 MB）与图标都会一起产出。
 `npm run build` 会先调用 `scripts/copy-ffmpeg-core.mjs`，从 `node_modules`
-复制核心；部署前只需先运行 `npm install`。脚本也会写入 `version.json` 便于
-核对线上版本。部署完成后应确认 `/ffmpeg/version.json` 返回 200。
+复制核心，并把每个约 32 MB 的 WASM 拆成不超过 16 MiB 的静态分片；浏览器加载时
+会按清单重新组合。这样可以满足 Cloudflare Workers / Pages 的 25 MiB 单文件上限，
+同时不依赖运行时第三方 CDN。脚本也会写入 `version.json` 便于核对线上版本。
+部署完成后应确认 `/ffmpeg/version.json` 返回 200。
+
+Cloudflare Workers 项目把 Root directory 设为 `web`，Build command 设为
+`npm ci && npm run build`，Deploy command 使用 `npx wrangler deploy`。仓库中的
+`wrangler.jsonc` 会确保 Wrangler 只发布 `dist/`；不要用 `--assets=.` 发布整个
+`web/` 目录，否则源码、`public/` 和 `node_modules/` 也会被当成线上资产。
 
 部署时请提供跨源隔离响应头，否则会自动退回单线程核心：
 
-- Netlify / Cloudflare Pages：`public/_headers` 会随构建产物发布，并包含所需配置。
+- Netlify / Cloudflare Pages / Workers Static Assets：`public/_headers` 会随构建产物发布，
+  并包含所需配置。
 - nginx / 其他：参照该文件添加 `Cross-Origin-Opener-Policy: same-origin` 与
   `Cross-Origin-Embedder-Policy: require-corp`。
 
 GitHub Pages 无法自定义响应头，多线程不可用；功能仍然完整，只是音频渲染更慢。
 
-## 尚未支持
+## 限制与兼容性
 
 与桌面版一致：不支持 HDR（需先转 SDR）、多轨叠画 / 混音、转场与字幕，
 每次只导出一条轨道，帧率取首个素材。
 
-浏览器侧另有两点限制：
+浏览器侧另有以下限制：
 
-- 目前只解封装 MP4 / MOV 容器（`mp4box.js`）。MKV / WebM 素材需要在桌面版或
-  其他工具里先转成 MP4。
+- MP4 / MOV 直接进入剪辑管线；MKV / WebM 会先在浏览器内转换为 MP4 容器。编码兼容时
+  直接复制音视频数据，不重复压缩；容器不能直接接收源编码时才尝试用 WebCodecs 转码。
+  转换过程需要同时保存输入与输出，大型素材会占用更多浏览器内存。
 - 预览用 `<video>` 的 `playbackRate`，超出浏览器范围的速度（0.1×–8× 之外的原始值）
   会按可用范围钳制播放，但导出时长始终按设定的速度计算。
 - 同一素材被切成多段时，每段会从该段起点之前最近的关键帧开始解码，

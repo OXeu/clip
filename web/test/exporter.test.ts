@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { FrameQueue, muxerFrameRate, preferredWebCodecsAudioCodec } from '../src/exporter.ts';
+import {
+  FrameQueue,
+  muxerFrameRate,
+  preferredWebCodecsAudioCodec,
+  videoMuxerReadinessError,
+} from '../src/exporter.ts';
 
 const fakeFrame = (): VideoFrame => ({ close() {} }) as VideoFrame;
 
@@ -19,6 +24,20 @@ describe('mp4-muxer 帧率配置', () => {
   it('非法帧率不会传给 mp4-muxer', () => {
     assert.equal(muxerFrameRate(0), undefined);
     assert.equal(muxerFrameRate(Number.NaN), undefined);
+  });
+});
+
+describe('mp4-muxer 视频元数据', () => {
+  it('编码器无输出时不进入 finalize', () => {
+    assert.match(videoMuxerReadinessError(0, false) ?? '', /没有输出/);
+  });
+
+  it('缺少 decoderConfig 时不进入 finalize', () => {
+    assert.match(videoMuxerReadinessError(1, false) ?? '', /decoderConfig/);
+  });
+
+  it('有编码块与 decoderConfig 时可安全封装', () => {
+    assert.equal(videoMuxerReadinessError(1, true), null);
   });
 });
 

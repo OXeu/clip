@@ -2,7 +2,7 @@
  * 把 ffmpeg.wasm 核心与 worker 复制到 public/ffmpeg，随站点一起静态托管。
  *
  * 刻意不使用运行时 CDN：静态站点应当自包含，避免第三方可用性与版本漂移，
- * 也便于内容安全策略收紧。核心体积较大（约 32 MB），由托管方按需开启压缩。
+ * 也便于内容安全策略收紧。核心体积较大（约 32 MB），会拆成静态托管可接受的分片。
  *
  * 用法：node scripts/copy-ffmpeg-core.mjs
  */
@@ -13,6 +13,9 @@ import { fileURLToPath } from 'node:url';
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = join(webRoot, 'public', 'ffmpeg');
+// Cloudflare Workers Static Assets 单文件上限为 25 MiB。留出足够余量，
+// 由浏览器在加载核心时把这些分片重新组合成 application/wasm Blob。
+const WASM_PART_BYTES = 16 * 1024 * 1024;
 
 /** 核心包 -> 目标子目录。单线程核心始终需要；多线程核心在跨源隔离下更佳。 */
 const bundles = [
@@ -26,6 +29,22 @@ const bundles = [
 
 function human(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function copyWasmAsParts(from, target, file) {
+  const bytes = readFileSync(from);
+  const parts = [];
+  for (let offset = 0, index = 0; offset < bytes.length; offset += WASM_PART_BYTES, index += 1) {
+    const partFile = `${file}.part-${String(index).padStart(3, '0')}`;
+    const part = bytes.subarray(offset, Math.min(offset + WASM_PART_BYTES, bytes.length));
+    writeFileSync(join(target, partFile), part);
+    parts.push({ file: partFile, size: part.length });
+  }
+  writeFileSync(
+    join(target, `${file}.json`),
+    `${JSON.stringify({ format: 'split-wasm', version: 1, size: bytes.length, parts }, null, 2)}\n`,
+  );
+  return parts;
 }
 
 rmSync(output, { recursive: true, force: true });
@@ -42,10 +61,15 @@ for (const bundle of bundles) {
   for (const file of bundle.files) {
     const from = join(source, file);
     if (!existsSync(from)) throw new Error(`${bundle.package} 中找不到 ${file}`);
-    cpSync(from, join(target, file));
     const size = statSync(from).size;
     total += size;
-    console.log(`  ${bundle.folder}/${file}  ${human(size)}`);
+    if (file.endsWith('.wasm')) {
+      const parts = copyWasmAsParts(from, target, file);
+      console.log(`  ${bundle.folder}/${file}  ${human(size)} -> ${parts.length} 个分片`);
+    } else {
+      cpSync(from, join(target, file));
+      console.log(`  ${bundle.folder}/${file}  ${human(size)}`);
+    }
   }
 }
 

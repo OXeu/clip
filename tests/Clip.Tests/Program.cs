@@ -45,6 +45,24 @@ Test("split, select by ID, ripple delete and source mapping", () =>
     Near(timeline.Locate(6)!.Value.SourceTime, 10);
 });
 
+Test("separated import creates independent audio/video tracks and bound split stays atomic", () =>
+{
+    var project = new EditProject();
+    var first = project.ImportSeparated(media);
+    var second = project.ImportSeparated(media with { Path = "angle-b.mp4" });
+    Check(first.VideoTrack.Kind == TrackKind.Video && first.VideoTrack.Clips.Single().Kind == ClipKind.Video,
+        "Separated video track has the wrong kind");
+    Check(first.AudioTrack is { Kind: TrackKind.Audio } audioTrack && audioTrack.Clips.Single().Kind == ClipKind.Audio,
+        "Separated audio track was not created");
+    Check(project.BindTracks([first.VideoTrack.Id, second.VideoTrack.Id]).HasValue, "Track binding failed");
+    var right = project.Split(first.VideoTrack.Id, 4);
+    Check(right.HasValue && project.FindTrack(first.VideoTrack.Id)!.Clips.Count == 2 &&
+        project.FindTrack(second.VideoTrack.Id)!.Clips.Count == 2, "Bound split did not propagate");
+    Check(project.Delete(right.Value), "Local delete failed");
+    Check(project.FindTrack(first.VideoTrack.Id)!.Clips.Count == 1 &&
+        project.FindTrack(second.VideoTrack.Id)!.Clips.Count == 2, "Delete propagated to a bound track");
+});
+
 Test("boundary splits do not create empty segments", () =>
 {
     var timeline = new Timeline();

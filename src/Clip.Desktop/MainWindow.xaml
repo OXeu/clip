@@ -151,6 +151,13 @@
               <Border Width="1" Height="16" Background="{DynamicResource ColorNeutralStroke2}" Margin="10,0" />
               <Button x:Name="UndoButton" Style="{StaticResource IconButton}" Click="UndoClick" ToolTip="撤销 (Ctrl+Z)" AutomationProperties.Name="撤销" IsEnabled="False"><local:RemixIcon Kind="Undo" Width="16" Height="16" /></Button>
               <Button x:Name="RedoButton" Style="{StaticResource IconButton}" Click="RedoClick" ToolTip="重做 (Ctrl+Y)" AutomationProperties.Name="重做" IsEnabled="False"><local:RemixIcon Kind="Redo" Width="16" Height="16" /></Button>
+              <Border Width="1" Height="16" Background="{DynamicResource ColorNeutralStroke2}" Margin="10,0" />
+              <Button x:Name="MultiSelectButton" Style="{StaticResource QuietButton}" Content="多选轨道" Click="MultiSelectClick"
+                      ToolTip="进入轨道多选模式" AutomationProperties.Name="多选轨道" />
+              <Button x:Name="BindTracksButton" Style="{StaticResource PrimaryButton}" Content="保存并对齐" Click="BindTracksClick"
+                      Visibility="Collapsed" IsEnabled="False" Margin="8,0,0,0" Padding="12,6" />
+              <Button x:Name="UnbindTracksButton" Style="{StaticResource QuietButton}" Content="解除绑定" Click="UnbindTracksClick"
+                      Visibility="Collapsed" IsEnabled="False" Margin="8,0,0,0" Padding="12,6" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
               <Button Style="{StaticResource IconButton}" Content="−" FontSize="18" Click="ZoomOutClick" ToolTip="缩小时间轴" AutomationProperties.Name="缩小时间轴" />
@@ -161,7 +168,7 @@
         </Border>
         <ScrollViewer x:Name="TimelineScroll" Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" SizeChanged="TimelineSizeChanged" ScrollChanged="TimelineScrolled" PreviewMouseWheel="TimelineMouseWheel"
                       ToolTip="点击轨道空白处选中整轨 · 拖拽跨轨移动或排序 · 右键编辑 · 滚轮横向滚动 · Shift / Ctrl + 滚轮缩放 · Alt + 滚轮上下滚动">
-          <local:TimelineControl x:Name="TimelineView" AutomationProperties.Name="视频时间轴，右键打开编辑菜单，按 S 分割，Delete 或 X 删除选中片段；滚轮滚动，Shift 加滚轮缩放" />
+          <local:TimelineControl x:Name="TimelineView" AutomationProperties.Name="音视频时间轴；可通过多选轨道保存绑定，按 S 同步分割绑定轨，Delete 或 X 只删除当前片段" />
         </ScrollViewer>
         <TextBlock x:Name="TimelineSummaryText" Grid.Row="2" Margin="24,0" Style="{StaticResource Caption}"
                    TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />

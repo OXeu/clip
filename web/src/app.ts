@@ -21,6 +21,7 @@ import {
 } from './capabilities.ts';
 import { exportClips } from './exporter.ts';
 import type { ExportProgress } from './ffmpeg.ts';
+import { prepareMediaFile } from './media-preparation.ts';
 import {
   type ClipPosition,
   type ExportOptions,
@@ -28,6 +29,7 @@ import {
   type MediaInfo,
   type VideoClip,
   type VideoTrack,
+  ClipKind,
   EditProject,
   VideoEncoder,
   clipDuration,
@@ -46,6 +48,7 @@ import {
   type StoredEditSession,
 } from './session.ts';
 import { TimelineView, formatTime } from './timeline.ts';
+import { extractWaveform } from './waveform.ts';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -56,7 +59,7 @@ const $ = <T extends HTMLElement>(id: string): T => {
 // ---------- 状态 ----------
 
 let project = new EditProject();
-/** 文件名 -> 原始 File，导出时按需读取。 */
+/** 文件名 -> 可直接预览/解封装的 File；MKV/WebM 在导入时准备为 MP4。 */
 const files = new Map<string, File>();
 const objectUrls = new Map<string, string>();
 const sourceFingerprints = new Map<string, SourceFingerprint>();
@@ -93,6 +96,8 @@ let operation: AbortController | null = null;
 let activeTrackId = project.mainTrack.id;
 let selectedTrackId: string | null = null;
 let selectedClipId: string | null = null;
+let multiSelectMode = false;
+const multiSelectedTrackIds = new Set<string>();
 let position = 0;
 
 // ---------- 元素 ----------
@@ -123,6 +128,9 @@ const undoButton = $<HTMLButtonElement>('undo-button');
 const redoButton = $<HTMLButtonElement>('redo-button');
 const duplicateButton = $<HTMLButtonElement>('duplicate-button');
 const renameButton = $<HTMLButtonElement>('rename-button');
+const multiSelectButton = $<HTMLButtonElement>('multi-select-button');
+const bindTracksButton = $<HTMLButtonElement>('bind-tracks-button');
+const unbindTracksButton = $<HTMLButtonElement>('unbind-tracks-button');
 const stepBackButton = $<HTMLButtonElement>('step-back');
 const stepForwardButton = $<HTMLButtonElement>('step-forward');
 const fileInput = $<HTMLInputElement>('file-input');
@@ -149,6 +157,7 @@ const timeline = new TimelineView(canvas, timelineScroll, {
   onSelectClip: (clipId, time) => selectClip(clipId, time),
   onSelectTrack: (trackId, time) => selectTrack(trackId, time),
   onMoveClip: (clipId, trackId, index) => moveClip(clipId, trackId, index),
+  onToggleTrack: (trackId) => toggleMultiSelectedTrack(trackId),
 });
 timeline.setProject(project);
 
@@ -256,24 +265,44 @@ function scheduleSessionSave(): void {
 async function importFiles(list: readonly File[]): Promise<void> {
   if (operation) return;
   pause();
-  setBusy(true, '正在导入素材…');
+  const controller = beginOperation('正在导入素材…');
   let imported = 0;
+  let cancelled = false;
   const failures: string[] = [];
   let lastClipId: string | null = null;
 
   try {
     for (const file of list) {
       try {
-        const data = await file.arrayBuffer();
-        const probe = await probeFile(file.name, data);
+        const originalData = await file.arrayBuffer();
+        const prepared = await prepareMediaFile(
+          file,
+          originalData,
+          (fraction, message) => {
+            progress.value = fraction;
+            status(`${message} ${(fraction * 100).toFixed(0)}%`);
+          },
+          controller.signal,
+        );
+        const parsed = await probeFile(file.name, prepared.data);
+        const probe = prepared.frameRate === undefined
+          ? parsed
+          : { ...parsed, media: { ...parsed.media, frameRate: prepared.frameRate } };
         if (probe.media.isHdr) throw new Error('暂不支持 HDR，请先转换为 SDR。');
         const fingerprint = await fingerprintFile(file, probe.media.path);
-        files.set(probe.media.path, file);
+        files.set(probe.media.path, prepared.file);
         sourceFingerprints.set(probe.media.path, fingerprint);
         // 同一素材只登记一次；重复导入会新建轨道但复用源文件。
         const existing = project.sources.find((source) => source.path === probe.media.path);
-        const track = project.import(existing ?? probe.media);
-        lastClipId = track.clips[0]!.id;
+        const separated = project.importSeparated(existing ?? probe.media);
+        lastClipId = separated.videoTrack.clips[0]!.id;
+        if (probe.media.audioStreamIndex !== null) {
+          try {
+            timeline.setWaveform(probe.media.path, await extractWaveform(prepared.data));
+          } catch {
+            // 音频解码失败不阻断编辑，轨道仍可正常裁剪与绑定。
+          }
+        }
         imported++;
         status(`已导入 ${imported} 个素材…`);
         if (!capabilities) {
@@ -285,18 +314,29 @@ async function importFiles(list: readonly File[]): Promise<void> {
           applyCapabilities();
         }
       } catch (error) {
-        failures.push(`${file.name}：${error instanceof Error ? error.message : String(error)}`);
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          cancelled = true;
+          break;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push(message.includes(file.name) ? message : `${file.name}：${message}`);
       }
     }
   } finally {
     setBusy(false);
   }
 
+  if (cancelled) {
+    status(imported > 0 ? `已取消导入 · 已保留 ${imported} 个素材` : '已取消导入');
+    refresh();
+    return;
+  }
+
   if (lastClipId) {
     const found = project.findClip(lastClipId);
     if (found) activatePreview(found, false);
   }
-  status(imported > 0 ? `已导入 ${imported} 个素材` : '未导入任何素材');
+  status(imported > 0 ? `已导入 ${imported} 个素材 · 有声音的素材已自动分轨` : '未导入任何素材');
   if (failures.length > 0) {
     await showAlert('部分素材未导入', `${failures.join('\n')}\n\n其余素材已保留，可继续编辑。`);
   }
@@ -411,6 +451,8 @@ function activatePreview(found: ClipPosition, play: boolean, forceReload = false
   playing = resumeOnOpen = play;
 
   const media = found.clip.media;
+  // 分离后视频轨本身无声；音频轨只负责声音，二者可独立编辑。
+  video.muted = found.clip.kind === ClipKind.Video;
   const needsSource = video.dataset.source !== media.path || forceReload;
   if (needsSource) {
     video.dataset.source = media.path;
@@ -599,6 +641,53 @@ function selectTrack(trackId: string, time: number): void {
   status('已选中整条轨道');
 }
 
+function toggleMultiSelectMode(): void {
+  if (operation) return;
+  multiSelectMode = !multiSelectMode;
+  multiSelectedTrackIds.clear();
+  if (multiSelectMode) {
+    pause();
+    selectedClipId = null;
+    selectedTrackId = null;
+    status('多选模式：点击需要同步分割的轨道，然后保存并对齐');
+  } else {
+    status('已退出多选模式');
+  }
+  refresh();
+}
+
+function toggleMultiSelectedTrack(trackId: string): void {
+  if (!multiSelectMode || operation) return;
+  const track = project.findTrack(trackId);
+  if (!track || track.clips.length === 0) return;
+  if (multiSelectedTrackIds.has(trackId)) multiSelectedTrackIds.delete(trackId);
+  else multiSelectedTrackIds.add(trackId);
+  status(`已选择 ${multiSelectedTrackIds.size} 条轨道${multiSelectedTrackIds.size < 2 ? '，至少选择两条' : '，可以保存并对齐'}`);
+  refresh();
+}
+
+function saveTrackBinding(): void {
+  if (!multiSelectMode || operation) return;
+  const ids = [...multiSelectedTrackIds];
+  if (!project.bindTracks(ids)) {
+    status('请至少选择两条包含片段的轨道。');
+    return;
+  }
+  multiSelectMode = false;
+  multiSelectedTrackIds.clear();
+  status(`已进入对齐模式：${ids.length} 条轨道的分割会同步，删除仍只影响当前片段`);
+  refresh();
+}
+
+function unbindSelectedTracks(): void {
+  if (!multiSelectMode || operation) return;
+  if (!project.unbindTracks([...multiSelectedTrackIds])) return;
+  multiSelectMode = false;
+  multiSelectedTrackIds.clear();
+  status('已解除所选轨道的绑定');
+  refresh();
+}
+
 function togglePlay(): void {
   if (operation) return;
   if (playing) {
@@ -615,11 +704,14 @@ function togglePlay(): void {
 // ---------- 编辑动作 ----------
 
 function split(): void {
-  if (operation) return;
+  if (operation || multiSelectMode) return;
   if (playing) tick();
+  const synchronized = project.bindingTracks(activeTrackId).length;
   const id = project.split(activeTrackId, position);
   if (!id) {
-    status('请将播放头移到当前轨道的片段内部再分割。');
+    status(synchronized > 1
+      ? '绑定轨道无法在此时间点同时分割，请检查各轨道是否都覆盖该位置。'
+      : '请将播放头移到当前轨道的片段内部再分割。');
     return;
   }
   selectedTrackId = null;
@@ -630,12 +722,12 @@ function split(): void {
   } else {
     activatePreview(project.findClip(id)!, false);
   }
-  status('已分割片段');
+  status(synchronized > 1 ? `已同步分割 ${synchronized} 条绑定轨道` : '已分割片段');
   refresh();
 }
 
 function deleteSelected(): void {
-  if (operation || !selectedClipId) return;
+  if (operation || multiSelectMode || !selectedClipId) return;
   const found = project.findClip(selectedClipId);
   if (!found) return;
   pause();
@@ -719,6 +811,7 @@ function refresh(): void {
   const ready = operation === null;
   const hasMedia = project.sources.length > 0;
   if (selectedTrackId && !project.findTrack(selectedTrackId)) selectedTrackId = null;
+  for (const id of multiSelectedTrackIds) if (!project.findTrack(id)) multiSelectedTrackIds.delete(id);
 
   timelineRegion.hidden = !hasMedia;
   previewFooter.hidden = !hasMedia;
@@ -729,11 +822,19 @@ function refresh(): void {
 
   const track = activeTrack();
   const any = track.clips.length > 0;
-  splitButton.disabled = !(ready && any);
+  splitButton.disabled = !(ready && any && !multiSelectMode);
   deleteButton.disabled = duplicateButton.disabled = renameButton.disabled =
     !(ready && selectedClipId !== null && project.findClip(selectedClipId) !== undefined);
   undoButton.disabled = !(ready && project.canUndo);
   redoButton.disabled = !(ready && project.canRedo);
+  multiSelectButton.disabled = !ready || project.allTracks.every((candidate) => candidate.clips.length === 0);
+  multiSelectButton.setAttribute('aria-pressed', String(multiSelectMode));
+  multiSelectButton.textContent = multiSelectMode ? '退出多选' : '多选轨道';
+  bindTracksButton.hidden = unbindTracksButton.hidden = !multiSelectMode;
+  bindTracksButton.disabled = !ready || multiSelectedTrackIds.size < 2;
+  unbindTracksButton.disabled = !ready
+    || ![...multiSelectedTrackIds].some((id) => project.findTrack(id)?.bindingId);
+  timelineRegion.classList.toggle('is-multi-select', multiSelectMode);
   stepBackButton.disabled = stepForwardButton.disabled = !(ready && any);
   syncPlayButton();
 
@@ -742,12 +843,15 @@ function refresh(): void {
   timeline.activeTrackId = activeTrackId;
   timeline.selectedTrackId = selectedTrackId;
   timeline.selectedClipId = selectedClipId;
+  timeline.multiSelectMode = multiSelectMode;
+  timeline.multiSelectedTrackIds = multiSelectedTrackIds;
   timeline.position = position;
   timeline.resize();
 
   const clips = track ? track.clips.length : 0;
   const seconds = track ? trackDuration(track) : 0;
-  timelineSummary.textContent = `${clips} 片段 · ${seconds.toFixed(2)} 秒`;
+  const bound = project.bindingTracks(track.id).length;
+  timelineSummary.textContent = `${track.kind === 'audio' ? '音频轨' : '视频轨'} · ${clips} 片段 · ${seconds.toFixed(2)} 秒${bound > 1 ? ` · 对齐组 ${bound} 轨` : ''}`;
   document.title = hasMedia ? `${project.sources.length} 个素材 — 视频剪辑` : 'Clip · 视频剪辑';
   refreshPosition();
   scheduleSessionSave();
@@ -915,6 +1019,9 @@ function openExportDialog(): Promise<void> {
     heightInput.addEventListener('input', update);
 
     const confirmButton = $<HTMLButtonElement>('export-confirm');
+    // 该按钮在选择保存位置期间会被禁用。导出任务结束后对话框节点会被复用，
+    // 因此每次打开时都要恢复状态，否则一次失败会让后续导出无法开始。
+    confirmButton.disabled = false;
     const cleanup = (): void => {
       confirmButton.removeEventListener('click', onConfirm);
       $('export-cancel').removeEventListener('click', onCancel);
@@ -1159,7 +1266,17 @@ async function acceptRecoveryFiles(selectedFiles: readonly File[]): Promise<void
         rejected.push(file.name);
         continue;
       }
-      recoveryFiles.set(matched.path, file);
+      const data = await file.arrayBuffer();
+      const prepared = await prepareMediaFile(file, data, (fraction, message) => {
+        recoveryError.hidden = false;
+        recoveryError.textContent = `${message} ${(fraction * 100).toFixed(0)}%`;
+      });
+      recoveryFiles.set(matched.path, prepared.file);
+      const media = pendingRecovery.project.sources.find((source) => source.path === matched.path);
+      if (media && media.audioStreamIndex !== null) {
+        try { timeline.setWaveform(matched.path, await extractWaveform(prepared.data)); }
+        catch { /* 恢复项目不因浏览器缺少音频解码器而失败。 */ }
+      }
       sourceFingerprints.set(matched.path, { ...actual, path: matched.path });
     }
     renderRecoverySources();
@@ -1246,6 +1363,9 @@ undoButton.addEventListener('click', () => restore(false));
 redoButton.addEventListener('click', () => restore(true));
 duplicateButton.addEventListener('click', () => duplicateSelected());
 renameButton.addEventListener('click', () => renameSelected());
+multiSelectButton.addEventListener('click', () => toggleMultiSelectMode());
+bindTracksButton.addEventListener('click', () => saveTrackBinding());
+unbindTracksButton.addEventListener('click', () => unbindSelectedTracks());
 $('settings-button').addEventListener('click', () => openSettings());
 $('zoom-in').addEventListener('click', () => setZoom(timeline.zoom * 1.25));
 $('zoom-out').addEventListener('click', () => setZoom(timeline.zoom / 1.25));

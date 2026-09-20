@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private readonly TaskCompletionSource _initialization = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly string _cacheDirectory = Path.Combine(Path.GetTempPath(), "Clip", Guid.NewGuid().ToString("N"));
     private readonly Dictionary<string, PreviewAsset> _assets = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, float[]> _waveforms = new(StringComparer.OrdinalIgnoreCase);
     private FfmpegTools _tools = FfmpegTools.Discover();
     private CancellationTokenSource? _operation;
     private NvidiaEncoderProbeResult? _nvidiaProbe;
@@ -30,6 +31,8 @@ public partial class MainWindow : Window
     private Guid _activeTrackId;
     private Guid? _selectedTrackId;
     private Guid? _selected;
+    private bool _multiSelectMode;
+    private readonly HashSet<Guid> _multiSelectedTracks = [];
     private double _position;
     private double _timelineZoom = 1;
     private const double MaximumTimelineZoom = 20;
@@ -51,6 +54,7 @@ public partial class MainWindow : Window
         TimelineView.Project = _project;
         TimelineView.SelectionChanged += SelectClip;
         TimelineView.TrackSelectionChanged += SelectTrack;
+        TimelineView.TrackToggled += ToggleMultiSelectedTrack;
         TimelineView.SeekRequested += (track, time) => Seek(track, time);
         TimelineView.MoveRequested += MoveClip;
         TimelineView.AutoScrollRequested += AutoScrollTimeline;
@@ -162,9 +166,15 @@ public partial class MainWindow : Window
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception) { /* Metadata is sufficient to edit a source without a thumbnail. */ }
-                    var track = _project.Import(media);
+                    if (media.HasAudio)
+                    {
+                        try { _waveforms[media.Path] = await _tools.MakeWaveformAsync(media, token: _operation!.Token); }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception) { /* 波形失败不影响素材导入。 */ }
+                    }
+                    var separated = _project.ImportSeparated(media);
                     if (!_assets.ContainsKey(media.Path)) _assets[media.Path] = new(media, thumbnail);
-                    last = track.Clips[0].Id;
+                    last = separated.VideoTrack.Clips[0].Id;
                     imported++;
                     StatusText.Text = $"已导入 {imported} 个素材…";
                 }
@@ -179,7 +189,7 @@ public partial class MainWindow : Window
             ActivatePreview(p, false);
             RevealTrack(p.TrackId);
             StatusText.Text = cancelled ? $"已停止导入，保留已导入的 {imported} 个素材。" :
-                $"已导入 {imported} 个素材";
+                $"已导入 {imported} 个素材 · 有声音的素材已自动分轨";
         }
         Refresh();
         if (failures.Count > 0) ShowError(new InvalidOperationException("以下素材未导入；其他素材已保留。\n\n" + string.Join("\n", failures)));

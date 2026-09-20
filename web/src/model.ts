@@ -22,12 +22,27 @@ export interface MediaInfo {
 export const hasAudio = (media: MediaInfo): boolean => media.audioStreamIndex !== null;
 export const fileName = (media: MediaInfo): string => media.path.split(/[/\\]/).pop() ?? media.path;
 
+export const ClipKind = {
+  Combined: 'combined',
+  Video: 'video',
+  Audio: 'audio',
+} as const;
+export type ClipKind = (typeof ClipKind)[keyof typeof ClipKind];
+
+export const TrackKind = {
+  Video: 'video',
+  Audio: 'audio',
+} as const;
+export type TrackKind = (typeof TrackKind)[keyof typeof TrackKind];
+
 export interface VideoClip {
   readonly id: string;
   readonly media: MediaInfo;
   readonly start: number;
   readonly end: number;
   readonly speed: number;
+  /** 旧项目为 combined；分离导入后用于区分片段的编辑与展示角色。 */
+  readonly kind?: ClipKind;
   readonly name?: string;
 }
 
@@ -41,7 +56,15 @@ export interface VideoTrack {
   readonly id: string;
   readonly name: string;
   readonly isMain: boolean;
+  readonly kind?: TrackKind;
+  /** 同一非空 bindingId 的轨道共享分割点；删除始终只影响当前片段。 */
+  readonly bindingId?: string | null;
   readonly clips: readonly VideoClip[];
+}
+
+export interface SeparatedImport {
+  readonly videoTrack: VideoTrack;
+  readonly audioTrack?: VideoTrack;
 }
 
 export const trackDuration = (track: VideoTrack): number =>
@@ -88,13 +111,14 @@ export function validateClip(clip: VideoClip): void {
   if (invalid) throw new Error('片段的素材信息或源视频范围无效。');
 }
 
-export function createClip(media: MediaInfo): VideoClip {
+export function createClip(media: MediaInfo, kind: ClipKind = ClipKind.Combined): VideoClip {
   return {
     id: crypto.randomUUID(),
     media,
     start: 0,
     end: media.duration,
     speed: 1,
+    kind,
   };
 }
 
@@ -176,6 +200,12 @@ function parseProjectSnapshot(value: unknown): ProjectState {
       throw new Error('保存的主轨道信息无效。');
     }
     trackIds.add(id);
+    const kind = candidate.kind === undefined ? TrackKind.Video : candidate.kind;
+    const bindingId = candidate.bindingId === undefined ? null : candidate.bindingId;
+    if ((kind !== TrackKind.Video && kind !== TrackKind.Audio)
+      || !(bindingId === null || (typeof bindingId === 'string' && bindingId.length > 0))) {
+      throw new Error('保存的轨道类型或绑定信息无效。');
+    }
     const clips = candidate.clips.map((clipCandidate): VideoClip => {
       if (!isRecord(clipCandidate) || !isRecord(clipCandidate.media)) {
         throw new Error('保存的片段信息无效。');
@@ -189,6 +219,7 @@ function parseProjectSnapshot(value: unknown): ProjectState {
         || typeof clipCandidate.start !== 'number'
         || typeof clipCandidate.end !== 'number'
         || typeof clipCandidate.speed !== 'number'
+        || !(clipCandidate.kind === undefined || Object.values(ClipKind).includes(clipCandidate.kind as ClipKind))
         || !(clipCandidate.name === undefined || typeof clipCandidate.name === 'string')
       ) throw new Error('保存的片段信息不完整。');
       const clip: VideoClip = {
@@ -197,6 +228,7 @@ function parseProjectSnapshot(value: unknown): ProjectState {
         start: clipCandidate.start,
         end: clipCandidate.end,
         speed: clipCandidate.speed,
+        kind: (clipCandidate.kind as ClipKind | undefined) ?? ClipKind.Combined,
         ...(typeof clipCandidate.name === 'string' ? { name: clipCandidate.name } : {}),
       };
       if (!media || clip.id.length === 0 || clipIds.has(clip.id)) {
@@ -206,7 +238,7 @@ function parseProjectSnapshot(value: unknown): ProjectState {
       validateClip(clip);
       return clip;
     });
-    return { id, name, isMain, clips };
+    return { id, name, isMain, kind, bindingId, clips };
   });
 
   if (tracks.length === 0) throw new Error('保存的项目缺少主轨道。');
@@ -216,7 +248,7 @@ function parseProjectSnapshot(value: unknown): ProjectState {
 /** 可独立导出的多轨道项目，撤销作用于整个项目。 */
 export class EditProject {
   private tracks: VideoTrack[] = [
-    { id: crypto.randomUUID(), name: '轨道 1', isMain: true, clips: [] },
+    { id: crypto.randomUUID(), name: '轨道 1', isMain: true, kind: TrackKind.Video, bindingId: null, clips: [] },
   ];
   private sourceList: MediaInfo[] = [];
   private undoStack: ProjectState[] = [];
@@ -247,7 +279,7 @@ export class EditProject {
   }
 
   get exportableTracks(): readonly VideoTrack[] {
-    return this.tracks.filter((track) => track.clips.length > 0);
+    return this.tracks.filter((track) => track.clips.length > 0 && track.kind !== TrackKind.Audio);
   }
 
   /** 生成适合 JSON 序列化的当前项目快照；撤销/重做历史刻意不持久化。 */
@@ -288,11 +320,94 @@ export class EditProject {
         id: trackId,
         name: `轨道 ${this.tracks.length + 1}`,
         isMain: false,
+        kind: TrackKind.Video,
+        bindingId: null,
         clips: [clip],
       });
     }
     this.normalizeTracks();
     return this.findTrack(trackId)!;
+  }
+
+  /** 导入一份素材并生成彼此独立的视频轨和音频轨。 */
+  importSeparated(media: MediaInfo): SeparatedImport {
+    const videoClip = createClip(media, ClipKind.Video);
+    validateClip(videoClip);
+    if (media.isHdr) throw new Error('暂不支持 HDR 素材，请先转换为 SDR。');
+    this.saveUndo();
+    if (!this.sourceList.some((source) => sameSource(source, media))) this.sourceList.push(media);
+
+    const empty = this.tracks.find((track) => track.clips.length === 0 && track.kind !== TrackKind.Audio);
+    const videoTrackId = empty?.id ?? crypto.randomUUID();
+    if (empty) {
+      const index = this.tracks.findIndex((track) => track.id === empty.id);
+      this.tracks[index] = {
+        ...empty,
+        name: `视频 ${fileName(media)}`,
+        kind: TrackKind.Video,
+        bindingId: null,
+        clips: [videoClip],
+      };
+    } else {
+      this.tracks.push({
+        id: videoTrackId,
+        name: `视频 ${fileName(media)}`,
+        isMain: false,
+        kind: TrackKind.Video,
+        bindingId: null,
+        clips: [videoClip],
+      });
+    }
+
+    let audioTrackId: string | undefined;
+    if (hasAudio(media)) {
+      audioTrackId = crypto.randomUUID();
+      const videoIndex = this.tracks.findIndex((track) => track.id === videoTrackId);
+      this.tracks.splice(videoIndex + 1, 0, {
+        id: audioTrackId,
+        name: `音频 ${fileName(media)}`,
+        isMain: false,
+        kind: TrackKind.Audio,
+        bindingId: null,
+        clips: [createClip(media, ClipKind.Audio)],
+      });
+    }
+    this.normalizeTracks();
+    return {
+      videoTrack: this.findTrack(videoTrackId)!,
+      ...(audioTrackId ? { audioTrack: this.findTrack(audioTrackId)! } : {}),
+    };
+  }
+
+  bindingTracks(trackId: string): readonly VideoTrack[] {
+    const track = this.findTrack(trackId);
+    if (!track?.bindingId) return track ? [track] : [];
+    return this.tracks.filter((candidate) => candidate.bindingId === track.bindingId);
+  }
+
+  /** 用新的绑定替换所选轨道已有绑定；不足两条时不产生历史记录。 */
+  bindTracks(trackIds: readonly string[]): string | undefined {
+    const ids = [...new Set(trackIds)];
+    const selected = ids.map((id) => this.findTrack(id));
+    if (ids.length < 2 || selected.some((track) => !track || track.clips.length === 0)) return undefined;
+    this.saveUndo();
+    const bindingId = crypto.randomUUID();
+    const touchedBindings = new Set(selected.map((track) => track!.bindingId).filter(Boolean));
+    this.tracks = this.tracks.map((track) => ids.includes(track.id) ? { ...track, bindingId } : track);
+    this.clearSingletonBindings(touchedBindings);
+    return bindingId;
+  }
+
+  unbindTracks(trackIds: readonly string[]): boolean {
+    const ids = new Set(trackIds);
+    if (![...ids].some((id) => this.findTrack(id)?.bindingId)) return false;
+    this.saveUndo();
+    const touchedBindings = new Set(
+      this.tracks.filter((track) => ids.has(track.id)).map((track) => track.bindingId).filter(Boolean),
+    );
+    this.tracks = this.tracks.map((track) => ids.has(track.id) ? { ...track, bindingId: null } : track);
+    this.clearSingletonBindings(touchedBindings);
+    return true;
   }
 
   findTrack(id: string): VideoTrack | undefined {
@@ -333,24 +448,39 @@ export class EditProject {
   }
 
   split(trackId: string, time: number): string | undefined {
-    const position = this.locate(trackId, time);
-    if (!position) return undefined;
-    const clip = position.clip;
-    const frame = 1 / clip.media.frameRate;
-    const cut = Math.round(position.sourceTime / frame) * frame;
-    if (cut - clip.start < frame * 0.5 || clip.end - cut < frame * 0.5) return undefined;
+    const tracks = this.bindingTracks(trackId);
+    if (tracks.length === 0) return undefined;
+    const cuts = tracks.map((track) => {
+      const position = this.locate(track.id, time);
+      if (!position) return undefined;
+      const frame = 1 / position.clip.media.frameRate;
+      const cut = Math.round(position.sourceTime / frame) * frame;
+      return cut - position.clip.start < frame * 0.5 || position.clip.end - cut < frame * 0.5
+        ? undefined
+        : { track, position, cut };
+    });
+    // 绑定轨采用原子分割，避免某个视角悄悄漏掉切点。
+    if (cuts.some((cut) => cut === undefined)) return undefined;
     this.saveUndo();
-    const clips = [...this.findTrack(trackId)!.clips];
-    clips[position.index] = { ...clip, end: cut };
-    clips.splice(position.index + 1, 0, { ...clip, id: crypto.randomUUID(), start: cut });
-    this.replaceClips(trackId, clips);
-    return clips[position.index + 1]!.id;
+    let requestedId: string | undefined;
+    for (const item of cuts) {
+      const { track, position, cut } = item!;
+      const clips = [...track.clips];
+      const right = { ...position.clip, id: crypto.randomUUID(), start: cut };
+      clips[position.index] = { ...position.clip, end: cut };
+      clips.splice(position.index + 1, 0, right);
+      this.replaceClips(track.id, clips);
+      if (track.id === trackId) requestedId = right.id;
+    }
+    return requestedId;
   }
 
   move(clipId: string, targetTrackId: string, insertionIndex: number): boolean {
     const source = this.findClip(clipId);
     const target = this.findTrack(targetTrackId);
     if (!source || !target) return false;
+    const sourceTrack = this.findTrack(source.trackId)!;
+    if (sourceTrack.kind !== target.kind) return false;
     if (insertionIndex < 0 || insertionIndex > target.clips.length) {
       throw new RangeError('insertionIndex');
     }
@@ -369,7 +499,12 @@ export class EditProject {
       const targetClips = [...target.clips];
       targetClips.splice(insertionIndex, 0, source.clip);
       this.replaceClips(source.trackId, sourceClips);
-      this.replaceClips(targetTrackId, targetClips);
+      const targetIndex = this.tracks.findIndex((track) => track.id === targetTrackId);
+      this.tracks[targetIndex] = {
+        ...this.tracks[targetIndex]!,
+        bindingId: null,
+        clips: targetClips,
+      };
     }
     this.normalizeTracks();
     return true;
@@ -414,6 +549,8 @@ export class EditProject {
         id: crypto.randomUUID(),
         name: `轨道 ${this.tracks.length + 1}`,
         isMain: false,
+        kind: this.findTrack(position.trackId)?.kind ?? TrackKind.Video,
+        bindingId: null,
         clips: [copy],
       });
     }
@@ -476,7 +613,7 @@ export class EditProject {
   resolveExportTrack(selectedTrackId: string | null): VideoTrack | undefined {
     if (selectedTrackId !== null) {
       const selected = this.findTrack(selectedTrackId);
-      return selected && selected.clips.length > 0 ? selected : undefined;
+      return selected && selected.clips.length > 0 && selected.kind !== TrackKind.Audio ? selected : undefined;
     }
     const tracks = this.exportableTracks;
     return tracks.length === 1 ? tracks[0] : undefined;
@@ -505,6 +642,15 @@ export class EditProject {
     this.tracks[index] = { ...this.tracks[index]!, clips };
   }
 
+  private clearSingletonBindings(bindingIds: ReadonlySet<string | null | undefined>): void {
+    for (const bindingId of bindingIds) {
+      if (!bindingId) continue;
+      if (this.tracks.filter((track) => track.bindingId === bindingId).length < 2) {
+        this.tracks = this.tracks.map((track) => track.bindingId === bindingId ? { ...track, bindingId: null } : track);
+      }
+    }
+  }
+
   /**
    * 轨道不变量：非空轨在前，末尾始终恰好一条空轨。
    * 当原主轨被清空时，第一条非空轨成为新主轨；原空轨会复用到末尾。
@@ -517,13 +663,24 @@ export class EditProject {
         id: crypto.randomUUID(),
         name: '轨道 1',
         isMain: true,
+        kind: TrackKind.Video,
+        bindingId: null,
         clips: [],
       };
-      this.tracks = [{ ...only, isMain: true, clips: [] }];
+      this.tracks = [{
+        ...only,
+        name: '轨道 1',
+        isMain: true,
+        kind: TrackKind.Video,
+        bindingId: null,
+        clips: [],
+      }];
       return;
     }
 
-    const main = nonEmpty.find((track) => track.isMain) ?? nonEmpty[0]!;
+    const main = nonEmpty.find((track) => track.isMain && track.kind !== TrackKind.Audio)
+      ?? nonEmpty.find((track) => track.kind !== TrackKind.Audio)
+      ?? nonEmpty[0]!;
     const contentTracks = [
       { ...main, isMain: true },
       ...nonEmpty.filter((track) => track.id !== main.id).map((track) => ({ ...track, isMain: false })),
@@ -532,9 +689,19 @@ export class EditProject {
       id: crypto.randomUUID(),
       name: `轨道 ${contentTracks.length + 1}`,
       isMain: false,
+      kind: TrackKind.Video,
+      bindingId: null,
       clips: [],
     };
-    this.tracks = [...contentTracks, { ...trailingEmpty, isMain: false, clips: [] }];
+    this.tracks = [...contentTracks, {
+      ...trailingEmpty,
+      name: `轨道 ${contentTracks.length + 1}`,
+      isMain: false,
+      kind: TrackKind.Video,
+      bindingId: null,
+      clips: [],
+    }];
+    this.clearSingletonBindings(new Set(this.tracks.map((track) => track.bindingId)));
   }
 
   private snapshot(): ProjectState {

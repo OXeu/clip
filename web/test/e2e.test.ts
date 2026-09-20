@@ -51,11 +51,21 @@ interface ExportResultShape {
 }
 
 interface StateShape {
+  readonly sources: readonly {
+    readonly path: string;
+    readonly duration: number;
+    readonly width: number;
+    readonly height: number;
+  }[];
   readonly duration: number;
   readonly position: number;
   readonly playing: boolean;
   readonly exportableTracks: number;
-  readonly tracks: readonly { id: string; clips: readonly { id: string; start: number; end: number }[] }[];
+  readonly tracks: readonly {
+    id: string;
+    kind: 'video' | 'audio';
+    clips: readonly { id: string; start: number; end: number }[];
+  }[];
 }
 
 let skipReason: string | null = null;
@@ -204,9 +214,48 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     const state = await page.evaluate(() =>
       (window as unknown as { __clip: { state: () => StateShape } }).__clip.state(),
     );
-    const total = state.tracks.flatMap((track) => track.clips).reduce((sum, clip) => sum + (clip.end - clip.start), 0);
+    const total = state.tracks
+      .filter((track) => track.kind === 'video')
+      .flatMap((track) => track.clips)
+      .reduce((sum, clip) => sum + (clip.end - clip.start), 0);
     writeArtifact('import-state.json', `${JSON.stringify(state, null, 2)}\n`);
     assert.ok(Math.abs(total - 4) < 0.2, `源时长应约为 4 秒，实际 ${total}`);
+    assert.deepEqual(
+      state.tracks.filter((track) => track.clips.length > 0).map((track) => track.kind),
+      ['video', 'audio'],
+      '有声素材应自动拆成独立的视频轨和音频轨',
+    );
+    await page.context().close();
+  });
+
+  it('MKV 素材在浏览器内准备为 MP4 后可预览并导出', async () => {
+    const { page, errors } = await openPage();
+    await importFixture(page, fixtures[4]!);
+
+    const state = await page.evaluate(() => (window as unknown as {
+      __clip: { state: () => StateShape };
+    }).__clip.state());
+    assert.equal(state.sources.length, 1);
+    assert.equal(state.sources[0]!.path, 'landscape-4s-30fps.mkv');
+    assert.equal(state.sources[0]!.width, 640);
+    assert.equal(state.sources[0]!.height, 360);
+    assert.ok(Math.abs(state.sources[0]!.duration - 4) < 0.1);
+
+    await page.waitForFunction(() => {
+      const video = document.querySelector<HTMLVideoElement>('#preview');
+      return Boolean(video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA);
+    });
+    const result = await page.evaluate(() => (window as unknown as {
+      __clip: { exportToBlob: (request?: Record<string, unknown>) => Promise<ExportResultShape> };
+    }).__clip.exportToBlob({ route: 'webcodecs-video', width: 320, height: 180 }));
+    const path = await saveExport(page, result, 'export-from-mkv.mp4');
+    const summary = probeFile(path);
+    assert.equal(summary.videoCodec, 'h264');
+    assert.equal(summary.hasAudio, true);
+    assert.equal(summary.width, 320);
+    assert.equal(summary.height, 180);
+    assert.ok(Math.abs(summary.duration - 4) < 0.25);
+    assert.equal(errors.length, 0, `MKV 导入与导出期间不应报错：${errors.join(' | ')}`);
     await page.context().close();
   });
 
@@ -221,13 +270,15 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
       return { split: api.split(), state: api.state() };
     });
     assert.equal(edited.split, true);
-    assert.equal(edited.state.tracks.flatMap((track) => track.clips).length, 2);
+    assert.equal(edited.state.tracks.filter((track) => track.kind === 'video').flatMap((track) => track.clips).length, 2);
 
     await page.waitForFunction(() => {
       const raw = sessionStorage.getItem('clip.edit-session.v1');
       if (!raw) return false;
-      const stored = JSON.parse(raw) as { project?: { tracks?: { clips?: unknown[] }[] } };
-      return stored.project?.tracks?.reduce((count, track) => count + (track.clips?.length ?? 0), 0) === 2;
+      const stored = JSON.parse(raw) as { project?: { tracks?: { kind?: string; clips?: unknown[] }[] } };
+      return stored.project?.tracks
+        ?.filter((track) => track.kind === 'video')
+        .reduce((count, track) => count + (track.clips?.length ?? 0), 0) === 2;
     });
 
     page.once('dialog', (dialog) => void dialog.accept());
@@ -246,7 +297,7 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     const restored = await page.evaluate(() =>
       (window as unknown as { __clip: { state: () => StateShape } }).__clip.state(),
     );
-    assert.equal(restored.tracks.flatMap((track) => track.clips).length, 2);
+    assert.equal(restored.tracks.filter((track) => track.kind === 'video').flatMap((track) => track.clips).length, 2);
     assert.ok(Math.abs(restored.position - 1.5) < 0.01, `播放头应恢复到 1.5 秒，实际 ${restored.position}`);
     assert.equal(errors.length, 0, `恢复期间不应报错：${errors.join(' | ')}`);
     await page.context().close();
@@ -277,7 +328,7 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
         __clip: { state: () => StateShape; deleteClip: (id: string) => boolean };
       }).__clip;
       const state = api.state();
-      const clips = state.tracks.flatMap((track) => track.clips);
+      const clips = state.tracks.filter((track) => track.kind === 'video').flatMap((track) => track.clips);
       const last = clips[clips.length - 1]!;
       return api.deleteClip(last.id);
     });
@@ -400,7 +451,7 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
       }).__clip;
       api.seek(2);
       api.split();
-      const clips = api.state().tracks.flatMap((track) => track.clips);
+      const clips = api.state().tracks.filter((track) => track.kind === 'video').flatMap((track) => track.clips);
       api.deleteClip(clips[clips.length - 1]!.id);
       return api.exportToBlob({ route: 'wasm' });
     });
@@ -522,7 +573,7 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
       }).__clip;
       const state = api.state();
       // 选第一条非空轨道导出，验证单轨导出不混入其他轨道。
-      const track = state.tracks.find((item) => item.clips.length > 0)!;
+      const track = state.tracks.find((item) => item.kind === 'video' && item.clips.length > 0)!;
       api.selectTrack(track.id);
       return api.exportToBlob({ trackId: track.id, route: 'webcodecs-video' });
     });
@@ -579,9 +630,9 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
       }).__clip;
       api.seek(2);
       api.split();
-      const clips = api.state().tracks.flatMap((track) => track.clips);
+      const clips = api.state().tracks.filter((track) => track.kind === 'video').flatMap((track) => track.clips);
       api.deleteClip(clips[clips.length - 1]!.id);
-      const first = api.state().tracks.flatMap((track) => track.clips)[0]!;
+      const first = api.state().tracks.filter((track) => track.kind === 'video').flatMap((track) => track.clips)[0]!;
       api.setSpeed(first.id, 1.5);
       const webcodecs = await api.exportToBlob({ route: 'webcodecs-video' });
       const wasm = await api.exportToBlob({ route: 'wasm' });
@@ -921,7 +972,7 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     assert.equal(editorLayout.documentWidth, editorLayout.viewportWidth, '导入后也不应撑宽页面');
     assert.equal(editorLayout.timelineRight, editorLayout.viewportWidth, '时间轴应完整收在视口内');
     assert.ok(editorLayout.toolbarScrollWidth > editorLayout.toolbarWidth, '窄屏时操作栏应在内部横向滚动');
-    assert.equal(editorLayout.timelineCanvasHeight, 172, '一条内容轨后应只有一条末尾空轨');
+    assert.equal(editorLayout.timelineCanvasHeight, 240, '有声素材应显示视频轨、音频轨和一条末尾空轨');
     assert.match(editorLayout.tapHighlight, /rgba\(0, 0, 0, 0\)|transparent/, '时间轴触摸不应出现蓝色点击层');
 
     await page.waitForFunction(() => sessionStorage.getItem('clip.edit-session.v1') !== null);
@@ -1206,6 +1257,53 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
 
     await page.context().close();
   });
+
+  it('导出失败后可以再次开始导出', async () => {
+    const { page, errors } = await openPage();
+    await importFixture(page, fixtures[2]!);
+
+    // 让文件写入失败，覆盖编码完成后失败时的真实 UI 状态恢复路径。
+    await page.evaluate(() => {
+      Object.defineProperty(window, 'showSaveFilePicker', {
+        configurable: true,
+        value: async () => ({
+          createWritable: async () => ({
+            write: async () => { throw new Error('模拟导出文件写入失败'); },
+            close: async () => undefined,
+          }),
+        }),
+      });
+    });
+
+    await page.click('#export-button');
+    await page.waitForSelector('#export-dialog[open]');
+    await page.click('#export-confirm');
+    await page.waitForFunction(
+      () => Array.from(document.querySelectorAll('dialog[open] h2'))
+        .some((heading) => heading.textContent === '导出未完成'),
+      undefined,
+      { timeout: 30_000 },
+    );
+    await page.getByRole('button', { name: '知道了' }).click();
+    await page.waitForFunction(
+      () => !(document.getElementById('export-button') as HTMLButtonElement).disabled,
+      undefined,
+      { timeout: 10_000 },
+    );
+
+    await page.click('#export-button');
+    await page.waitForSelector('#export-dialog[open]');
+    assert.equal(
+      await page.locator('#export-confirm').isEnabled(),
+      true,
+      '失败后重新打开导出对话框时，“开始导出”应恢复可用',
+    );
+    await page.click('#export-cancel');
+    assert.equal(errors.length, 0, `不应有页面错误：${errors.join(' | ')}`);
+
+    await page.context().close();
+  });
+
   it('导出画面在 YUV 采样层面与源一致（两条路线都保真）', async () => {
     /**
      * 保真回归：以原始 YUV 采样为准，而不是解成 RGB 的像素。

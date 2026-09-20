@@ -14,7 +14,7 @@ public sealed class EditProject
     public double Duration => _tracks.Max(t => t.Duration);
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
-    public IReadOnlyList<VideoTrack> ExportableTracks => _tracks.Where(t => t.Clips.Count > 0).ToArray();
+    public IReadOnlyList<VideoTrack> ExportableTracks => _tracks.Where(t => t.Clips.Count > 0 && t.Kind != TrackKind.Audio).ToArray();
 
     public EditProject() => _tracks.Add(new(Guid.NewGuid(), "轨道 1", true, Array.AsReadOnly(Array.Empty<VideoClip>())));
 
@@ -28,6 +28,61 @@ public sealed class EditProject
         var track = new VideoTrack(Guid.NewGuid(), $"轨道 {_tracks.Count + 1}", false, Array.AsReadOnly(new[] { clip }));
         _tracks.Add(track);
         return track;
+    }
+
+    public SeparatedImport ImportSeparated(MediaInfo media)
+    {
+        var videoClip = VideoClip.Create(media) with { Kind = ClipKind.Video };
+        videoClip.Validate();
+        if (media.IsHdr) throw new NotSupportedException("暂不支持 HDR 素材，请先转换为 SDR。");
+        SaveUndo();
+        if (!_sources.Any(s => SameSource(s, media))) _sources.Add(media);
+        var videoTrack = new VideoTrack(Guid.NewGuid(), $"视频 {media.FileName}", false,
+            Array.AsReadOnly(new[] { videoClip }), TrackKind.Video);
+        _tracks.Add(videoTrack);
+        VideoTrack? audioTrack = null;
+        if (media.HasAudio)
+        {
+            var audioClip = VideoClip.Create(media) with { Kind = ClipKind.Audio };
+            audioTrack = new(Guid.NewGuid(), $"音频 {media.FileName}", false,
+                Array.AsReadOnly(new[] { audioClip }), TrackKind.Audio);
+            _tracks.Add(audioTrack);
+        }
+        return new(videoTrack, audioTrack);
+    }
+
+    public IReadOnlyList<VideoTrack> BindingTracks(Guid trackId)
+    {
+        var track = FindTrack(trackId);
+        if (track is null) return [];
+        if (track.BindingId is not { } bindingId) return [track];
+        return _tracks.Where(t => t.BindingId == bindingId).ToArray();
+    }
+
+    public Guid? BindTracks(IEnumerable<Guid> trackIds)
+    {
+        var ids = trackIds.Distinct().ToArray();
+        var selected = ids.Select(FindTrack).ToArray();
+        if (ids.Length < 2 || selected.Any(t => t is null || t.Clips.Count == 0)) return null;
+        SaveUndo();
+        var touched = selected.Where(t => t!.BindingId.HasValue).Select(t => t!.BindingId!.Value).ToHashSet();
+        var bindingId = Guid.NewGuid();
+        for (var i = 0; i < _tracks.Count; i++)
+            if (ids.Contains(_tracks[i].Id)) _tracks[i] = _tracks[i] with { BindingId = bindingId };
+        ClearSingletonBindings(touched);
+        return bindingId;
+    }
+
+    public bool UnbindTracks(IEnumerable<Guid> trackIds)
+    {
+        var ids = trackIds.ToHashSet();
+        var touched = _tracks.Where(t => ids.Contains(t.Id) && t.BindingId.HasValue).Select(t => t.BindingId!.Value).ToHashSet();
+        if (touched.Count == 0) return false;
+        SaveUndo();
+        for (var i = 0; i < _tracks.Count; i++)
+            if (ids.Contains(_tracks[i].Id)) _tracks[i] = _tracks[i] with { BindingId = null };
+        ClearSingletonBindings(touched);
+        return true;
     }
 
     public VideoTrack? FindTrack(Guid id) => _tracks.FirstOrDefault(t => t.Id == id);
@@ -65,23 +120,35 @@ public sealed class EditProject
 
     public Guid? Split(Guid trackId, double time)
     {
-        if (Locate(trackId, time) is not { } position) return null;
-        var clip = position.Clip;
-        var frame = 1 / clip.Media.FrameRate;
-        var cut = Math.Round(position.SourceTime / frame) * frame;
-        if (cut - clip.Start < frame * 0.5 || clip.End - cut < frame * 0.5) return null;
+        var cuts = new List<(VideoTrack Track, ClipPosition Position, double Cut)>();
+        foreach (var track in BindingTracks(trackId))
+        {
+            if (Locate(track.Id, time) is not { } position) return null;
+            var frame = 1 / position.Clip.Media.FrameRate;
+            var cut = Math.Round(position.SourceTime / frame) * frame;
+            if (cut - position.Clip.Start < frame * 0.5 || position.Clip.End - cut < frame * 0.5) return null;
+            cuts.Add((track, position, cut));
+        }
+        if (cuts.Count == 0) return null;
         SaveUndo();
-        var clips = FindTrack(trackId)!.Clips.ToList();
-        var right = clip with { Id = Guid.NewGuid(), Start = cut };
-        clips[position.Index] = clip with { End = cut };
-        clips.Insert(position.Index + 1, right);
-        ReplaceClips(trackId, clips);
-        return right.Id;
+        Guid? requested = null;
+        foreach (var (track, position, cut) in cuts)
+        {
+            var clips = track.Clips.ToList();
+            var right = position.Clip with { Id = Guid.NewGuid(), Start = cut };
+            clips[position.Index] = position.Clip with { End = cut };
+            clips.Insert(position.Index + 1, right);
+            ReplaceClips(track.Id, clips);
+            if (track.Id == trackId) requested = right.Id;
+        }
+        return requested;
     }
 
     public bool Move(Guid clipId, Guid targetTrackId, int insertionIndex)
     {
         if (FindClip(clipId) is not { } source || FindTrack(targetTrackId) is not { } target) return false;
+        var sourceTrack = FindTrack(source.TrackId)!;
+        if (target.Kind != sourceTrack.Kind) return false;
         if (insertionIndex < 0 || insertionIndex > target.Clips.Count) throw new ArgumentOutOfRangeException(nameof(insertionIndex));
         if (source.TrackId == targetTrackId && (insertionIndex == source.Index || insertionIndex == source.Index + 1)) return false;
         SaveUndo();
@@ -98,7 +165,12 @@ public sealed class EditProject
             var targetClips = target.Clips.ToList();
             targetClips.Insert(insertionIndex, source.Clip);
             ReplaceClips(source.TrackId, sourceClips);
-            ReplaceClips(targetTrackId, targetClips);
+            var targetIndex = _tracks.FindIndex(t => t.Id == targetTrackId);
+            _tracks[targetIndex] = _tracks[targetIndex] with
+            {
+                BindingId = null,
+                Clips = targetClips.AsReadOnly()
+            };
         }
         return true;
     }
@@ -141,7 +213,8 @@ public sealed class EditProject
         else
         {
             var row = _tracks.FindIndex(t => t.Id == position.TrackId);
-            _tracks.Insert(row + 1, new(Guid.NewGuid(), $"轨道 {_tracks.Count + 1}", false, Array.AsReadOnly(new[] { copy })));
+            _tracks.Insert(row + 1, new(Guid.NewGuid(), $"轨道 {_tracks.Count + 1}", false,
+                Array.AsReadOnly(new[] { copy }), FindTrack(position.TrackId)?.Kind ?? TrackKind.Video));
         }
         return copy.Id;
     }
@@ -174,7 +247,10 @@ public sealed class EditProject
     public VideoTrack? ResolveExportTrack(Guid? selectedTrackId)
     {
         if (selectedTrackId is { } id)
-            return FindTrack(id) is { Clips.Count: > 0 } selected ? selected : null;
+        {
+            var selected = FindTrack(id);
+            return selected is { Clips.Count: > 0 } && selected.Kind != TrackKind.Audio ? selected : null;
+        }
         var tracks = ExportableTracks;
         return tracks.Count == 1 ? tracks[0] : null;
     }
@@ -190,6 +266,13 @@ public sealed class EditProject
     {
         var index = _tracks.FindIndex(t => t.Id == trackId);
         _tracks[index] = _tracks[index] with { Clips = clips.AsReadOnly() };
+    }
+    private void ClearSingletonBindings(IEnumerable<Guid> bindingIds)
+    {
+        foreach (var bindingId in bindingIds)
+            if (_tracks.Count(t => t.BindingId == bindingId) < 2)
+                for (var i = 0; i < _tracks.Count; i++)
+                    if (_tracks[i].BindingId == bindingId) _tracks[i] = _tracks[i] with { BindingId = null };
     }
     private State Snapshot() => new(_tracks.ToArray(), _sources.ToArray());
     private void SaveUndo() { _undo.Push(Snapshot()); _redo.Clear(); }
