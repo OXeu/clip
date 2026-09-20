@@ -389,6 +389,7 @@ public partial class MainWindow
         Refresh();
         VerifyBrandHeader();
         Require(TimelineRegion.Visibility == Visibility.Collapsed && ExportButtonGroup.Visibility == Visibility.Collapsed, "Editing controls leaked into empty state.");
+        VerifyBrandButtons(this);
         UiCapture.Save(WindowRoot, "smoke-empty.png");
         var source = Environment.GetEnvironmentVariable("CLIP_UI_TEST_VIDEO");
         var second = Environment.GetEnvironmentVariable("CLIP_UI_TEST_VIDEO_SECOND");

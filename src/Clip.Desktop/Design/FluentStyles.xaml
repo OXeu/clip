@@ -67,7 +67,10 @@
     <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocus}" />
   </Style>
   <Style TargetType="Button" BasedOn="{StaticResource CommandButton}" />
-  <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+  <!-- 主题色按钮共用白色前景；文字、RemixIcon 与路径均继承同一语义色。
+       原生 Fluent 模板的悬停/按下前景由 UiTheme 映射到 ColorOnBrand。 -->
+  <Style x:Key="BrandButton" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+    <Setter Property="Foreground" Value="{DynamicResource ColorOnBrand}" />
     <Setter Property="MinHeight" Value="{StaticResource ControlHeight}" />
     <Setter Property="Padding" Value="16,7" />
     <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
@@ -75,15 +78,13 @@
     <Setter Property="HorizontalAlignment" Value="Stretch" />
     <Setter Property="Cursor" Value="Hand" />
     <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocus}" />
-  </Style>
-  <Style x:Key="ExportButtonContent" TargetType="FrameworkElement">
-    <Setter Property="TextElement.Foreground" Value="{DynamicResource ColorExportForeground}" />
     <Style.Triggers>
       <Trigger Property="IsEnabled" Value="False">
-        <Setter Property="TextElement.Foreground" Value="{DynamicResource ColorDisabledForeground}" />
+        <Setter Property="Foreground" Value="{DynamicResource ColorDisabledForeground}" />
       </Trigger>
     </Style.Triggers>
   </Style>
+  <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource BrandButton}" />
   <Style x:Key="QuietButton" TargetType="Button" BasedOn="{StaticResource CommandButton}">
     <Setter Property="Background" Value="Transparent" />
     <Setter Property="BorderThickness" Value="0" />

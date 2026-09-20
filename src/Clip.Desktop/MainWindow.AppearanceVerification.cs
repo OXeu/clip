@@ -5,6 +5,7 @@ using System.Windows.Automation.Peers;
 using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -34,10 +35,24 @@ public partial class MainWindow
                     "An existing editor retained the previous theme.");
                 Require(SameColor(export.QualityBox.Background, (Brush)FindResource("ColorNeutralBackground1")),
                     "An existing export field retained the previous theme.");
-                Require(SameColor(System.Windows.Documents.TextElement.GetForeground((StackPanel)ExportButton.Content),
-                    (Brush)FindResource("ColorExportForeground")), "The export action did not use its foreground color.");
-                Require(Contrast(PlayButton.Foreground, PlayButton.Background) >= 4.5,
-                    "The playback action does not have readable text.");
+                var onBrand = (Brush)FindResource("ColorOnBrand");
+                Require(SameColor(onBrand, SystemParameters.HighContrast ? SystemColors.HighlightTextBrush : Brushes.White),
+                    "Brand buttons must use white foreground in both themes, or the system high-contrast foreground.");
+                foreach (var state in new[] { "AccentButtonForeground", "AccentButtonForegroundPointerOver", "AccentButtonForegroundPressed" })
+                    Require(SameColor((Brush)FindResource(state), onBrand), $"Brand foreground changed for {state}.");
+                VerifyBrandButtons(this);
+                VerifyBrandButtons(export);
+                var originalGlyph = PlayGlyph.Kind;
+                try
+                {
+                    foreach (var glyph in new[] { "Play", "Pause" })
+                    {
+                        PlayGlyph.Kind = glyph;
+                        Require(PlayButton.IsEnabled && SameColor(PlayGlyph.Foreground, onBrand),
+                            $"The {glyph} icon did not inherit the brand foreground.");
+                    }
+                }
+                finally { PlayGlyph.Kind = originalGlyph; }
                 var desktopDpi = VisualTreeHelper.GetDpi(WindowRoot);
                 UiCapture.Save(WindowRoot, $"smoke-theme-{theme}-editor.png", minimumPixelsPerDip: 3);
                 Require(VisualTreeHelper.GetDpi(WindowRoot).Equals(desktopDpi),
@@ -66,6 +81,7 @@ public partial class MainWindow
                         "The fixture update check did not complete.");
                     Require(!update._install.IsEnabled && update._status.Text == "尚未发布正式版本。",
                         "The no-update state was not correctly presented.");
+                    VerifyBrandButtons(update);
                     UiCapture.Save(update.UpdateRoot, $"smoke-theme-{theme}-update.png");
                 }
                 finally { update.Close(); }
@@ -90,8 +106,10 @@ public partial class MainWindow
         {
             Require(!SplitButton.IsEnabled && !DeleteButton.IsEnabled && !UndoButton.IsEnabled && !RedoButton.IsEnabled,
                 "The edit toolbar remained enabled during an operation.");
+            VerifyBrandButtons(this);
         }
         finally { SetBusy(false); }
+        VerifyBrandButtons(this);
         ResetTimelineZoom();
         ZoomInClick(this, new RoutedEventArgs());
         Require(_timelineZoom > 1, "Zoom in did not change the timeline scale.");
@@ -101,7 +119,7 @@ public partial class MainWindow
         FitTimelineClick(this, new RoutedEventArgs());
         Require(_timelineZoom == 1, "Fit did not restore the full timeline.");
         await VerifyNoticeCancellationAsync();
-        StartupDiagnostics.Write("Appearance verified: live light/dark resources, primary contrast, neutral dropdown selection, help dismissal, dialog surfaces, toolbar guards and notice cancellation.");
+        StartupDiagnostics.Write("Appearance verified: live light/dark resources, shared brand foreground and text/icon inheritance, playback glyphs, disabled/re-enabled buttons, neutral dropdown selection, help dismissal, dialog surfaces, toolbar guards and notice cancellation.");
     }
 
     private static void CaptureWindow(Window window, string fileName)
@@ -111,6 +129,7 @@ public partial class MainWindow
             window.Show();
             window.UpdateLayout();
             WindowPresentation.VerifyCaption(window);
+            VerifyBrandButtons(window);
             UiCapture.Save((FrameworkElement)window.Content, fileName);
         }
         finally { window.Close(); }
@@ -138,20 +157,42 @@ public partial class MainWindow
     private static bool SameColor(Brush first, Brush second) =>
         first is SolidColorBrush a && second is SolidColorBrush b && a.Color == b.Color;
 
-    private static double Contrast(Brush first, Brush second)
+    private static void VerifyBrandButtons(FrameworkElement root)
     {
-        static double Luminance(Brush brush)
+        root.UpdateLayout();
+        var brandStyle = (Style)root.FindResource("BrandButton");
+        foreach (var button in VisualElements(root).OfType<Button>().Where(button => button.IsVisible))
         {
-            var c = ((SolidColorBrush)brush).Color;
-            static double Linear(byte channel)
+            var style = button.Style;
+            while (style is not null && style != brandStyle) style = style.BasedOn;
+            if (style is null) continue;
+            var expected = (Brush)root.FindResource(button.IsEnabled ? "ColorOnBrand" : "ColorDisabledForeground");
+            Require(SameColor(button.Foreground, expected), $"Brand button {button.Name} has the wrong foreground.");
+            foreach (var child in VisualElements(button))
             {
-                var value = channel / 255.0;
-                return value <= 0.04045 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
+                var foreground = child switch
+                {
+                    TextBlock text => text.Foreground,
+                    RemixIcon icon => icon.Foreground,
+                    ContentPresenter presenter => TextElement.GetForeground(presenter),
+                    System.Windows.Shapes.Path path => path.Stroke,
+                    _ => null
+                };
+                if (foreground is not null)
+                    Require(SameColor(foreground, expected),
+                        $"Brand button {button.Name} did not propagate its foreground to {child.GetType().Name}.");
             }
-            return 0.2126 * Linear(c.R) + 0.7152 * Linear(c.G) + 0.0722 * Linear(c.B);
         }
-        var a = Luminance(first); var b = Luminance(second);
-        return (Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05);
+    }
+
+    private static IEnumerable<DependencyObject> VisualElements(DependencyObject root)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            yield return child;
+            foreach (var descendant in VisualElements(child)) yield return descendant;
+        }
     }
 
     private sealed class AppearanceUpdateHandler : HttpMessageHandler
