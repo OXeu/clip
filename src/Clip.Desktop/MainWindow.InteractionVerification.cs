@@ -137,7 +137,10 @@ public partial class MainWindow
         // Opening on the ruler must preserve the selected clip and delete that clip.
         await OpenTimelineMenuAsync(TimelineView, new Point(80, 12), realMedia);
         InvokeTimelineMenuItem(DeleteMenuItem);
-        Require(_project.MainTrack.Clips.Count == before.Length - 1 && TimelineView.IsKeyboardFocused,
+        Require(_project.MainTrack.Clips.Count == before.Length - 1, "Context-menu delete did not remove the selected clip.");
+        // IsOpen becomes false before WPF finishes closing the popup and restores keyboard focus.
+        // Yield to the dispatcher and observe restoration without forcing focus in the test.
+        await WaitForPreviewAsync(() => !TimelineMenu.IsOpen && TimelineView.IsKeyboardFocused,
             "Context-menu delete did not return focus to the timeline.");
         if (realMedia) await WaitForPreviewAsync(() => _mediaReady && _operation is null, "Preview failed after delete.");
         var remaining = _project.MainTrack.Clips.ToArray();

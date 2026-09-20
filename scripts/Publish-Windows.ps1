@@ -18,6 +18,12 @@ $ffmpegOutput = Join-Path $outputPath 'ffmpeg'
 New-Item $ffmpegOutput -ItemType Directory -Force | Out-Null
 Copy-Item (Join-Path $repo '.tools/ffmpeg/*') $ffmpegOutput -Force
 Copy-Item (Join-Path $repo 'README.md') $outputPath -Force
+$readmeAssetPath = Join-Path $outputPath 'src/Clip.Desktop/Assets'
+New-Item $readmeAssetPath -ItemType Directory -Force | Out-Null
+Copy-Item (Join-Path $repo 'src/Clip.Desktop/Assets/Clip.png') $readmeAssetPath -Force
+$readmeImagePath = Join-Path $outputPath 'docs/images'
+New-Item $readmeImagePath -ItemType Directory -Force | Out-Null
+Copy-Item (Join-Path $repo 'docs/images/screenshot.png') $readmeImagePath -Force
 Copy-Item (Join-Path $repo 'THIRD-PARTY-NOTICES.md') $outputPath -Force
 Copy-Item (Join-Path $PSScriptRoot 'Start-Clip-Diagnostics.cmd') $outputPath -Force
 Copy-Item (Join-Path $PSScriptRoot 'Diagnose-Startup.ps1') $outputPath -Force

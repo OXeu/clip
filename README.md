@@ -1,95 +1,31 @@
+<img src="src/Clip.Desktop/Assets/Clip.png" alt="Clip logo" width="128" height="128" />
+
 # Clip
 
-**轻量视频剪辑工具**
+轻量的 Windows 视频剪辑工具。拖入素材，剪出需要的片段，按轨道导出。
 
-[下载 Windows 版](https://github.com/OXeu/clip/actions/workflows/windows.yml) · [开发指南](https://github.com/OXeu/clip/blob/master/docs/development.md) · [反馈问题](https://github.com/OXeu/clip/issues)
+[下载 Windows 版](https://github.com/OXeu/clip/actions/workflows/windows.yml) · [使用指南](https://github.com/OXeu/clip/blob/master/docs/usage.md) · [反馈问题](https://github.com/OXeu/clip/issues)
 
-Clip 是一个 Windows 原生视频剪辑工具，适合从录屏、长视频或多个素材中挑选片段，重新排列后导出。视频在本机处理，剪辑不会修改源文件。
+## 界面预览
 
-每个导入的素材都有一条独立轨道，你可以在轨道间整理片段，也可以把不同剪辑方案放在不同轨道上，分别导出。
+![Clip 多素材、多轨道剪辑界面](docs/images/screenshot.png)
 
-## ✨ 功能
+## 功能
 
-- **拖入就能剪**：一次导入多个视频，分割、删除、拖拽排序，支持撤销和重做。
-- **按轨道导出**：任意有内容的轨道都能单独生成视频，不会混入其他轨道的画面或声音。
-- **整理片段**：复制片段、添加名称，方便比较和复用同一段素材。
-- **灵活导出**：输出 H.264 MP4，可选画质、分辨率，以及 NVIDIA NVENC 或 CPU 编码。
-- **融入 Windows**：WPF 原生界面，可从资源管理器右键打开视频，在应用内检查更新。
+- 分割、删除、拖拽排序，支持撤销与重做。
+- 多个素材、独立轨道，每条轨道单独导出 MP4。
+- 本机处理，不修改源文件；支持 NVIDIA NVENC 和 CPU 编码。
 
-## 🚀 快速开始
+## 开始使用
 
-支持 **Windows 10 / 11 x64**。发布包已包含 .NET 运行时和 FFmpeg，无需另行安装。
+Windows 10 / 11 x64，内置 .NET 和 FFmpeg，无需另行安装。
 
-1. 打开 [Windows build](https://github.com/OXeu/clip/actions/workflows/windows.yml)，选择默认分支最近一次成功的构建，在 **Artifacts** 中下载 `Clip-win-x64.zip`。下载需要登录有仓库访问权限的 GitHub 账号；构建产物保留 14 天。
-2. 完整解压压缩包，运行 `Clip.exe`。请保留同目录下的其他文件。
-3. 将视频拖进窗口，或按 `Ctrl+O` 导入。每个素材进入独立候选轨，最上方的主轨可用来组合片段。
-4. 点击片段预览，在需要的位置按 `S` 分割，删除不需要的部分，再拖动片段调整顺序。
-5. 点击轨道空白处选中整轨，然后点击“导出视频”，选择画质和新的 MP4 文件名。有多条轨道时，也可通过导出按钮右侧的箭头选择轨道。
+1. 登录 GitHub，打开上方下载链接，在默认分支最近一次成功构建的 **Artifacts** 中下载 `Clip-win-x64.zip`。
+2. 完整解压，运行 `Clip.exe`。拖入视频，按 `S` 分割、`Delete` 删除，拖动片段调整顺序。
+3. 点击轨道空白处选中整轨，再点击“导出视频”。
 
-> 当前尚不支持保存剪辑项目，关闭或更新程序前，请先导出需要保留的内容。Windows 发布包尚未签名。
+> 暂不支持保存剪辑项目，关闭前请先导出。当前发布包尚未签名。
 
-## 🎬 日常使用
+## 文档与参考
 
-时间轴右键菜单提供分割、删除、复制、命名、撤销和重做。片段可以在同一轨道内排序，也可以拖到其他轨道；同轨片段会自动紧接排列。点击片段只选中片段，点击轨道空白处才会选中整轨。
-
-
-| 操作      | 快捷键                                  |
-| ------- | ------------------------------------ |
-| 导入视频    | `Ctrl+O`                             |
-| 播放 / 暂停 | `Space`                              |
-| 在播放头处分割 | `S`                                  |
-| 删除选中片段  | `Delete` / `X`                       |
-| 撤销 / 重做 | `Ctrl+Z` / `Ctrl+Y` 或 `Ctrl+Shift+Z` |
-| 前后逐帧定位  | `←` / `→`                            |
-| 横向浏览时间轴 | 鼠标滚轮                                 |
-| 缩放时间轴   | `Shift+滚轮` 或 `Ctrl+滚轮`               |
-| 上下浏览轨道  | `Alt+滚轮`                             |
-
-
-复制时，短于 10 秒的片段会在原片段后插入副本；10 秒及以上的片段会复制到下方的新轨道。副本可独立编辑，命名不会改动源文件名。
-
-### 导出画质与尺寸
-
-“原画”按所选轨道首个素材的分辨率进行高质量重新编码，**不是无损复制**。选择“高清”“均衡”或“较小文件”后，可以调整为 1080p、720p、4K 或自定义偶数宽高；横竖屏比例不一致时补黑边，不拉伸画面。
-
-帧率以该轨道首个素材为准。有声和无声片段可以混剪，无声部分会补静音；只读取素材的首个普通视频流和首个音频流。编码器在导出窗口的“高级设置”中选择，NVENC 检测通过时默认使用 NVIDIA，否则使用 CPU。导出可以取消，不会覆盖源视频或已有文件。
-
-### 从资源管理器打开
-
-先把程序放到固定目录，再到“设置 → 资源管理器集成”添加“使用 Clip 剪辑”右键菜单。Windows 11 中位于“显示更多选项”；无需管理员权限，也不改变默认播放器。移动或删除程序前，请在同一菜单中移除该项。
-
-### 更新程序
-
-在“设置 → 检查更新…”中下载并更新，完成后会自动重启。默认检查正式 Release；使用 Actions 构建时，可开启“Dev 模式（GitHub Actions）”。通道、权限和备份说明见[更新指南](https://github.com/OXeu/clip/blob/master/docs/updates.md)。
-
-## 🔧 常见问题
-
-双击后没有窗口，或程序立即退出
-
-先将完整发布包重新解压到新目录。如果仍无法启动，运行程序旁的 `Start-Clip-Diagnostics.cmd`，它会收集日志并打开诊断报告。报告位于 `%LOCALAPPDATA%\Clip\diagnostics`，日常日志位于 `%LOCALAPPDATA%\Clip\logs`。
-
-如果解压时就提示文件损坏，用 PowerShell 的 `Get-FileHash .\Clip-win-x64.zip -Algorithm SHA256` 与对应构建摘要中的 SHA-256 比较；不一致时重新下载。
-
-
-
-视频无法预览，或提示找不到 FFmpeg
-
-系统无法直接播放某种编码时，Clip 会自动生成兼容预览，大文件可能需要等待；导出仍使用原始素材。Windows N/KN 版需要安装系统媒体功能包。
-
-如果提示 FFmpeg 未就绪，在“设置 → 高级设置 → 选择 FFmpeg 目录…”中选择同时包含 `ffmpeg.exe` 和 `ffprobe.exe` 的目录。完整发布包中已有 `ffmpeg` 文件夹。
-
-
-
-有 NVIDIA 显卡，但无法选择 NVENC
-
-在“设置 → 高级设置”中选择“重新检测 NVIDIA”，或打开“NVIDIA 检测详情…”查看具体错误。若提示驱动不支持所需的 NVENC API，请更新驱动，或选择与现有驱动兼容的 FFmpeg。检测未通过时仍可用 CPU 导出。
-
-
-
-## 🏗 项目状态与参与
-
-Clip 正在开发中，目前专注于 SDR 视频的片段整理和单轨导出。暂不支持项目保存、多轨叠画或混音、转场、字幕、HDR 素材。多条轨道用于组织不同剪辑，不会叠加成同一个画面。
-
-想参与开发？请阅读[开发指南](https://github.com/OXeu/clip/blob/master/docs/development.md)，了解本地运行、测试和打包方式。遇到问题可[提交 Issue](https://github.com/OXeu/clip/issues)，附上复现步骤、Windows 版本和相关错误信息。
-
-Clip 使用 .NET / WPF、FFmpeg 和 Remix Icon。随包分发的第三方组件及许可见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+[开发指南](https://github.com/OXeu/clip/blob/master/docs/development.md) · [更新指南](https://github.com/OXeu/clip/blob/master/docs/updates.md) · [第三方许可](THIRD-PARTY-NOTICES.md)

@@ -112,6 +112,22 @@ jobs:
             throw 'Startup failure was not recorded.'
           }
 
+      - name: Print startup and UI diagnostics on failure
+        if: failure()
+        run: |
+          $diagnostics = @(
+            'artifacts/Clip-win-x64/smoke-error.txt'
+            'artifacts/startup-logs/*.log'
+            'artifacts/startup-failure-logs/*.log'
+          )
+          foreach ($pattern in $diagnostics) {
+            Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "::group::$($_.Name)"
+              Get-Content -LiteralPath $_.FullName
+              Write-Host '::endgroup::'
+            }
+          }
+
       - name: Package, extract, and verify every published file
         run: ./scripts/Package-Windows.ps1
 
