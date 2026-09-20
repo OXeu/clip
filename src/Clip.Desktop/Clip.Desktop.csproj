@@ -11,6 +11,7 @@
     <AssemblyName>Clip</AssemblyName>
     <RootNamespace>Clip.Desktop</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/Clip.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Clip.Core/Clip.Core.csproj" />

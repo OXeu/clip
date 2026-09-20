@@ -14,7 +14,7 @@ internal static class WindowPresentation
     internal static void HideCaptionIcon(Window window)
     {
         // Keep native resizing, caption buttons, taskbar presence and Alt+Space.
-        // A null WPF Icon alone falls back to the executable/system icon.
+        // Retain WPF's large application icon for the taskbar and Alt+Tab.
         window.SourceInitialized += (_, _) =>
         {
             var handle = new WindowInteropHelper(window).Handle;
@@ -23,7 +23,6 @@ internal static class WindowPresentation
                 Marshal.GetLastPInvokeError() != 0)
                 throw new Win32Exception(Marshal.GetLastPInvokeError());
             SendMessageW(handle, SetIcon, IntPtr.Zero, IntPtr.Zero);
-            SendMessageW(handle, SetIcon, new IntPtr(1), IntPtr.Zero);
             // SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
             if (!SetWindowPos(handle, IntPtr.Zero, 0, 0, 0, 0, 0x0037))
                 throw new Win32Exception(Marshal.GetLastPInvokeError());
@@ -35,9 +34,10 @@ internal static class WindowPresentation
         var handle = new WindowInteropHelper(window).Handle;
         if (handle == IntPtr.Zero || (GetWindowLongW(handle, ExtendedStyle) & DialogModalFrame) == 0 ||
             SendMessageW(handle, 0x007F, IntPtr.Zero, IntPtr.Zero) != IntPtr.Zero ||
-            SendMessageW(handle, 0x007F, new IntPtr(1), IntPtr.Zero) != IntPtr.Zero ||
             window.Title.Contains("Clip", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Window caption still contains application branding.");
+        if (SendMessageW(handle, 0x007F, new IntPtr(1), IntPtr.Zero) == IntPtr.Zero)
+            throw new InvalidOperationException("Window application icon is missing.");
     }
 
     [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)]
