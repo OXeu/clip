@@ -3,7 +3,7 @@
   <h1>Clip</h1>
   <p>轻量的 Windows 视频剪辑工具。拖入素材，剪出需要的片段，按轨道导出。</p>
   <p>
-    <a href="https://github.com/OXeu/clip/actions/workflows/windows.yml">下载 Windows 版</a> ·
+    <a href="https://github.com/OXeu/clip/releases/latest">下载 Windows 版</a> ·
     <a href="https://github.com/OXeu/clip/blob/master/docs/usage.md">使用指南</a> ·
     <a href="https://github.com/OXeu/clip/issues">反馈问题</a>
   </p>
@@ -27,7 +27,7 @@
 
 Windows 10 / 11 x64，内置 .NET 和 FFmpeg，无需另行安装。
 
-1. 登录 GitHub，打开上方下载链接，在默认分支最近一次成功构建的 **Artifacts** 中下载 `Clip-win-x64.zip`。
+1. 打开上方下载链接，在最新 Release 的 **Assets** 中下载 `Clip-win-x64.zip`。
 2. 完整解压，运行 `Clip.exe`。拖入视频，按 `S` 分割、`Delete` 删除，拖动片段调整顺序。
 3. 点击轨道空白处选中整轨，再点击“导出视频”。
 
