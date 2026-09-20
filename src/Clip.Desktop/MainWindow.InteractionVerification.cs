@@ -104,10 +104,16 @@ public partial class MainWindow
         target.RaiseEvent(up);
     }
 
+    private static async Task<bool> WaitUntilAsync(Func<bool> ready, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow.Add(timeout);
+        while (!ready() && DateTime.UtcNow < deadline) await Task.Delay(25);
+        return ready();
+    }
+
     private static async Task WaitForPreviewAsync(Func<bool> ready, string failure)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(12);
-        while (!ready() && DateTime.UtcNow < deadline) await Task.Delay(25);
+        if (await WaitUntilAsync(ready, TimeSpan.FromSeconds(12))) return;
         Require(ready(), failure);
     }
 
@@ -202,20 +208,33 @@ public partial class MainWindow
 
     private async Task OpenTimelineMenuAsync(FrameworkElement target, Point point, bool realInput)
     {
+        // ContextMenu lives in a separate Popup. IsOpen becomes false before WPF completes
+        // popup teardown and focus restoration; sending the next native right-click in that
+        // window is flaky on the Actions desktop. Drain the dispatcher before new input.
         TimelineMenu.IsOpen = false;
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
         UpdateLayout();
         if (realInput)
         {
-            Activate();
-            var screen = target.PointToScreen(point);
-            await Task.Run(() =>
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                NativeMouse.SetCursorPos((int)screen.X, (int)screen.Y);
-                Thread.Sleep(100);
-                NativeMouse.mouse_event(0x0008, 0, 0, 0, UIntPtr.Zero);
-                Thread.Sleep(50);
-                NativeMouse.mouse_event(0x0010, 0, 0, 0, UIntPtr.Zero);
-            });
+                Activate();
+                target.Focus();
+                UpdateLayout();
+                var screen = target.PointToScreen(point);
+                await Task.Run(() =>
+                {
+                    NativeMouse.SetCursorPos((int)screen.X, (int)screen.Y);
+                    Thread.Sleep(100);
+                    NativeMouse.mouse_event(0x0008, 0, 0, 0, UIntPtr.Zero);
+                    Thread.Sleep(50);
+                    NativeMouse.mouse_event(0x0010, 0, 0, 0, UIntPtr.Zero);
+                });
+                if (await WaitUntilAsync(() => TimelineMenu.IsOpen, TimeSpan.FromSeconds(3))) return;
+                await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            }
+            Require(false, "The timeline context menu did not open after retrying native input.");
+            return;
         }
         else
         {

@@ -99,7 +99,15 @@ jobs:
             throw 'Normal startup test timed out.'
           }
           $process.Refresh()
-          if ($process.ExitCode -ne 0) { throw "Normal startup test failed: $($process.ExitCode)" }
+          if ($process.ExitCode -ne 0) {
+            $smokeError = Join-Path $env:GITHUB_WORKSPACE 'artifacts/Clip-win-x64/smoke-error.txt'
+            if (Test-Path -LiteralPath $smokeError) {
+              Write-Host '::group::UI smoke failure'
+              Get-Content -LiteralPath $smokeError
+              Write-Host '::endgroup::'
+            }
+            throw "Normal startup test failed: $($process.ExitCode)"
+          }
           if (-not (Test-Path 'artifacts/Clip-win-x64/smoke-success.txt')) { throw 'UI verification did not finish.' }
           if (-not (Test-Path 'artifacts/Clip-win-x64/smoke-ui.png')) { throw 'UI screenshot missing.' }
           foreach ($state in @('empty', 'imported', 'resized', 'multitrack', 'compact', 'export-basic', 'export-advanced')) {
