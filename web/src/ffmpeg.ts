@@ -32,8 +32,13 @@ interface WasmPartsManifest {
   readonly parts: readonly { readonly file: string; readonly size: number }[];
 }
 
-interface PreparedWasmUrl {
+interface PreparedUrl {
   readonly url: string;
+  readonly revoke: () => void;
+}
+
+interface PreparedCoreScripts {
+  readonly urls: FfmpegCoreUrls;
   readonly revoke: () => void;
 }
 
@@ -71,6 +76,48 @@ export function coreUrlsFromBase(base: string, multithreaded: boolean): FfmpegCo
       };
 }
 
+/**
+ * 把核心脚本预取为 Blob URL。多线程核心会预建 32 个 pthread Worker；若直接
+ * 传入 HTTP URL，每个 Worker 都会再次请求 worker 脚本并 import 同一份 core。
+ * Blob URL 让网络层只下载一次，同时保留 Emscripten 原有的 Worker 加载行为。
+ */
+async function prepareScriptUrl(url: string, signal: AbortSignal): Promise<PreparedUrl> {
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`无法读取 ffmpeg.wasm 脚本：${url} 返回 HTTP ${response.status}`);
+  }
+  const source = await response.arrayBuffer();
+  const blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+  return { url: blobUrl, revoke: () => URL.revokeObjectURL(blobUrl) };
+}
+
+async function prepareCoreScripts(
+  urls: FfmpegCoreUrls,
+  signal: AbortSignal,
+): Promise<PreparedCoreScripts> {
+  const core = await prepareScriptUrl(urls.coreURL, signal);
+  let worker: PreparedUrl | undefined;
+  try {
+    if (urls.workerURL) worker = await prepareScriptUrl(urls.workerURL, signal);
+    return {
+      urls: {
+        ...urls,
+        coreURL: core.url,
+        ...(worker ? { workerURL: worker.url } : {}),
+      },
+      revoke: () => {
+        worker?.revoke();
+        core.revoke();
+      },
+    };
+  } catch (error) {
+    worker?.revoke();
+    core.revoke();
+    throw error;
+  }
+}
+
 function parseWasmPartsManifest(value: unknown, url: string): WasmPartsManifest {
   if (!value || typeof value !== 'object') throw new Error(`${url} 不是有效的 JSON 对象`);
   const manifest = value as Partial<WasmPartsManifest>;
@@ -104,7 +151,7 @@ function parseWasmPartsManifest(value: unknown, url: string): WasmPartsManifest 
  * 优先读取构建生成的分片清单，并组合成 ffmpeg-core 可直接 fetch 的 Blob URL。
  * 若清单不存在，则保留对传统单文件部署或外部 core 地址的兼容。
  */
-async function prepareWasmUrl(wasmURL: string, signal: AbortSignal): Promise<PreparedWasmUrl> {
+async function prepareWasmUrl(wasmURL: string, signal: AbortSignal): Promise<PreparedUrl> {
   const manifestURL = `${wasmURL}.json`;
   const manifestResponse = await fetch(manifestURL, { signal });
   if (manifestResponse.status === 404) {
@@ -149,9 +196,9 @@ async function prepareWasmUrl(wasmURL: string, signal: AbortSignal): Promise<Pre
 /**
  * 多线程核心是否可用，由一次真实试编码决定，整个页面会话内缓存。
  *
- * 为什么必须试编码而不是看加载是否成功：@ffmpeg/core-mt 会按
- * navigator.hardwareConcurrency 预建 pthread 工作池（默认上限 32），
- * 在核心数很多或受限的容器里，load() 会成功但 exec() 直接挂起。
+ * 为什么必须试编码而不是看加载是否成功：@ffmpeg/core-mt 0.12.10 会预建
+ * 32 个 pthread Worker，在资源受限的容器里，load() 会成功但 exec()
+ * 直接挂起。
  * 只信任「能不能真的编码一帧」，与桌面端用试编码判断 NVENC 的思路一致。
  */
 let multithreadedVerdict: boolean | null = null;
@@ -240,6 +287,7 @@ async function explainCoreLoadFailure(
 export class FfmpegRunner {
   private ffmpeg: FFmpeg | null = null;
   private loadedMultithreaded: boolean | null = null;
+  private revokeCoreScripts: (() => void) | null = null;
   private logLines: string[] = [];
 
   get multithreaded(): boolean | null {
@@ -290,12 +338,14 @@ export class FfmpegRunner {
         loadController.abort();
       }, CORE_LOAD_TIMEOUT_MS);
       signal?.addEventListener('abort', abortLoad, { once: true });
+      let preparedScripts: PreparedCoreScripts | null = null;
       try {
         const coreUrls = coreUrlsFromBase(base, multithreaded);
+        preparedScripts = await prepareCoreScripts(coreUrls, loadController.signal);
         const preparedWasm = await prepareWasmUrl(coreUrls.wasmURL, loadController.signal);
         try {
           await ffmpeg.load(
-            { ...coreUrls, wasmURL: preparedWasm.url },
+            { ...preparedScripts.urls, wasmURL: preparedWasm.url },
             { signal: loadController.signal },
           );
         } finally {
@@ -322,6 +372,10 @@ export class FfmpegRunner {
         if (multithreaded) multithreadedVerdict = true;
         this.ffmpeg = ffmpeg;
         this.loadedMultithreaded = multithreaded;
+        // Emscripten 运行时可能在编码期间补建 pthread；脚本 Blob URL 必须与
+        // FFmpeg 实例同寿命，不能在 load() 返回后立即撤销。
+        this.revokeCoreScripts = preparedScripts.revoke;
+        preparedScripts = null;
         return {
           multithreaded,
           fellBackFromMultithreaded: sawMultithreadedFailure && !multithreaded,
@@ -348,6 +402,7 @@ export class FfmpegRunner {
         }
         throw lastError;
       } finally {
+        preparedScripts?.revoke();
         clearTimeout(loadTimer);
         signal?.removeEventListener('abort', abortLoad);
       }
@@ -365,6 +420,8 @@ export class FfmpegRunner {
       ffmpeg.terminate();
       this.ffmpeg = null;
       this.loadedMultithreaded = null;
+      this.revokeCoreScripts?.();
+      this.revokeCoreScripts = null;
     };
     signal?.addEventListener('abort', onAbort, { once: true });
 
@@ -449,6 +506,8 @@ export class FfmpegRunner {
       this.ffmpeg = null;
       this.loadedMultithreaded = null;
     }
+    this.revokeCoreScripts?.();
+    this.revokeCoreScripts = null;
     this.logLines = [];
   }
 }

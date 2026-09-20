@@ -682,7 +682,14 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
   });
 
   it('ffmpeg.wasm 路线导出同类结果（兜底路径可独立成立）', async () => {
-    const { page } = await openPage();
+    const { page, errors } = await openPage();
+    const ffmpegScriptRequests = new Map<string, number>();
+    page.on('request', (request) => {
+      const pathname = new URL(request.url()).pathname;
+      if (/^\/ffmpeg\/core(?:-mt)?\/ffmpeg-core(?:\.worker)?\.js$/.test(pathname)) {
+        ffmpegScriptRequests.set(pathname, (ffmpegScriptRequests.get(pathname) ?? 0) + 1);
+      }
+    });
     await importFixture(page, fixtures[0]!);
 
     const result = await page.evaluate(async () => {
@@ -723,6 +730,11 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     assert.ok(Math.abs(summary.duration - 2) < 0.5, `时长应约为 2 秒，实际 ${summary.duration}`);
     assert.equal(summary.hasAudio, true);
     assert.equal(summary.audioCodec, 'aac');
+    assert.ok(ffmpegScriptRequests.size > 0, '应通过 HTTP 预取 ffmpeg 核心脚本');
+    for (const [pathname, count] of ffmpegScriptRequests) {
+      assert.equal(count, 1, `${pathname} 在单次核心加载中只能请求一次`);
+    }
+    assert.equal(errors.length, 0, `ffmpeg.wasm 导出期间不应报错：${errors.join(' | ')}`);
 
     await page.context().close();
   });
