@@ -11,7 +11,7 @@
 
 ## 界面预览
 
-<!-- 3× 高清窗口截图：Windows CI run 35490211052，提交 fa9c65d；3024 × 2043。 -->
+<!-- clip-ui-screenshots: run=35491322264; commit=8294a9cf68cb4c0b14372442647370cd6b1e138b; size=3024x2043; density=3x -->
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dark.png" />
   <img src="docs/images/screenshot.png" alt="Clip 多素材、多轨道剪辑界面" width="1008" />
