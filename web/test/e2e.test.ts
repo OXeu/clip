@@ -274,7 +274,9 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     const rowCenter = (trackId: string): number => {
       let top = 28;
       for (const track of initial.tracks) {
-        const height = track.kind === 'audio' ? 34 : 68;
+        // 伴生音频/字幕默认折叠，首屏只为视频轨分配可点击行高。
+        if (track.kind !== 'video') continue;
+        const height = 68;
         if (track.id === trackId) return top + height / 2;
         top += height;
       }
@@ -1092,8 +1094,8 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
           scrollLeft: scroll.scrollLeft,
           scrollTop: scroll.scrollTop,
           hasVerticalOverflow: scroll.scrollHeight > scroll.clientHeight,
-          // 与时间轴的 32px 左侧轨道把手区和 20px 右侧留白一致。
-          normalizedAnchor: (scroll.scrollLeft + anchor - 32) / Math.max(1, canvas.clientWidth - 52),
+          // 与时间轴的 176px 固定轨道标题区和 20px 右侧留白一致。
+          normalizedAnchor: (scroll.scrollLeft + anchor - 176) / Math.max(1, canvas.clientWidth - 196),
         };
       });
       const wheelPoint = {
@@ -1128,7 +1130,7 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
           clientWidth: scroll.clientWidth,
           canvasWidth: canvas.clientWidth,
           scrollLeft: scroll.scrollLeft,
-          normalizedAnchor: (scroll.scrollLeft + anchor - 32) / Math.max(1, canvas.clientWidth - 52),
+          normalizedAnchor: (scroll.scrollLeft + anchor - 176) / Math.max(1, canvas.clientWidth - 196),
         };
       }, timelineBefore.anchor);
       assert.ok(
@@ -1292,8 +1294,8 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     assert.equal(editorLayout.documentWidth, editorLayout.viewportWidth, '导入后也不应撑宽页面');
     assert.equal(editorLayout.timelineRight, editorLayout.viewportWidth, '时间轴应完整收在视口内');
     assert.ok(editorLayout.toolbarScrollWidth > editorLayout.toolbarWidth, '窄屏时操作栏应在内部横向滚动');
-    assert.equal(editorLayout.timelineCanvasHeight, 206,
-      '有声素材应显示两条 68px 视频轨和一条半高的 34px 音频轨');
+    assert.equal(editorLayout.timelineCanvasHeight, 172,
+      '伴生轨默认折叠时应只显示两条 68px 视频轨、28px 标尺和 8px 留白');
     assert.match(editorLayout.tapHighlight, /rgba\(0, 0, 0, 0\)|transparent/, '时间轴触摸不应出现蓝色点击层');
 
     await page.waitForFunction(() => sessionStorage.getItem('clip.edit-session.v1') !== null);
