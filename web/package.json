@@ -12,7 +12,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test test/model.test.ts test/conformance.test.ts test/exporter.test.ts test/media-preparation.test.ts test/session.test.ts test/webcodecs-audio.test.ts",
+    "test": "node --experimental-strip-types --test test/model.test.ts test/asr.test.ts test/conformance.test.ts test/exporter.test.ts test/media-preparation.test.ts test/session.test.ts test/webcodecs-audio.test.ts",
     "test:e2e": "node --experimental-strip-types --test test/e2e.test.ts"
   },
   "dependencies": {

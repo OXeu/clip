@@ -10,6 +10,7 @@
 
 import './style.css';
 
+import { recognizeAudioTrack } from './asr.ts';
 import { installAutomation, shouldInstallAutomation } from './automation.ts';
 import {
   type Capabilities,
@@ -27,17 +28,21 @@ import {
   type ExportOptions,
   type ExportQuality,
   type MediaInfo,
+  type SubtitleRegion,
   type VideoClip,
   type VideoTrack,
   EditProject,
   MAXIMUM_SPEED,
   MINIMUM_SPEED,
+  SubtitleVerticalAlignment,
+  TrackKind,
   VideoEncoder,
   clipDuration,
   defaultExportOptions,
   displayName,
   fileName,
   hasVideo,
+  subtitleCues,
   trackDuration,
 } from './model.ts';
 import { probeFile } from './probe.ts';
@@ -54,6 +59,7 @@ import {
 } from './session.ts';
 import { TimelineView, formatTime } from './timeline.ts';
 import { extractWaveform } from './waveform.ts';
+import { subtitleRenderTrack } from './subtitle-renderer.ts';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -105,6 +111,8 @@ let operation: AbortController | null = null;
 let activeTrackId = project.mainTrack.id;
 let selectedTrackId: string | null = null;
 let selectedClipId: string | null = null;
+let selectedSubtitleId: string | null = null;
+let selectedSubtitleTrackId: string | null = null;
 let multiSelectMode = false;
 const multiSelectedTrackIds = new Set<string>();
 let position = 0;
@@ -117,6 +125,10 @@ const previewRegion = $('preview-region');
 const previewCanvas = $('preview-canvas');
 const audioPreview = $('audio-preview');
 const audioPreviewName = $('audio-preview-name');
+const subtitleOverlay = $('subtitle-overlay');
+const subtitlePreviewText = $('subtitle-preview-text');
+const subtitleGuideX = $('subtitle-guide-x');
+const subtitleGuideY = $('subtitle-guide-y');
 const emptyState = $('empty-state');
 const previewFooter = $('preview-footer');
 const timelineRegion = $('timeline-region');
@@ -148,6 +160,7 @@ const renameButton = $<HTMLButtonElement>('rename-button');
 const multiSelectButton = $<HTMLButtonElement>('multi-select-button');
 const bindTracksButton = $<HTMLButtonElement>('bind-tracks-button');
 const unbindTracksButton = $<HTMLButtonElement>('unbind-tracks-button');
+const recognizeSelectedAudioButton = $<HTMLButtonElement>('recognize-selected-audio');
 const stepBackButton = $<HTMLButtonElement>('step-back');
 const stepForwardButton = $<HTMLButtonElement>('step-forward');
 const fileInput = $<HTMLInputElement>('file-input');
@@ -158,6 +171,15 @@ const clipContextMenu = $('clip-context-menu');
 const clipSpeedCurrent = $('clip-speed-current');
 const speedPresetButtons = Array.from(clipContextMenu.querySelectorAll<HTMLButtonElement>('[data-speed]'));
 const customSpeedButton = $<HTMLButtonElement>('custom-speed-button');
+const trackContextMenu = $('track-context-menu');
+const trackContextTitle = $('track-context-title');
+const addSubtitleTrackButton = $<HTMLButtonElement>('add-subtitle-track');
+const recognizeSubtitlesButton = $<HTMLButtonElement>('recognize-subtitles');
+const subtitleAlignmentActions = $('subtitle-alignment-actions');
+const subtitleAlignButtons = Array.from(trackContextMenu.querySelectorAll<HTMLButtonElement>('[data-alignment]'));
+const subtitleCueActions = $('subtitle-cue-actions');
+const editSubtitleCueButton = $<HTMLButtonElement>('edit-subtitle-cue');
+const deleteSubtitleCueButton = $<HTMLButtonElement>('delete-subtitle-cue');
 const speedDialog = $<HTMLDialogElement>('speed-dialog');
 const speedForm = $<HTMLFormElement>('speed-form');
 const speedInput = $<HTMLInputElement>('speed-input');
@@ -165,6 +187,7 @@ const speedValidation = $('speed-validation');
 const speedCancelButton = $<HTMLButtonElement>('speed-cancel');
 const exportDialog = $<HTMLDialogElement>('export-dialog');
 const settingsDialog = $<HTMLDialogElement>('settings-dialog');
+const settingsAsrKey = $<HTMLInputElement>('settings-asr-key');
 const recoveryDialog = $<HTMLDialogElement>('recovery-dialog');
 const recoveryDiscardDialog = $<HTMLDialogElement>('recovery-discard-dialog');
 const recoveryInput = $<HTMLInputElement>('recovery-file-input');
@@ -194,8 +217,16 @@ const timeline = new TimelineView(canvas, timelineScroll, {
   onMoveClip: (clipId, trackId, index) => moveClip(clipId, trackId, index),
   onMoveTrack: (trackId, index) => moveTrack(trackId, index),
   onToggleTrack: (trackId) => toggleMultiSelectedTrack(trackId),
+  onContextTrack: (trackId, clientX, clientY) => openTrackContextMenu(trackId, null, clientX, clientY),
+  onContextSubtitle: (cueId, trackId, clientX, clientY) =>
+    openTrackContextMenu(trackId, cueId, clientX, clientY),
+  onCreateSubtitle: (trackId, time) => createSubtitle(trackId, time),
+  onSelectSubtitle: (cueId) => selectSubtitle(cueId),
+  onEditSubtitle: (cueId) => editSubtitle(cueId),
+  onMoveSubtitle: (cueId, start, end) => moveSubtitle(cueId, start, end),
 });
 timeline.setProject(project);
+settingsAsrKey.value = sessionStorage.getItem('clip.tencent-asr-key') ?? '';
 
 // ---------- 工具 ----------
 
@@ -232,6 +263,7 @@ function setBusy(busy: boolean, message?: string): void {
   if (busy) {
     setMoreMenuOpen(false);
     closeClipContextMenu();
+    closeTrackContextMenu();
   }
   importButton.disabled = moreButton.disabled = openProjectButton.disabled = emptyImportButton.disabled = busy;
   saveProjectButton.disabled = busy || project.sources.length === 0;
@@ -437,9 +469,128 @@ let pendingSeek: number | null = null;
 let pendingSeekStarted = 0;
 let clockHandle = 0;
 let previewZoom = 1;
+let subtitleRegionGesture: {
+  readonly trackId: string;
+  readonly pointerId: number;
+  readonly originX: number;
+  readonly originY: number;
+  readonly initial: SubtitleRegion;
+  readonly resize: string | null;
+} | null = null;
 
 const MIN_PREVIEW_ZOOM = 0.25;
 const MAX_PREVIEW_ZOOM = 4;
+
+function subtitleVideoBounds(): { left: number; top: number; width: number; height: number } | null {
+  if (!selectedSubtitleTrackId) return null;
+  const videoTrack = videoForTrack(selectedSubtitleTrackId);
+  const media = videoTrack?.clips[0]?.media;
+  const width = previewCanvas.clientWidth;
+  const height = previewCanvas.clientHeight;
+  if (!media || width <= 0 || height <= 0 || media.width <= 0 || media.height <= 0) return null;
+  const fit = Math.min(width / media.width, height / media.height);
+  const baseWidth = media.width * fit;
+  const baseHeight = media.height * fit;
+  const baseLeft = (width - baseWidth) / 2;
+  const baseTop = (height - baseHeight) / 2;
+  return {
+    left: width / 2 + (baseLeft - width / 2) * previewZoom,
+    top: height / 2 + (baseTop - height / 2) * previewZoom,
+    width: baseWidth * previewZoom,
+    height: baseHeight * previewZoom,
+  };
+}
+
+function showSubtitleGuides(centerX: boolean, centerY: boolean): void {
+  const bounds = subtitleVideoBounds();
+  subtitleGuideY.hidden = !centerX || !bounds;
+  subtitleGuideX.hidden = !centerY || !bounds;
+  if (!bounds) return;
+  if (centerX) {
+    subtitleGuideY.style.left = `${bounds.left + bounds.width / 2}px`;
+    subtitleGuideY.style.top = `${bounds.top}px`;
+    subtitleGuideY.style.height = `${bounds.height}px`;
+  }
+  if (centerY) {
+    subtitleGuideX.style.left = `${bounds.left}px`;
+    subtitleGuideX.style.top = `${bounds.top + bounds.height / 2}px`;
+    subtitleGuideX.style.width = `${bounds.width}px`;
+  }
+}
+
+function renderSubtitleRegion(region: SubtitleRegion): void {
+  const bounds = subtitleVideoBounds();
+  if (!bounds) return;
+  subtitleOverlay.style.left = `${bounds.left + region.x * bounds.width}px`;
+  subtitleOverlay.style.top = `${bounds.top + region.y * bounds.height}px`;
+  subtitleOverlay.style.width = `${region.width * bounds.width}px`;
+  subtitleOverlay.style.height = `${region.height * bounds.height}px`;
+  subtitleOverlay.dataset.alignment = region.alignment;
+}
+
+function refreshSubtitleOverlay(): void {
+  const track = selectedSubtitleTrackId ? project.findTrack(selectedSubtitleTrackId) : undefined;
+  const region = track?.kind === TrackKind.Subtitle ? track.subtitleRegion : null;
+  const bounds = region ? subtitleVideoBounds() : null;
+  subtitleOverlay.hidden = !region || !bounds || previewFrame.hidden;
+  if (!region || !bounds) {
+    showSubtitleGuides(false, false);
+    return;
+  }
+  const current = subtitleCues(track!).find((cue) => position >= cue.start && position < cue.end)
+    ?? (selectedSubtitleId ? subtitleCues(track!).find((cue) => cue.id === selectedSubtitleId) : undefined);
+  subtitlePreviewText.textContent = current?.text ?? '字幕预览';
+  renderSubtitleRegion(region);
+}
+
+function moveRegionGesture(event: PointerEvent): void {
+  const gesture = subtitleRegionGesture;
+  const bounds = subtitleVideoBounds();
+  if (!gesture || !bounds || event.pointerId !== gesture.pointerId) return;
+  event.preventDefault();
+  const dx = (event.clientX - gesture.originX) / bounds.width;
+  const dy = (event.clientY - gesture.originY) / bounds.height;
+  let { x, y, width, height } = gesture.initial;
+  if (!gesture.resize) {
+    x = Math.min(1 - width, Math.max(0, x + dx));
+    y = Math.min(1 - height, Math.max(0, y + dy));
+  } else {
+    if (gesture.resize.includes('w')) {
+      const right = x + width;
+      x = Math.min(right - 0.05, Math.max(0, x + dx));
+      width = right - x;
+    }
+    if (gesture.resize.includes('e')) width = Math.min(1 - x, Math.max(0.05, width + dx));
+    if (gesture.resize.includes('n')) {
+      const bottom = y + height;
+      y = Math.min(bottom - 0.05, Math.max(0, y + dy));
+      height = bottom - y;
+    }
+    if (gesture.resize.includes('s')) height = Math.min(1 - y, Math.max(0.05, height + dy));
+  }
+  const centerX = Math.abs(x + width / 2 - 0.5) * bounds.width <= 8;
+  const centerY = Math.abs(y + height / 2 - 0.5) * bounds.height <= 8;
+  if (centerX) x = (1 - width) / 2;
+  if (centerY) y = (1 - height) / 2;
+  showSubtitleGuides(centerX, centerY);
+  renderSubtitleRegion({ x, y, width, height, alignment: gesture.initial.alignment });
+  subtitleOverlay.dataset.pendingRegion = JSON.stringify({ x, y, width, height, alignment: gesture.initial.alignment });
+}
+
+function finishRegionGesture(event: PointerEvent): void {
+  const gesture = subtitleRegionGesture;
+  if (!gesture || event.pointerId !== gesture.pointerId) return;
+  const pending = subtitleOverlay.dataset.pendingRegion;
+  subtitleRegionGesture = null;
+  delete subtitleOverlay.dataset.pendingRegion;
+  if (subtitleOverlay.hasPointerCapture(event.pointerId)) subtitleOverlay.releasePointerCapture(event.pointerId);
+  showSubtitleGuides(false, false);
+  if (pending) {
+    const region = JSON.parse(pending) as SubtitleRegion;
+    if (project.setSubtitleRegion(gesture.trackId, region)) status('字幕矩形框已更新');
+  }
+  refresh();
+}
 
 /**
  * 把隐藏 video 解码出的当前帧画到普通 canvas，绕过移动浏览器对可见 video
@@ -482,6 +633,7 @@ function drawPreviewFrame(): void {
   } catch {
     // 解码器刚切换素材时可能尚无可绘制帧，下一次 seek/tick 会重试。
   }
+  refreshSubtitleOverlay();
 }
 
 /** 1× 始终表示 content-fit；滚轮与双指手势都在这个基准上缩放画面。 */
@@ -494,6 +646,7 @@ function setPreviewZoom(value: number, announce = true): void {
   previewCanvas.dataset.zoom = String(previewZoom);
   previewCanvas.title = `预览 ${percent}% · 滚轮或双指缩放 · 双击恢复适应`;
   if (announce) status(previewZoom === 1 ? '预览已恢复适应' : `预览缩放 ${percent}%`);
+  refreshSubtitleOverlay();
   scheduleSessionSave();
 }
 
@@ -683,6 +836,7 @@ function selectClip(clipId: string, time: number): void {
   const found = project.findClip(clipId);
   if (!found) return;
   selectedTrackId = null;
+  selectedSubtitleId = null;
   const clip = found.clip;
   const source = Math.min(
     Math.max(clip.start + (time - found.timelineStart) * clip.speed, clip.start),
@@ -695,6 +849,7 @@ function selectClipForContextMenu(clipId: string): boolean {
   if (operation || multiSelectMode || !project.findClip(clipId)) return false;
   selectedTrackId = null;
   selectedClipId = clipId;
+  selectedSubtitleId = null;
   refresh();
   return true;
 }
@@ -905,8 +1060,204 @@ function closeClipContextMenu(): void {
   clipContextMenu.hidden = true;
 }
 
+function closeTrackContextMenu(): void {
+  trackContextMenu.hidden = true;
+}
+
+function videoForTrack(trackId: string): VideoTrack | undefined {
+  const track = project.findTrack(trackId);
+  if (!track) return undefined;
+  return track.kind === TrackKind.Video
+    ? track
+    : project.companionTracks(trackId).find((candidate) => candidate.kind === TrackKind.Video);
+}
+
+function selectSubtitle(cueId: string): void {
+  if (operation) return;
+  const found = project.findSubtitle(cueId);
+  const videoTrack = found ? videoForTrack(found.trackId) : undefined;
+  if (!found || !videoTrack) return;
+  pause();
+  seek(videoTrack.id, found.cue.start);
+  selectedClipId = null;
+  selectedTrackId = found.trackId;
+  selectedSubtitleId = cueId;
+  selectedSubtitleTrackId = found.trackId;
+  status('已选中字幕 · 拖动两侧调整时间，双击编辑内容');
+  refresh();
+}
+
+function createSubtitle(trackId: string, requestedStart: number): void {
+  if (operation) return;
+  const track = project.findTrack(trackId);
+  const videoTrack = videoForTrack(trackId);
+  if (!track || track.kind !== TrackKind.Subtitle || !videoTrack) return;
+  const duration = trackDuration(videoTrack);
+  const start = Math.min(Math.max(requestedStart, 0), Math.max(0, duration - 0.1));
+  const next = subtitleCues(track).find((cue) => cue.start > start);
+  const end = Math.min(start + 3, next?.start ?? duration);
+  if (end - start < 0.1) {
+    status('此处没有足够空间创建字幕。');
+    return;
+  }
+  try {
+    const cueId = project.addSubtitle(trackId, start, end);
+    if (cueId) selectSubtitle(cueId);
+  } catch (error) {
+    status(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function editSubtitle(cueId: string): void {
+  if (operation) return;
+  const found = project.findSubtitle(cueId);
+  if (!found) return;
+  const text = window.prompt('字幕内容', found.cue.text);
+  if (text === null) return;
+  try {
+    if (project.updateSubtitle(cueId, { ...found.cue, text })) {
+      selectedSubtitleId = cueId;
+      selectedSubtitleTrackId = found.trackId;
+      status('字幕内容已更新');
+      refresh();
+    }
+  } catch (error) {
+    status(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function moveSubtitle(cueId: string, requestedStart: number, requestedEnd: number): void {
+  const found = project.findSubtitle(cueId);
+  const videoTrack = found ? videoForTrack(found.trackId) : undefined;
+  if (!found || !videoTrack) return;
+  const duration = trackDuration(videoTrack);
+  const cues = subtitleCues(project.findTrack(found.trackId)!);
+  const index = cues.findIndex((cue) => cue.id === cueId);
+  const previousEnd = index > 0 ? cues[index - 1]!.end : 0;
+  const nextStart = index + 1 < cues.length ? cues[index + 1]!.start : duration;
+  const cueDuration = requestedEnd - requestedStart;
+  const movingWholeCue = Math.abs(cueDuration - (found.cue.end - found.cue.start)) < 0.001;
+  let start: number;
+  let end: number;
+  if (movingWholeCue) {
+    start = Math.min(Math.max(requestedStart, previousEnd), Math.max(previousEnd, nextStart - cueDuration));
+    end = start + cueDuration;
+  } else {
+    start = Math.max(previousEnd, Math.min(requestedStart, requestedEnd - 0.1));
+    end = Math.min(nextStart, Math.max(requestedEnd, start + 0.1));
+  }
+  try {
+    if (project.updateSubtitle(cueId, { start, end, text: found.cue.text })) {
+      status('字幕显示时间已调整');
+      refresh();
+    }
+  } catch (error) {
+    status(error instanceof Error ? error.message : String(error));
+    timeline.draw();
+  }
+}
+
+function openTrackContextMenu(
+  trackId: string,
+  cueId: string | null,
+  clientX: number,
+  clientY: number,
+): void {
+  closeClipContextMenu();
+  closeTrackContextMenu();
+  const track = project.findTrack(trackId);
+  if (!track || operation) return;
+  selectedSubtitleTrackId = track.kind === TrackKind.Subtitle ? track.id : selectedSubtitleTrackId;
+  selectedSubtitleId = cueId;
+  trackContextTitle.textContent = track.kind === TrackKind.Video
+    ? '视频轨道' : track.kind === TrackKind.Audio ? '音频轨道' : '字幕轨道';
+  addSubtitleTrackButton.hidden = track.kind !== TrackKind.Video;
+  recognizeSubtitlesButton.hidden = track.kind !== TrackKind.Audio || track.clips.length === 0;
+  subtitleAlignmentActions.hidden = track.kind !== TrackKind.Subtitle;
+  subtitleCueActions.hidden = cueId === null;
+  const alignment = track.subtitleRegion?.alignment;
+  for (const button of subtitleAlignButtons) {
+    button.setAttribute('aria-checked', String(button.dataset.alignment === alignment));
+  }
+  trackContextMenu.dataset.trackId = trackId;
+  trackContextMenu.dataset.cueId = cueId ?? '';
+  trackContextMenu.hidden = false;
+  const bounds = trackContextMenu.getBoundingClientRect();
+  trackContextMenu.style.left = `${Math.max(8, Math.min(clientX, window.innerWidth - bounds.width - 8))}px`;
+  trackContextMenu.style.top = `${Math.max(8, Math.min(clientY, window.innerHeight - bounds.height - 8))}px`;
+  refreshSubtitleOverlay();
+}
+
+function addSubtitleTrackFromMenu(): void {
+  const videoId = trackContextMenu.dataset.trackId;
+  closeTrackContextMenu();
+  if (!videoId) return;
+  const track = project.addSubtitleTrack(videoId);
+  if (!track) return;
+  selectedSubtitleTrackId = track.id;
+  selectedSubtitleId = null;
+  timeline.expandVideoTrack(videoId);
+  status('已添加字幕伴生轨 · 单击轨道创建字幕');
+  refresh();
+}
+
+async function recognizeSelectedAudio(requestedTrackId?: string): Promise<void> {
+  const audioId = requestedTrackId ?? trackContextMenu.dataset.trackId;
+  closeTrackContextMenu();
+  const audio = audioId ? project.findTrack(audioId) : undefined;
+  const videoTrack = audio ? videoForTrack(audio.id) : undefined;
+  if (!audio || audio.kind !== TrackKind.Audio || !videoTrack || operation) return;
+  if (trackDuration(videoTrack) < 0.1) {
+    status('该音频组还没有可承载字幕的视频内容。');
+    return;
+  }
+  const apiKey = settingsAsrKey.value.trim();
+  if (!apiKey) {
+    settingsDialog.showModal();
+    settingsAsrKey.focus();
+    status('请先填写腾讯云 ASR API Key。');
+    return;
+  }
+  const subtitleTrack = project.addSubtitleTrack(videoTrack.id);
+  if (!subtitleTrack) return;
+  selectedSubtitleTrackId = subtitleTrack.id;
+  timeline.expandVideoTrack(videoTrack.id);
+  const controller = beginOperation('正在浏览器中检测有声片段…');
+  try {
+    const recognized = await recognizeAudioTrack(
+      audio,
+      async (path) => {
+        const source = files.get(path);
+        if (!source) throw new Error(`找不到素材 ${path}`);
+        return source.arrayBuffer();
+      },
+      apiKey,
+      (completed, total, message) => {
+        progress.value = total > 0 ? completed / total : 0;
+        status(message);
+      },
+      controller.signal,
+    );
+    const videoDuration = trackDuration(videoTrack);
+    let created = 0;
+    for (const cue of recognized) {
+      const start = Math.min(cue.start, videoDuration);
+      const end = Math.min(cue.end, videoDuration);
+      if (end - start >= 0.1 && project.addSubtitle(subtitleTrack.id, start, end, cue.text)) created++;
+    }
+    status(created > 0 ? `已识别并创建 ${created} 条字幕` : '未检测到视频范围内的清晰人声，未创建字幕。');
+  } catch (error) {
+    status(error instanceof DOMException && error.name === 'AbortError'
+      ? '已取消字幕识别' : error instanceof Error ? error.message : String(error));
+  } finally {
+    setBusy(false);
+    refresh();
+  }
+}
+
 function openClipContextMenu(clipId: string | null, clientX: number, clientY: number): void {
   closeClipContextMenu();
+  closeTrackContextMenu();
   if (!clipId || !selectClipForContextMenu(clipId)) return;
   const found = project.findClip(clipId);
   if (!found) return;
@@ -944,6 +1295,8 @@ function refresh(): void {
   const ready = operation === null;
   const hasMedia = project.sources.length > 0;
   if (selectedTrackId && !project.findTrack(selectedTrackId)) selectedTrackId = null;
+  if (selectedSubtitleId && !project.findSubtitle(selectedSubtitleId)) selectedSubtitleId = null;
+  if (selectedSubtitleTrackId && !project.findTrack(selectedSubtitleTrackId)) selectedSubtitleTrackId = null;
   for (const id of multiSelectedTrackIds) if (!project.findTrack(id)) multiSelectedTrackIds.delete(id);
 
   timelineRegion.hidden = !hasMedia;
@@ -972,6 +1325,9 @@ function refresh(): void {
   bindTracksButton.disabled = !ready || multiSelectedTrackIds.size < 2;
   unbindTracksButton.disabled = !ready
     || ![...multiSelectedTrackIds].some((id) => project.findTrack(id)?.bindingId);
+  recognizeSelectedAudioButton.disabled = !ready
+    || project.findTrack(selectedTrackId ?? '')?.kind !== TrackKind.Audio
+    || project.findTrack(selectedTrackId ?? '')?.clips.length === 0;
   timelineRegion.classList.toggle('is-multi-select', multiSelectMode);
   stepBackButton.disabled = stepForwardButton.disabled = !(ready && any);
   syncPlayButton();
@@ -984,10 +1340,12 @@ function refresh(): void {
   timeline.activeTrackId = activeTrackId;
   timeline.selectedTrackId = selectedTrackId;
   timeline.selectedClipId = selectedClipId;
+  timeline.selectedSubtitleId = selectedSubtitleId;
   timeline.multiSelectMode = multiSelectMode;
   timeline.multiSelectedTrackIds = multiSelectedTrackIds;
   timeline.position = position;
   timeline.resize();
+  refreshSubtitleOverlay();
 
   const clips = track ? track.clips.length : 0;
   const seconds = track ? trackDuration(track) : 0;
@@ -1006,6 +1364,7 @@ function refreshPosition(): void {
   timeline.draw();
   positionLabel.textContent = formatTime(position);
   totalLabel.textContent = `/ ${formatTime(trackDuration(activeTrack()))}`;
+  refreshSubtitleOverlay();
 }
 
 // ---------- 导出 ----------
@@ -1183,7 +1542,7 @@ function openExportDialog(): Promise<void> {
       }
       cleanup();
       exportDialog.close();
-      void runExport(selected.clips, options, chosen, destination);
+      void runExport(selected, options, chosen, destination);
       resolve();
     };
     const onCancel = (): void => {
@@ -1226,17 +1585,21 @@ const emptyCapabilities = (): Capabilities => ({
 });
 
 async function runExport(
-  clips: readonly VideoClip[],
+  track: VideoTrack,
   options: ExportOptions,
   chosen: EncoderRoute,
   destination: ExportDestination,
 ): Promise<void> {
+  const clips = track.clips;
   if (operation) return;
   pause();
   const controller = beginOperation('准备导出…');
   try {
     const result = await exportClips({
       clips,
+      subtitles: project.subtitleTracks(track.id)
+        .map((subtitle) => subtitleRenderTrack(subtitle))
+        .filter((subtitle) => subtitle !== null),
       options,
       route: chosen,
       capabilities: capabilities ?? emptyCapabilities(),
@@ -1526,6 +1889,9 @@ function openSettings(): void {
   const onClose = (): void => {
     route = select.value as EncoderRoute | 'auto';
     localStorage.setItem('clip.encoder', route);
+    const apiKey = settingsAsrKey.value.trim();
+    if (apiKey) sessionStorage.setItem('clip.tencent-asr-key', apiKey);
+    else sessionStorage.removeItem('clip.tencent-asr-key');
     settingsDialog.removeEventListener('close', onClose);
   };
   settingsDialog.addEventListener('close', onClose);
@@ -1578,6 +1944,7 @@ moreMenu.addEventListener('keydown', (event) => {
 document.addEventListener('pointerdown', (event) => {
   if (!moreMenu.hidden && !moreMenuWrap.contains(event.target as Node)) setMoreMenuOpen(false);
   if (!clipContextMenu.hidden && !clipContextMenu.contains(event.target as Node)) closeClipContextMenu();
+  if (!trackContextMenu.hidden && !trackContextMenu.contains(event.target as Node)) closeTrackContextMenu();
 });
 clipContextMenu.addEventListener('keydown', (event) => {
   const items = Array.from(clipContextMenu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
@@ -1593,6 +1960,22 @@ clipContextMenu.addEventListener('keydown', (event) => {
     return;
   } else if (event.key === 'Tab') {
     closeClipContextMenu();
+    return;
+  } else return;
+  event.preventDefault();
+  items[next]?.focus({ preventScroll: true });
+});
+trackContextMenu.addEventListener('keydown', (event) => {
+  const items = Array.from(trackContextMenu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+    .filter((button) => button.offsetParent !== null);
+  const current = items.indexOf(document.activeElement as HTMLButtonElement);
+  let next = current;
+  if (event.key === 'ArrowDown') next = (current + 1) % items.length;
+  else if (event.key === 'ArrowUp') next = (current - 1 + items.length) % items.length;
+  else if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = items.length - 1;
+  else if (event.key === 'Escape' || event.key === 'Tab') {
+    closeTrackContextMenu();
     return;
   } else return;
   event.preventDefault();
@@ -1678,6 +2061,37 @@ for (const button of speedPresetButtons) {
   button.addEventListener('click', () => setSelectedSpeed(Number(button.dataset.speed)));
 }
 customSpeedButton.addEventListener('click', openCustomSpeedDialog);
+addSubtitleTrackButton.addEventListener('click', addSubtitleTrackFromMenu);
+recognizeSubtitlesButton.addEventListener('click', () => void recognizeSelectedAudio());
+recognizeSelectedAudioButton.addEventListener('click', () => {
+  if (selectedTrackId) void recognizeSelectedAudio(selectedTrackId);
+});
+for (const button of subtitleAlignButtons) {
+  button.addEventListener('click', () => {
+    const trackId = trackContextMenu.dataset.trackId;
+    const alignment = button.dataset.alignment as SubtitleVerticalAlignment | undefined;
+    closeTrackContextMenu();
+    if (trackId && alignment && project.setSubtitleAlignment(trackId, alignment)) {
+      selectedSubtitleTrackId = trackId;
+      status('字幕对齐方式已更新');
+      refresh();
+    }
+  });
+}
+editSubtitleCueButton.addEventListener('click', () => {
+  const cueId = trackContextMenu.dataset.cueId;
+  closeTrackContextMenu();
+  if (cueId) editSubtitle(cueId);
+});
+deleteSubtitleCueButton.addEventListener('click', () => {
+  const cueId = trackContextMenu.dataset.cueId;
+  closeTrackContextMenu();
+  if (cueId && project.deleteSubtitle(cueId)) {
+    if (selectedSubtitleId === cueId) selectedSubtitleId = null;
+    status('字幕已删除');
+    refresh();
+  }
+});
 speedInput.addEventListener('input', () => { speedValidation.hidden = true; });
 speedCancelButton.addEventListener('click', () => speedDialog.close());
 speedForm.addEventListener('submit', (event) => {
@@ -1724,6 +2138,28 @@ previewCanvas.addEventListener(
 previewCanvas.addEventListener('dblclick', () => {
   if (project.sources.length > 0) setPreviewZoom(1);
 });
+
+subtitleOverlay.addEventListener('pointerdown', (event) => {
+  if (!selectedSubtitleTrackId || operation || event.button !== 0) return;
+  const track = project.findTrack(selectedSubtitleTrackId);
+  const region = track?.subtitleRegion;
+  if (!region) return;
+  event.preventDefault();
+  event.stopPropagation();
+  subtitleRegionGesture = {
+    trackId: track.id,
+    pointerId: event.pointerId,
+    originX: event.clientX,
+    originY: event.clientY,
+    initial: { ...region },
+    resize: (event.target as HTMLElement).dataset.resize ?? null,
+  };
+  subtitleOverlay.setPointerCapture(event.pointerId);
+});
+subtitleOverlay.addEventListener('pointermove', (event) => moveRegionGesture(event));
+subtitleOverlay.addEventListener('pointerup', (event) => finishRegionGesture(event));
+subtitleOverlay.addEventListener('pointercancel', (event) => finishRegionGesture(event));
+subtitleOverlay.addEventListener('dblclick', (event) => event.stopPropagation());
 
 const previewTouches = new Map<number, { x: number; y: number }>();
 let previewPinch: { distance: number; zoom: number } | null = null;
@@ -2023,6 +2459,9 @@ void (async () => {
         void media;
         return exportClips({
           clips,
+          subtitles: project.subtitleTracks(trackId)
+            .map((subtitle) => subtitleRenderTrack(subtitle))
+            .filter((subtitle) => subtitle !== null),
           options,
           route: request.route ?? chooseRoute(capabilities ?? emptyCapabilities(), route),
           capabilities: capabilities ?? emptyCapabilities(),

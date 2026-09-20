@@ -12,20 +12,24 @@
 import {
   type ClipPosition,
   EditProject,
+  type SubtitleCue,
   type VideoClip,
   type VideoTrack,
   TrackKind,
   clipDuration,
   displayName,
+  subtitleCues,
   trackDuration,
 } from './model.ts';
 
 export const RULER_HEIGHT = 28;
 export const ROW_HEIGHT = 68;
 export const AUDIO_ROW_HEIGHT = ROW_HEIGHT / 2;
+export const SUBTITLE_ROW_HEIGHT = 42;
 export const CLIP_HEIGHT = 48;
 export const AUDIO_CLIP_HEIGHT = CLIP_HEIGHT / 2;
-export const CONTENT_INSET = 32;
+export const SUBTITLE_CLIP_HEIGHT = 28;
+export const CONTENT_INSET = 176;
 export const TRACK_HANDLE_WIDTH = 24;
 
 export interface TimelineCallbacks {
@@ -36,6 +40,12 @@ export interface TimelineCallbacks {
   onMoveClip: (clipId: string, trackId: string, index: number) => void;
   onMoveTrack: (trackId: string, index: number) => void;
   onToggleTrack: (trackId: string) => void;
+  onContextTrack: (trackId: string, clientX: number, clientY: number) => void;
+  onContextSubtitle: (cueId: string, trackId: string, clientX: number, clientY: number) => void;
+  onCreateSubtitle: (trackId: string, time: number) => void;
+  onSelectSubtitle: (cueId: string) => void;
+  onEditSubtitle: (cueId: string) => void;
+  onMoveSubtitle: (cueId: string, start: number, end: number) => void;
 }
 
 interface ThemeColors {
@@ -109,15 +119,25 @@ export class TimelineView {
   activeTrackId = '';
   selectedTrackId: string | null = null;
   selectedClipId: string | null = null;
+  selectedSubtitleId: string | null = null;
   position = 0;
   zoom = 1;
   exportPreviewTrackId: string | null = null;
   multiSelectMode = false;
   multiSelectedTrackIds: ReadonlySet<string> = new Set();
   private readonly waveforms = new Map<string, Float32Array>();
+  private readonly expandedVideoTrackIds = new Set<string>();
 
   private dragging: { clipId: string; started: boolean; origin: { x: number; y: number } } | null = null;
   private draggingTrack: { trackId: string; started: boolean; origin: { x: number; y: number } } | null = null;
+  private draggingSubtitle: {
+    cueId: string;
+    trackId: string;
+    mode: 'move' | 'start' | 'end';
+    originX: number;
+    initialStart: number;
+    initialEnd: number;
+  } | null = null;
   private dropTarget: DropTarget | null = null;
   private trackDropIndex: number | null = null;
   private seeking = false;
@@ -139,6 +159,12 @@ export class TimelineView {
 
   setProject(project: EditProject): void {
     this.project = project;
+    for (const id of this.expandedVideoTrackIds) if (!project.findTrack(id)) this.expandedVideoTrackIds.delete(id);
+    this.resize();
+  }
+
+  expandVideoTrack(trackId: string): void {
+    this.expandedVideoTrackIds.add(trackId);
     this.resize();
   }
 
@@ -177,8 +203,22 @@ export class TimelineView {
     return CONTENT_INSET + Math.min(Math.max(time, 0), this.duration) * this.scale();
   }
 
+  private parentVideo(track: VideoTrack): VideoTrack | undefined {
+    if (!this.project || track.kind === TrackKind.Video || !track.companionGroupId) return undefined;
+    return this.project.companionTracks(track.id).find((candidate) => candidate.kind === TrackKind.Video);
+  }
+
+  private isTrackVisible(track: VideoTrack): boolean {
+    if (track.kind === TrackKind.Video) return true;
+    const video = this.parentVideo(track);
+    return !video || this.expandedVideoTrackIds.has(video.id);
+  }
+
   private rowHeight(track: VideoTrack): number {
-    return track.kind === TrackKind.Audio ? AUDIO_ROW_HEIGHT : ROW_HEIGHT;
+    if (!this.isTrackVisible(track)) return 0;
+    return track.kind === TrackKind.Audio
+      ? AUDIO_ROW_HEIGHT
+      : track.kind === TrackKind.Subtitle ? SUBTITLE_ROW_HEIGHT : ROW_HEIGHT;
   }
 
   private trackTop(index: number): number {
@@ -193,6 +233,7 @@ export class TimelineView {
     for (let index = 0; index < tracks.length; index++) {
       const track = tracks[index]!;
       const height = this.rowHeight(track);
+      if (height === 0) continue;
       if (y >= top && y < top + height) return { index, track, top, height };
       top += height;
     }
@@ -260,6 +301,21 @@ export class TimelineView {
     };
   }
 
+  subtitleBounds(cueId: string): { x: number; y: number; width: number; height: number } | null {
+    const project = this.project;
+    if (!project) return null;
+    const found = project.findSubtitle(cueId);
+    if (!found) return null;
+    const row = project.allTracks.findIndex((track) => track.id === found.trackId);
+    const top = this.trackTop(row);
+    return {
+      x: this.xAtTime(found.cue.start),
+      y: top + (SUBTITLE_ROW_HEIGHT - SUBTITLE_CLIP_HEIGHT) / 2,
+      width: Math.max(8, (found.cue.end - found.cue.start) * this.scale() - 3),
+      height: SUBTITLE_CLIP_HEIGHT,
+    };
+  }
+
   /** 指针位置对应的插入点，用于拖放。 */
   insertionAt(x: number, y: number): DropTarget | null {
     const project = this.project;
@@ -321,7 +377,10 @@ export class TimelineView {
     project.allTracks.forEach((track, row) => {
       const top = this.trackTop(row);
       const rowHeight = this.rowHeight(track);
-      const clipHeight = track.kind === TrackKind.Audio ? AUDIO_CLIP_HEIGHT : CLIP_HEIGHT;
+      if (rowHeight === 0) return;
+      const clipHeight = track.kind === TrackKind.Audio
+        ? AUDIO_CLIP_HEIGHT
+        : track.kind === TrackKind.Subtitle ? SUBTITLE_CLIP_HEIGHT : CLIP_HEIGHT;
       const clipTop = top + (rowHeight - clipHeight) / 2;
       const multiSelected = this.multiSelectedTrackIds.has(track.id);
       if (track.id === this.selectedTrackId || multiSelected) {
@@ -338,7 +397,7 @@ export class TimelineView {
       context.lineTo(width, top + rowHeight + 0.5);
       context.stroke();
 
-      if (track.clips.length === 0) {
+      if (track.clips.length === 0 && track.kind !== TrackKind.Subtitle) {
         context.fillStyle = track.id === this.selectedTrackId ? colors.selectionForeground : colors.foregroundMuted;
         const emptyLabel = track.kind === TrackKind.Audio && track.companionGroupId
           ? '伴生音频槽（当前无片段）'
@@ -348,6 +407,11 @@ export class TimelineView {
         context.fillText(emptyLabel, CONTENT_INSET, top + rowHeight / 2 + 4);
       }
 
+      if (track.kind === TrackKind.Subtitle && subtitleCues(track).length === 0) {
+        context.fillStyle = track.id === this.selectedTrackId ? colors.selectionForeground : colors.foregroundMuted;
+        context.fillText('单击创建字幕', CONTENT_INSET, top + rowHeight / 2 + 4);
+      }
+
       let offset = 0;
       for (const clip of track.clips) {
         const x = this.xAtTime(offset);
@@ -355,9 +419,15 @@ export class TimelineView {
         offset += clipDuration(clip);
         this.drawClip(context, track, clip, x, clipTop, rectWidth, clipHeight, clip.id === this.selectedClipId);
       }
+      for (const cue of subtitleCues(track)) {
+        const x = this.xAtTime(cue.start);
+        const rectWidth = Math.max(8, (cue.end - cue.start) * this.scale() - 3);
+        this.drawSubtitle(context, cue, x, clipTop, rectWidth, clipHeight,
+          cue.id === this.selectedSubtitleId);
+      }
 
       const handleX = this.container.scrollLeft + 5;
-      const isCompanionAudio = track.kind === TrackKind.Audio && Boolean(track.companionGroupId);
+      const isCompanionChild = track.kind !== TrackKind.Video && Boolean(track.companionGroupId);
       const dragged = this.draggingTrack ? project.findTrack(this.draggingTrack.trackId) : undefined;
       const draggingGroup = this.draggingTrack?.trackId === track.id
         || Boolean(track.companionGroupId && dragged?.companionGroupId === track.companionGroupId);
@@ -365,7 +435,7 @@ export class TimelineView {
         ? colors.trackSelected
         : track.id === this.activeTrackId ? colors.track : colors.background;
       context.fillRect(this.container.scrollLeft, top, TRACK_HANDLE_WIDTH + 4, rowHeight);
-      if (isCompanionAudio) {
+      if (isCompanionChild) {
         context.strokeStyle = draggingGroup ? colors.brand : colors.foregroundMuted;
         context.fillStyle = draggingGroup ? colors.brand : colors.foregroundMuted;
         context.lineWidth = 1.5;
@@ -393,6 +463,33 @@ export class TimelineView {
           context.lineTo(handleX + 10, handleY);
           context.stroke();
         }
+      }
+
+      const headerLeft = this.container.scrollLeft + 30;
+      context.fillStyle = track.id === this.selectedTrackId || multiSelected
+        ? colors.selectionForeground : colors.foreground;
+      context.font = `11px ${getComputedStyle(document.body).fontFamily}`;
+      const kindLabel = track.kind === TrackKind.Video ? '视频' : track.kind === TrackKind.Audio ? '音频' : '字幕';
+      context.fillText(this.truncate(context, `${kindLabel} · ${track.name}`, CONTENT_INSET - 56), headerLeft, top + rowHeight / 2 + 4);
+      context.font = `12px ${getComputedStyle(document.body).fontFamily}`;
+
+      if (track.kind === TrackKind.Video && track.companionGroupId) {
+        const expanded = this.expandedVideoTrackIds.has(track.id);
+        const buttonX = this.container.scrollLeft + CONTENT_INSET - 27;
+        const buttonY = top + rowHeight / 2;
+        context.fillStyle = colors.foregroundMuted;
+        context.beginPath();
+        if (expanded) {
+          context.moveTo(buttonX - 5, buttonY - 3);
+          context.lineTo(buttonX + 5, buttonY - 3);
+          context.lineTo(buttonX, buttonY + 3);
+        } else {
+          context.moveTo(buttonX - 3, buttonY - 5);
+          context.lineTo(buttonX + 3, buttonY);
+          context.lineTo(buttonX - 3, buttonY + 5);
+        }
+        context.closePath();
+        context.fill();
       }
 
       if (track.bindingId) {
@@ -492,6 +589,35 @@ export class TimelineView {
     context.globalAlpha = 1;
   }
 
+  private drawSubtitle(
+    context: CanvasRenderingContext2D,
+    cue: SubtitleCue,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    selected: boolean,
+  ): void {
+    const colors = this.colors;
+    this.roundedRect(context, x, y, width, height, 5);
+    context.fillStyle = selected ? colors.clipSelected : colors.track;
+    context.fill();
+    context.strokeStyle = selected ? colors.clipSelectedBorder : colors.brand;
+    context.lineWidth = selected ? 2 : 1;
+    context.stroke();
+    context.fillStyle = selected ? colors.selectionForeground : colors.foreground;
+    context.save();
+    this.roundedRect(context, x, y, width, height, 5);
+    context.clip();
+    context.fillText(this.truncate(context, cue.text, width - 20), x + 10, y + height / 2 + 4);
+    context.restore();
+    if (selected && width >= 12) {
+      context.fillStyle = colors.brand;
+      context.fillRect(x, y + 5, 3, height - 10);
+      context.fillRect(x + width - 3, y + 5, 3, height - 10);
+    }
+  }
+
   private drawWaveform(
     context: CanvasRenderingContext2D,
     clip: VideoClip,
@@ -588,6 +714,7 @@ export class TimelineView {
     this.canvas.addEventListener('pointerup', (event) => this.onPointerUp(event));
     this.canvas.addEventListener('pointercancel', (event) => this.onPointerCancel(event));
     this.canvas.addEventListener('contextmenu', (event) => this.onContextMenu(event));
+    this.canvas.addEventListener('dblclick', (event) => this.onDoubleClick(event));
   }
 
   private localPoint(event: MouseEvent | PointerEvent): { x: number; y: number } {
@@ -604,11 +731,36 @@ export class TimelineView {
     }
     const point = this.localPoint(event);
     const row = this.trackAtY(point.y);
+    if (row?.track.kind === TrackKind.Subtitle) {
+      const cue = subtitleCues(row.track).find((candidate) => {
+        const bounds = this.subtitleBounds(candidate.id);
+        return bounds ? point.x >= bounds.x && point.x <= bounds.x + bounds.width : false;
+      });
+      if (cue) this.callbacks.onContextSubtitle(cue.id, row.track.id, event.clientX, event.clientY);
+      else this.callbacks.onContextTrack(row.track.id, event.clientX, event.clientY);
+      return;
+    }
     const hit = row?.track.clips.find((clip) => {
       const bounds = this.clipBounds(clip.id);
       return bounds ? point.x >= bounds.x && point.x <= bounds.x + bounds.width : false;
     });
-    this.callbacks.onContextClip(hit?.id ?? null, event.clientX, event.clientY);
+    if (hit) this.callbacks.onContextClip(hit.id, event.clientX, event.clientY);
+    else if (row) this.callbacks.onContextTrack(row.track.id, event.clientX, event.clientY);
+    else this.callbacks.onContextClip(null, event.clientX, event.clientY);
+  }
+
+  private onDoubleClick(event: MouseEvent): void {
+    const row = this.trackAtY(this.localPoint(event).y);
+    if (!row || row.track.kind !== TrackKind.Subtitle) return;
+    const point = this.localPoint(event);
+    const cue = subtitleCues(row.track).find((candidate) => {
+      const bounds = this.subtitleBounds(candidate.id);
+      return bounds && point.x >= bounds.x && point.x <= bounds.x + bounds.width;
+    });
+    if (cue) {
+      event.preventDefault();
+      this.callbacks.onEditSubtitle(cue.id);
+    }
   }
 
   private touchPair(): readonly [{ x: number; y: number }, { x: number; y: number }] | null {
@@ -674,9 +826,45 @@ export class TimelineView {
     const row = this.trackAtY(point.y);
     if (!row) return;
     const track = row.track;
+    if (track.kind === TrackKind.Video && track.companionGroupId) {
+      const disclosureCenter = this.container.scrollLeft + CONTENT_INSET - 27;
+      if (Math.abs(point.x - disclosureCenter) <= 16) {
+        if (this.expandedVideoTrackIds.has(track.id)) this.expandedVideoTrackIds.delete(track.id);
+        else this.expandedVideoTrackIds.add(track.id);
+        this.resize();
+        return;
+      }
+    }
     if (this.multiSelectMode) {
       event.preventDefault();
       this.callbacks.onToggleTrack(track.id);
+      return;
+    }
+    if (track.kind === TrackKind.Subtitle) {
+      const cue = subtitleCues(track).find((candidate) => {
+        const bounds = this.subtitleBounds(candidate.id);
+        return bounds && point.x >= bounds.x && point.x <= bounds.x + bounds.width;
+      });
+      if (cue) {
+        const bounds = this.subtitleBounds(cue.id)!;
+        const edge = Math.min(8, bounds.width / 3);
+        const mode = point.x <= bounds.x + edge ? 'start'
+          : point.x >= bounds.x + bounds.width - edge ? 'end' : 'move';
+        this.selectedSubtitleId = cue.id;
+        this.callbacks.onSelectSubtitle(cue.id);
+        this.draggingSubtitle = {
+          cueId: cue.id,
+          trackId: track.id,
+          mode,
+          originX: point.x,
+          initialStart: cue.start,
+          initialEnd: cue.end,
+        };
+        this.canvas.setPointerCapture(event.pointerId);
+        this.draw();
+      } else if (point.x >= CONTENT_INSET) {
+        this.callbacks.onCreateSubtitle(track.id, this.timeAtX(point.x));
+      }
       return;
     }
     const handleRight = this.container.scrollLeft + TRACK_HANDLE_WIDTH;
@@ -713,6 +901,12 @@ export class TimelineView {
     const point = this.localPoint(event);
     if (this.seeking) {
       this.callbacks.onSeek(this.activeTrackId, this.timeAtX(point.x));
+      return;
+    }
+    if (this.draggingSubtitle) {
+      const seconds = (point.x - this.draggingSubtitle.originX) / this.scale();
+      this.canvas.style.cursor = this.draggingSubtitle.mode === 'move' ? 'grabbing' : 'ew-resize';
+      if (Math.abs(seconds) > 0.001) this.autoScroll(point);
       return;
     }
     if (this.draggingTrack) {
@@ -763,6 +957,22 @@ export class TimelineView {
     if (this.dragging?.started && this.dropTarget) {
       this.callbacks.onMoveClip(this.dragging.clipId, this.dropTarget.trackId, this.dropTarget.index);
     }
+    if (this.draggingSubtitle) {
+      const drag = this.draggingSubtitle;
+      const delta = (this.localPoint(event).x - drag.originX) / this.scale();
+      const duration = drag.initialEnd - drag.initialStart;
+      let start = drag.initialStart;
+      let end = drag.initialEnd;
+      if (drag.mode === 'move') {
+        start = Math.max(0, drag.initialStart + delta);
+        end = start + duration;
+      } else if (drag.mode === 'start') {
+        start = Math.min(Math.max(0, drag.initialStart + delta), end - 0.1);
+      } else {
+        end = Math.max(start + 0.1, drag.initialEnd + delta);
+      }
+      this.callbacks.onMoveSubtitle(drag.cueId, start, end);
+    }
     if (this.draggingTrack?.started && this.trackDropIndex !== null) {
       this.callbacks.onMoveTrack(this.draggingTrack.trackId, this.trackDropIndex);
     }
@@ -785,6 +995,7 @@ export class TimelineView {
   private endDrag(): void {
     this.dragging = null;
     this.draggingTrack = null;
+    this.draggingSubtitle = null;
     this.dropTarget = null;
     this.trackDropIndex = null;
     this.canvas.style.cursor = '';

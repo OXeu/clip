@@ -23,6 +23,7 @@ import {
   buildAudioMuxArguments,
   buildFilter,
   buildWasmExportArguments,
+  n,
 } from './filtergraph.ts';
 import {
   type ExportOptions,
@@ -41,9 +42,15 @@ import {
   type EncodedAudioChunkSink,
   type WebCodecsAudioCodec,
 } from './webcodecs-audio.ts';
+import {
+  createSubtitleOverlayImages,
+  drawSubtitleTracksAtTime,
+  type SubtitleRenderTrack,
+} from './subtitle-renderer.ts';
 
 export interface ExportRequest {
   readonly clips: readonly VideoClip[];
+  readonly subtitles?: readonly SubtitleRenderTrack[];
   readonly options: ExportOptions;
   readonly route: EncoderRoute;
   readonly capabilities: Capabilities;
@@ -437,6 +444,7 @@ async function encodeVideoTrack(
   options: ExportOptions,
   capabilities: Capabilities,
   sources: SourceCache,
+  subtitles: readonly SubtitleRenderTrack[] | undefined,
   report: (progress: ExportProgress) => void,
   signal?: AbortSignal,
   audioStage?: WebCodecsAudioStage,
@@ -558,8 +566,9 @@ async function encodeVideoTrack(
   const emit = async (frame: VideoFrame): Promise<void> => {
     throwIfEncoderFailed();
     const needsResample = frame.displayWidth !== width || frame.displayHeight !== height;
+    const needsCanvas = needsResample || Boolean(subtitles?.some((track) => track.cues.length > 0));
     let source: CanvasImageSource = frame;
-    if (needsResample) {
+    if (needsCanvas) {
       const mediaAspect = frame.displayWidth / Math.max(1, frame.displayHeight);
       const targetAspect = width / height;
       let drawWidth = width;
@@ -571,6 +580,7 @@ async function encodeVideoTrack(
       context.fillStyle = '#000000';
       context.fillRect(0, 0, width, height);
       context.drawImage(frame, offsetX, offsetY, drawWidth, drawHeight);
+      drawSubtitleTracksAtTime(context, width, height, subtitles, emitted / fps);
       source = canvas;
     }
 
@@ -789,6 +799,34 @@ export function buildWasmConcatArguments(manifest: string, output: string, anyAu
   return args;
 }
 
+function addSubtitleOverlays(
+  filter: string,
+  inputCount: number,
+  overlays: readonly { name: string; start: number; end: number }[],
+): string {
+  if (overlays.length === 0) return filter;
+  const outputIndex = filter.lastIndexOf('[video]');
+  if (outputIndex < 0) throw new Error('视频滤镜缺少输出标签。');
+  let result = `${filter.slice(0, outputIndex)}[video_base]${filter.slice(outputIndex + '[video]'.length)};\n`;
+  for (let index = 0; index < overlays.length; index++) {
+    const input = index === 0 ? '[video_base]' : `[subtitle_layer_${index - 1}]`;
+    const output = index === overlays.length - 1 ? '[video]' : `[subtitle_layer_${index}]`;
+    const overlay = overlays[index]!;
+    result += `${input}[${inputCount + index}:v]overlay=0:0:eof_action=repeat:shortest=1:`
+      + `enable='between(t,${n(overlay.start)},${n(overlay.end)})'${output}`;
+    if (index < overlays.length - 1) result += ';\n';
+  }
+  return result;
+}
+
+function addOverlayArguments(args: string[], names: readonly string[]): string[] {
+  if (names.length === 0) return args;
+  const filterIndex = args.indexOf('-filter_complex_script');
+  if (filterIndex < 0) throw new Error('FFmpeg 参数缺少滤镜脚本。');
+  const inputs = names.flatMap((name) => ['-loop', '1', '-i', name]);
+  return [...args.slice(0, filterIndex), ...inputs, ...args.slice(filterIndex)];
+}
+
 /** 用 ffmpeg.wasm 完成整套导出（兜底路线）。 */
 async function exportWithWasm(
   request: ExportRequest,
@@ -798,7 +836,7 @@ async function exportWithWasm(
   height: number,
   fallbackReason?: string,
 ): Promise<ExportResult> {
-  const { clips, options, capabilities, ffmpegBase, readSource, signal, onLog } = request;
+  const { clips, options, capabilities, ffmpegBase, readSource, signal, onLog, subtitles } = request;
   report({
     fraction: 0.01,
     message: fallbackReason
@@ -812,18 +850,29 @@ async function exportWithWasm(
 
   const duration = clips.reduce((total, clip) => total + clipDuration(clip), 0);
   const anyAudio = clips.some((clip) => hasAudio(clip.media));
+  const subtitleOverlays = await createSubtitleOverlayImages(subtitles, width, height);
   let data: Uint8Array;
 
-  if (clips.length === 1) {
+  if (clips.length === 1 || subtitleOverlays.length > 0) {
     const mapping = mapWasmMedia(clips);
     const filterName = 'clip-export.ffgraph';
-    const filter = buildFilter(mapping.clips, options);
+    const filter = addSubtitleOverlays(
+      buildFilter(mapping.clips, options),
+      mapping.sources.length,
+      subtitleOverlays,
+    );
     report({ fraction: 0.02, message: '正在准备导出素材…' });
     await runner.writeFile(filterName, new TextEncoder().encode(filter));
     try {
       const result = await runner.run({
-        args: buildWasmExportArguments(mapping.clips, options, filterName, 'output.mp4'),
-        inputs: await wasmInputs(mapping, readSource),
+        args: addOverlayArguments(
+          buildWasmExportArguments(mapping.clips, options, filterName, 'output.mp4'),
+          subtitleOverlays.map((overlay) => overlay.name),
+        ),
+        inputs: [
+          ...await wasmInputs(mapping, readSource),
+          ...subtitleOverlays.map((overlay) => ({ name: overlay.name, data: overlay.data })),
+        ],
         output: 'output.mp4',
         duration,
         onProgress: (update) => report({
@@ -957,6 +1006,7 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
         options,
         capabilities,
         cache,
+        request.subtitles,
         (update) => report({
           fraction: 0.01 + update.fraction * (audioCodec ? 0.69 : 0.79),
           message: update.message,

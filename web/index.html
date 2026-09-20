@@ -50,6 +50,15 @@
       <section class="preview-region is-empty" id="preview-region">
         <div class="preview-canvas" id="preview-canvas" title="滚轮或双指缩放预览 · 双击恢复适应">
           <canvas id="preview-frame" class="preview-frame" aria-label="视频预览画面" hidden></canvas>
+          <div id="subtitle-overlay" class="subtitle-overlay" hidden aria-label="字幕矩形框">
+            <div id="subtitle-preview-text" class="subtitle-preview-text">字幕预览</div>
+            <button class="subtitle-resize-handle nw" type="button" data-resize="nw" aria-label="调整字幕框左上角"></button>
+            <button class="subtitle-resize-handle ne" type="button" data-resize="ne" aria-label="调整字幕框右上角"></button>
+            <button class="subtitle-resize-handle sw" type="button" data-resize="sw" aria-label="调整字幕框左下角"></button>
+            <button class="subtitle-resize-handle se" type="button" data-resize="se" aria-label="调整字幕框右下角"></button>
+          </div>
+          <div id="subtitle-guide-x" class="subtitle-snap-guide horizontal" hidden></div>
+          <div id="subtitle-guide-y" class="subtitle-snap-guide vertical" hidden></div>
           <div id="audio-preview" class="audio-preview" hidden aria-label="音频素材预览">
             <div class="audio-preview-mark" aria-hidden="true">
               <span></span><span></span><span></span><span></span><span></span>
@@ -134,6 +143,9 @@
             <button id="multi-select-button" class="btn btn-quiet" type="button" aria-pressed="false" title="进入轨道多选模式">多选轨道</button>
             <button id="bind-tracks-button" class="btn btn-primary btn-compact" type="button" hidden disabled>保存并对齐</button>
             <button id="unbind-tracks-button" class="btn btn-quiet btn-compact" type="button" hidden disabled>解除绑定</button>
+            <button id="recognize-selected-audio" class="btn btn-quiet" type="button" title="先选中音频轨，再在浏览器中分段并调用腾讯云 ASR" disabled>
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-edit-line"></use></svg>识别字幕
+            </button>
           </div>
           <div class="timeline-tools">
             <button id="zoom-out" class="btn btn-icon" type="button" title="缩小时间轴" aria-label="缩小时间轴">
@@ -145,8 +157,8 @@
             </button>
           </div>
         </div>
-        <div class="timeline-scroll" id="timeline-scroll" title="拖动轨道左侧把手排序 · 滚轮上下滚动 · Shift + 滚轮横向滚动 · Ctrl + 滚轮缩放 · 双指缩放与移动">
-          <canvas id="timeline" aria-label="音视频时间轴；拖动轨道左侧把手排序，进入多选模式后点击轨道并保存绑定"></canvas>
+        <div class="timeline-scroll" id="timeline-scroll" title="点击视频轨左侧按钮展开伴生轨 · 拖动把手排序 · 滚轮上下滚动 · Shift + 滚轮横向滚动 · Ctrl + 滚轮缩放">
+          <canvas id="timeline" aria-label="视频、音频与字幕时间轴；视频轨默认折叠，点击左侧按钮展开伴生轨"></canvas>
         </div>
         <div class="timeline-summary" id="timeline-summary"></div>
       </section>
@@ -180,6 +192,28 @@
       <button id="custom-speed-button" class="more-menu-item" type="button" role="menuitem">
         <span>自定义…</span><span class="menu-shortcut">0.1–8×</span>
       </button>
+    </div>
+
+    <div id="track-context-menu" class="clip-context-menu" role="menu" aria-label="轨道操作" hidden>
+      <div class="clip-context-heading"><span id="track-context-title">轨道操作</span></div>
+      <button id="add-subtitle-track" class="more-menu-item" type="button" role="menuitem" hidden>
+        <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-add-line"></use></svg><span>添加字幕伴生轨</span>
+      </button>
+      <button id="recognize-subtitles" class="more-menu-item" type="button" role="menuitem" hidden>
+        <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-edit-line"></use></svg><span>自动识别字幕</span>
+      </button>
+      <div id="subtitle-alignment-actions" hidden>
+        <div class="more-menu-divider" role="separator"></div>
+        <div class="clip-context-heading"><span>矩形框内对齐</span></div>
+        <button class="more-menu-item subtitle-align" type="button" role="menuitemradio" data-alignment="top">顶对齐</button>
+        <button class="more-menu-item subtitle-align" type="button" role="menuitemradio" data-alignment="center">矩形中心对齐</button>
+        <button class="more-menu-item subtitle-align" type="button" role="menuitemradio" data-alignment="bottom">底部对齐</button>
+      </div>
+      <div id="subtitle-cue-actions" hidden>
+        <div class="more-menu-divider" role="separator"></div>
+        <button id="edit-subtitle-cue" class="more-menu-item" type="button" role="menuitem">编辑字幕内容…</button>
+        <button id="delete-subtitle-cue" class="more-menu-item danger-menu-item" type="button" role="menuitem">删除字幕</button>
+      </div>
     </div>
 
     <dialog id="speed-dialog" aria-labelledby="speed-dialog-title">
@@ -291,6 +325,11 @@
               <option value="wasm">始终使用 FFmpeg.wasm</option>
             </select>
             <span class="hint">自动模式会在 WebCodecs 不可用时回退到 FFmpeg.wasm。</span>
+          </div>
+          <div class="field">
+            <label for="settings-asr-key">腾讯云 ASR API Key</label>
+            <input id="settings-asr-key" type="password" autocomplete="off" spellcheck="false" placeholder="Bearer API Key" />
+            <span class="hint">只保存在当前浏览器会话，不写入项目文件。用于 hy-asr-3.0-preview 自动识别。</span>
           </div>
           <div class="callout info" id="settings-ffmpeg"></div>
         </div>
