@@ -53,7 +53,26 @@ dotnet run --project tests/Clip.Tests -c Release -- --integration
 
 发布目录为 `artifacts/Clip-win-x64`，包含运行时、FFmpeg 和启动诊断工具。打包需要安装 7-Zip，默认输出 `artifacts/Clip-win-x64.zip`，并生成 `.sha256` 和 `.manifest.json`。脚本会实际解压并逐文件校验；已有同名 ZIP 时，用 `-Output` 指定新文件名。
 
-发布正式版时，将 ZIP 附加到 `v1.2.3` Release，标签应与构建版本一致。标签构建会自动取标签中的版本号；未指定版本的本地构建默认为 `1.0.0`。CI 上传构建产物，不会自动创建 Release。应用内更新只接受完整 ZIP，详见[更新指南](updates.md)。
+正式发布只需在包含最新 CI 配置的提交上创建并推送版本标签：
+
+```bash
+git tag -a v1.2.3 -m "Clip v1.2.3"
+git push origin v1.2.3
+```
+
+`vMAJOR.MINOR.PATCH` 标签会自动触发 Windows 构建，版本号取自标签。核心、FFmpeg、界面、更新与打包验证全部通过后，`Publish GitHub Release` 任务生成 release notes，附加 `Clip-win-x64.zip`、`.sha256` 和 `.manifest.json`，校验服务器端摘要后公开 Release。说明包含 GitHub 自动归类的 PR 记录、直接提交记录、下载说明和校验值；分类配置在 [.github/release.yml](../.github/release.yml)。
+
+`v1.2.3-rc.1`、`v1.2.3-beta.1` 等带后缀的标签生成预发布，不会成为默认更新通道的最新正式版。分支和 PR 构建只上传 Actions 产物；本地打包未指定版本时仍默认为 `1.0.0`。
+
+发布任务使用仅授予该任务的 `contents: write` 权限。附件上传期间 Release 保持草稿；失败后可重新运行工作流，保留草稿中的说明和已校验附件。已公开的 Release 不会被覆盖，应使用新标签发布修订版。发布任务只接收当前构建产物，并核对标签仍指向被测试的提交。
+
+发布逻辑可用 Node.js 20 或更高版本在本地验证，不会访问 GitHub 或创建测试 Release：
+
+```bash
+node --test scripts/publish-release.test.cjs
+```
+
+应用内更新只接受完整 ZIP，详见[更新指南](updates.md)。
 
 ## 代码入口
 

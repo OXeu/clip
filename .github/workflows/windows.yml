@@ -2,6 +2,8 @@ name: Windows build
 
 on:
   push:
+    branches: ['**']
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -10,7 +12,7 @@ permissions:
 
 concurrency:
   group: windows-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
@@ -27,6 +29,13 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v6
+
+      - name: Validate release tag
+        if: github.ref_type == 'tag'
+        run: node -e "require('./scripts/publish-release.cjs').parseTag(process.env.GITHUB_REF_NAME)"
+
+      - name: Verify release publishing and retry behavior
+        run: node --test scripts/publish-release.test.cjs
 
       - name: Install .NET and restore NuGet cache
         uses: actions/setup-dotnet@v5
@@ -193,6 +202,40 @@ jobs:
           archive: false
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Download verified Windows ZIP without unpacking
+        uses: actions/download-artifact@v8
+        with:
+          name: Clip-win-x64.zip
+          path: ${{ runner.temp }}/release
+          skip-decompress: true
+
+      - name: Download checksums and file manifest
+        uses: actions/download-artifact@v8
+        with:
+          name: Windows-package-checksums-${{ github.run_number }}
+          path: ${{ runner.temp }}/release
+
+      - name: Generate notes, upload verified assets, and publish
+        uses: actions/github-script@v8
+        env:
+          RELEASE_DIRECTORY: ${{ runner.temp }}/release
+        with:
+          script: |
+            await require('./scripts/publish-release.cjs').publishRelease({github, context, core});
 
   update-readme:
     name: Refresh README screenshots
