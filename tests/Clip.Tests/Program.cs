@@ -156,7 +156,7 @@ Test("random edits preserve timeline invariants", () =>
     }
 });
 
-Test("multiple imports create candidate tracks and never implicitly enter the export track", () =>
+Test("multiple imports create independent candidate tracks and never implicitly enter the main track", () =>
 {
     var project = new EditProject();
     var first = project.Import(media);
@@ -198,6 +198,101 @@ Test("cross-track moves, reordering, and speed have project-wide undo and stable
     var snapshot = project.ExportClips();
     project.Delete(right);
     Check(snapshot.Count == 3 && project.ExportClips().Count == 2, "Export snapshot changed after another edit");
+});
+
+Test("copy placement uses the strict ten-second boundary and undo preserves track and clip identities", () =>
+{
+    foreach (var duration in new[] { 9.999, 10.0, 10.001 })
+    {
+        var project = new EditProject();
+        var source = project.Import(media with { Duration = duration });
+        var below = project.Import(media with { Path = "below.mp4" });
+        var original = source.Clips[0];
+        project.Rename(original.Id, "镜头 A");
+        original = project.FindClip(original.Id)!.Value.Clip;
+        var before = project.Tracks.ToArray();
+        var copyId = project.Duplicate(original.Id)!.Value;
+        var copy = project.FindClip(copyId)!.Value;
+        Check(copy.Clip.Id != original.Id && copy.Clip with { Id = original.Id } == original,
+            "Copy changed the source range, speed, label or media");
+        Check(project.Sources.Count == 2 && project.FindTrack(below.Id)!.Clips.Count == 1, "Copy mutated source media or the track below");
+        if (duration < 10)
+            Check(copy.TrackId == source.Id && copy.Index == 1 && project.Tracks.Count == before.Length, "Short copy did not insert immediately after its source");
+        else
+            Check(project.Tracks[2].Id == copy.TrackId && !project.Tracks[2].IsMain && project.Tracks[3].Id == below.Id && copy.Index == 0,
+                "Long copy did not create a candidate directly below its source track");
+        project.Undo();
+        Check(project.Tracks.SequenceEqual(before) && project.FindClip(copyId) is null, "Undo copy left an extra track or clip");
+        project.Redo();
+        Check(project.FindClip(copyId) == copy, "Redo copy changed its identity or placement");
+        project.Rename(copyId, "副本标记");
+        Check(project.FindClip(original.Id)!.Value.Clip.DisplayName == "镜头 A", "Naming a copy changed the source clip");
+    }
+});
+
+Test("copies use the edited duration and insert before the following clip", () =>
+{
+    var project = new EditProject();
+    var track = project.Import(media);
+    var right = project.Split(track.Id, 4)!.Value;
+    var original = track.Clips[0].Id;
+    var copy = project.Duplicate(original)!.Value;
+    Check(project.FindTrack(track.Id)!.Clips.Select(c => c.Id).SequenceEqual(new[] { original, copy, right }), "Copy appended at the end instead of after the source");
+    Near(project.FindClip(copy)!.Value.TimelineStart, 4);
+    project.SetSpeed(right, 0.5);
+    var longCopy = project.Duplicate(right)!.Value;
+    Check(project.FindClip(longCopy)!.Value.TrackId != track.Id, "A slowed twelve-second clip stayed in the source track");
+    project.SetSpeed(right, 2);
+    var shortCopy = project.Duplicate(right)!.Value;
+    Check(project.FindClip(shortCopy)!.Value.TrackId == track.Id, "A sped-up three-second clip created a new track");
+    Check(project.Duplicate(Guid.NewGuid()) is null, "Copy accepted a missing clip");
+});
+
+Test("clip names are independent, undoable metadata and survive splitting", () =>
+{
+    var project = new EditProject();
+    var first = project.Import(media);
+    var second = project.Import(media);
+    var id = first.Clips[0].Id;
+    var original = first.Clips[0];
+    Check(project.Rename(id, "  开场 / S-X 镜头  "), "Rename failed");
+    Check(project.FindClip(id)!.Value.Clip.DisplayName == "开场 / S-X 镜头" && project.FindClip(second.Clips[0].Id)!.Value.Clip.DisplayName == media.FileName,
+        "Rename affected another instance of the same source");
+    Check(project.FindClip(id)!.Value.Clip.Media == media && project.Sources.Single() == media, "Rename changed the underlying file");
+    Check(!project.Rename(id, "开场 / S-X 镜头"), "No-op rename created history");
+    foreach (var invalid in new[] { "", "   ", "\t\r\n" })
+    {
+        try { project.Rename(id, invalid); throw new Exception("An empty name was accepted"); }
+        catch (ArgumentException) { }
+    }
+    project.Undo();
+    Check(project.FindClip(id)!.Value.Clip == original, "Invalid or no-op naming changed undo history");
+    project.Redo();
+    var right = project.Split(first.Id, 4)!.Value;
+    Check(project.FindClip(right)!.Value.Clip.DisplayName == "开场 / S-X 镜头", "Split discarded the clip label");
+});
+
+Test("export selection includes every nonempty track and requires an explicit choice for multiple tracks", () =>
+{
+    var project = new EditProject();
+    Check(project.ExportableTracks.Count == 0 && project.ResolveExportTrack(null) is null, "Empty project has an export target");
+    var a = project.Import(media);
+    Check(project.ResolveExportTrack(null)?.Id == a.Id, "The only nonempty candidate was not the default export target");
+    var b = project.Import(media with { Path = "candidate.mp4", Width = 1080, Height = 1920 });
+    Check(project.ExportableTracks.Select(t => t.Id).SequenceEqual(new[] { a.Id, b.Id }) && project.ResolveExportTrack(null) is null,
+        "Multiple tracks silently defaulted to one track or included the empty main track");
+    Check(project.ResolveExportTrack(b.Id)?.Id == b.Id && project.ResolveExportTrack(b.Clips[0].Id) is null,
+        "A clip selection was mistaken for an explicit track selection");
+    Check(project.ResolveExportTrack(project.MainTrack.Id) is null, "An empty selected track became exportable");
+    var snapshot = project.ExportClips(b.Id);
+    Check(snapshot.Single().Media.Path == "candidate.mp4", "Candidate export selected footage from a different track");
+    project.Delete(b.Clips[0].Id);
+    Check(snapshot.Count == 1 && project.ExportClips(b.Id).Count == 0 && project.ExportableTracks.Count == 1,
+        "Export snapshot or dropdown retained mutable/deleted clips");
+    project.Undo();
+    Check(project.ExportableTracks.Count == 2, "Undo failed to restore exportable tracks");
+    try { project.ExportClips(Guid.NewGuid()); throw new Exception("Missing export track silently fell back to the main track"); }
+    catch (ArgumentException) { }
 });
 
 Test("clip speed maps timeline time to source frames for split and playback", () =>
@@ -265,7 +360,7 @@ Test("random multi-track edits preserve nonoverlap, speed mappings, and unique I
         var all = project.Tracks.SelectMany(t => t.Clips).ToArray();
         var track = project.Tracks[random.Next(project.Tracks.Count)];
         var clip = all.Length > 0 ? all[random.Next(all.Length)] : null;
-        switch (random.Next(6))
+        switch (random.Next(8))
         {
             case 0: project.Split(track.Id, random.NextDouble() * track.Duration); break;
             case 1: if (clip is not null) project.Move(clip.Id, track.Id, random.Next(track.Clips.Count + 1)); break;
@@ -273,6 +368,8 @@ Test("random multi-track edits preserve nonoverlap, speed mappings, and unique I
             case 3: if (clip is not null) project.Delete(clip.Id); break;
             case 4: project.Undo(); break;
             case 5: project.Redo(); break;
+            case 6: if (clip is not null) project.Duplicate(clip.Id); break;
+            case 7: if (clip is not null) project.Rename(clip.Id, $"镜头 {iteration}"); break;
         }
         all = project.Tracks.SelectMany(t => t.Clips).ToArray();
         Check(all.Select(c => c.Id).Distinct().Count() == all.Length, "A drag duplicated a clip ID");
@@ -499,6 +596,36 @@ if (args.Contains("--integration"))
             var silentOutput = Path.Combine(root, "candidate-audio-excluded.mp4");
             await exporter.ExportAsync(project, software, silentOutput);
             Check(!(await tools.ProbeAsync(silentOutput)).HasAudio, "Audio on a candidate track leaked into a silent main track");
+        });
+
+        await TestAsync("FFmpeg exports named candidate copies without reading the main track or other candidates", async () =>
+        {
+            var project = new EditProject();
+            var missing = project.Import(input with { Path = Path.Combine(root, "missing-main.mp4") });
+            project.Move(missing.Clips[0].Id, project.MainTrack.Id, 0);
+            var candidate = project.Import(input);
+            project.Import(input with { Path = Path.Combine(root, "missing-other-candidate.mp4") });
+            var remainder = project.Split(candidate.Id, 1)!.Value;
+            project.Delete(remainder);
+            var original = candidate.Clips[0].Id;
+            project.Rename(original, "开场 / 命名不改文件路径");
+            var copy = project.Duplicate(original)!.Value;
+            project.Rename(copy, "复制的开场");
+            var output = Path.Combine(root, "chosen-candidate.mp4");
+            await exporter.ExportAsync(project, candidate.Id, software, output);
+            var result = await tools.ProbeAsync(output);
+            Near(result.Duration, 2, 0.07);
+            Check(result.Width == input.Width && result.Height == input.Height && result.HasAudio, "Candidate export lost video dimensions or audio");
+            var rgb = Path.Combine(root, "candidate-copy.rgb");
+            await Run("-v", "error", "-ss", "1.5", "-i", output, "-frames:v", "1", "-vf", "scale=1:1",
+                "-f", "rawvideo", "-pix_fmt", "rgb24", rgb);
+            var pixel = await File.ReadAllBytesAsync(rgb);
+            Check(pixel.Length == 3 && pixel[0] > pixel[1] * 1.5 && pixel[0] > pixel[2] * 1.5, "The copied clip did not retain the source's red first second");
+            project.Delete(original);
+            project.Delete(copy);
+            var emptyOutput = Path.Combine(root, "empty-candidate.mp4");
+            await ThrowsAsync<InvalidOperationException>(() => exporter.ExportAsync(project, candidate.Id, software, emptyOutput));
+            Check(!File.Exists(emptyOutput), "An empty candidate published an export");
         });
 
         await TestAsync("FFmpeg handles slow motion, acceleration, and one-frame clips without losing the final frame", async () =>

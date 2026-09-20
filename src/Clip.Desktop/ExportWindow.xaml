@@ -8,7 +8,7 @@
     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
     <StackPanel Margin="24,24,24,20">
       <TextBlock Text="导出视频" FontSize="24" FontWeight="SemiBold" />
-      <TextBlock Text="只合并主轨片段，候选轨不会参与导出。" Style="{StaticResource SecondaryText}" Margin="0,8,0,0" />
+      <TextBlock Text="按顺序合并所选轨道的片段。" Style="{StaticResource SecondaryText}" Margin="0,8,0,0" />
     </StackPanel>
     <ScrollViewer x:Name="ExportScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel Margin="24,0,24,24">
@@ -48,8 +48,6 @@
             <ComboBox x:Name="EncoderBox" SelectedIndex="0" MinHeight="36" HorizontalAlignment="Stretch" AutomationProperties.Name="视频编码器">
               <ComboBoxItem x:Name="NvidiaItem" Content="NVIDIA NVENC · 硬件编码" /><ComboBoxItem Content="CPU · 软件编码" />
             </ComboBox>
-            <CheckBox x:Name="HardwareDecodeBox" Content="NVIDIA 硬件解码" Margin="0,16,0,0" />
-            <TextBlock x:Name="HardwareHint" Style="{StaticResource Caption}" Margin="0,8,0,0" />
             <TextBlock Text="视频 H.264 · 音频 AAC · 保持画面比例" Style="{StaticResource Caption}" Margin="0,16,0,0" />
           </StackPanel>
         </Expander>

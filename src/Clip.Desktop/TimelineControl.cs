@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Clip.Core;
@@ -10,7 +9,7 @@ namespace Clip.Desktop;
 public sealed class TimelineControl : FrameworkElement
 {
     public const string ClipDataFormat = "Clip.VideoClip";
-    public const double ContentInset = 112;
+    public const double ContentInset = 16;
     public const double RulerHeight = 28;
     public const double RowHeight = 68;
     private const double ClipHeight = 48;
@@ -20,14 +19,15 @@ public sealed class TimelineControl : FrameworkElement
     private (Guid Track, int Index)? _drop;
     public EditProject? Project { get; set; }
     public Guid ActiveTrackId { get; set; }
+    public Guid? SelectedTrackId { get; set; }
     public Guid? SelectedId { get; set; }
     public double Position { get; set; }
     public double HorizontalOffset { get; set; }
     public double VerticalOffset { get; set; }
     public event Action<Guid, double>? SeekRequested;
     public event Action<Guid, double>? SelectionChanged;
+    public event Action<Guid, double>? TrackSelectionChanged;
     public event Action<Guid, Guid, int>? MoveRequested;
-    public event Action? DeleteRequested;
     public event Action<Point>? AutoScrollRequested;
     public double ContentHeight => RulerHeight + (Project?.Tracks.Count ?? 1) * RowHeight + 8;
     public double Duration { get; set; }
@@ -57,7 +57,7 @@ public sealed class TimelineControl : FrameworkElement
         var row = (int)((point.Y - RulerHeight) / RowHeight);
         if (row < 0 || row >= Project.Tracks.Count) return null;
         var track = Project.Tracks[row];
-        var time = point.X < HorizontalOffset + ContentInset ? 0 : TimeAtX(point.X);
+        var time = TimeAtX(point.X);
         double offset = 0;
         for (var i = 0; i < track.Clips.Count; i++)
         {
@@ -76,11 +76,14 @@ public sealed class TimelineControl : FrameworkElement
         {
             var track = Project.Tracks[row];
             var top = RulerHeight + row * RowHeight;
-            if (track.Id == ActiveTrackId)
+            if (track.Id == SelectedTrackId)
+            {
+                dc.DrawRectangle(Brush("ColorBrandBackground2"), null, new Rect(0, top, ActualWidth, RowHeight));
+                dc.DrawRectangle(Brush("ColorBrandBackground"), null, new Rect(HorizontalOffset, top, 3, RowHeight));
+            }
+            else if (track.Id == ActiveTrackId)
                 dc.DrawRectangle(Brush("ColorNeutralBackground2"), null, new Rect(0, top, ActualWidth, RowHeight));
             dc.DrawLine(new Pen(Brush("ColorNeutralStroke2"), 1), new Point(0, top + RowHeight), new Point(ActualWidth, top + RowHeight));
-            if (track.Clips.Count == 0)
-                Text(dc, track.IsMain ? "将候选片段拖到主轨 · 只有主轨参与导出" : "拖入片段", HorizontalOffset + ContentInset + 12, top + 23, 12, "ColorNeutralForeground3", Math.Max(1, ActualWidth - HorizontalOffset - ContentInset - 30));
             double offset = 0;
             foreach (var clip in track.Clips)
             {
@@ -101,7 +104,7 @@ public sealed class TimelineControl : FrameworkElement
                         dc.DrawGeometry(Brush(foreground), null, icon);
                         dc.Pop(); dc.Pop();
                     }
-                    Text(dc, clip.Media.FileName, rect.X + 28, rect.Y + 6, 12, foreground, rect.Width - 36);
+                    Text(dc, clip.DisplayName, rect.X + 28, rect.Y + 6, 12, foreground, rect.Width - 36);
                     Text(dc, $"{clip.Speed:0.##}× · {clip.Duration:0.##} 秒", rect.X + 8, rect.Y + 28, 11, foreground, rect.Width - 16);
                 }
                 dc.Pop();
@@ -119,20 +122,16 @@ public sealed class TimelineControl : FrameworkElement
                 dc.DrawLine(new Pen(Brush("ColorBrandBackground"), 3), new Point(x, top + 2), new Point(x, top + RowHeight - 2));
                 dc.DrawEllipse(Brush("ColorBrandBackground"), null, new Point(x, top + 3), 4, 4);
             }
-            // Frozen track headings remain visible while the common timeline is panned.
-            dc.DrawRectangle(Brush("ColorNeutralBackground1"), null, new Rect(HorizontalOffset, top, ContentInset - 8, RowHeight));
-            Text(dc, track.Name, HorizontalOffset + 16, top + 10, 14, track.IsMain ? "ColorBrandForeground" : "ColorNeutralForeground1", 82);
-            Text(dc, track.IsMain ? "参与导出" : "仅供候选", HorizontalOffset + 16, top + 33, 11, "ColorNeutralForeground3", 82);
         }
         // Frozen shared ruler.
         dc.DrawRectangle(Brush("ColorNeutralBackground1"), null, new Rect(HorizontalOffset, VerticalOffset, ActualWidth, RulerHeight));
         var intervals = new[] { 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200, 21600, 86400 };
         var interval = intervals.FirstOrDefault(v => v * Scale >= 88, Math.Max(Duration / 8, 1));
-        var first = Math.Max(0, Math.Floor(TimeAtX(HorizontalOffset + ContentInset) / interval) * interval);
+        var first = Math.Max(0, Math.Floor(TimeAtX(HorizontalOffset) / interval) * interval);
         for (var time = first; time <= Duration; time += interval)
         {
             var x = XAtTime(time);
-            if (x < HorizontalOffset + ContentInset - 1) continue;
+            if (x < HorizontalOffset - 1) continue;
             var t = TimeSpan.FromSeconds(time);
             var label = time >= 3600 ? $"{(int)t.TotalHours:00}:{t.Minutes:00}:{t.Seconds:00}" : $"{(int)t.TotalMinutes:00}:{t.Seconds:00}" + (interval < 1 ? $".{t.Milliseconds / 100}" : "");
             if (x + label.Length * 7 < ActualWidth - 12) Text(dc, label, x + 3, VerticalOffset + 3, 11, "ColorNeutralForeground3");
@@ -143,13 +142,13 @@ public sealed class TimelineControl : FrameworkElement
     protected override void OnMouseDown(MouseButtonEventArgs e)
     {
         base.OnMouseDown(e);
-        if (!IsEnabled || Project is null) return;
+        if (!IsEnabled || Project is null || e.ChangedButton is not (MouseButton.Left or MouseButton.Right)) return;
         Focus();
         var point = e.GetPosition(this);
         _pressedClip = null;
         if (point.Y < VerticalOffset + RulerHeight)
         {
-            if (e.ChangedButton == MouseButton.Left && point.X >= HorizontalOffset + ContentInset)
+            if (e.ChangedButton == MouseButton.Left)
             {
                 SeekRequested?.Invoke(ActiveTrackId, TimeAtX(point.X));
                 CaptureMouse();
@@ -160,23 +159,16 @@ public sealed class TimelineControl : FrameworkElement
             var row = (int)((point.Y - RulerHeight) / RowHeight);
             if (row < 0 || row >= Project.Tracks.Count) return;
             var track = Project.Tracks[row];
-            var clip = point.X < HorizontalOffset + ContentInset ? null : track.Clips.FirstOrDefault(c => ClipBounds(c.Id).Contains(point));
+            var clip = track.Clips.FirstOrDefault(c => ClipBounds(c.Id).Contains(point));
             if (clip is not null)
             {
                 SelectionChanged?.Invoke(clip.Id, TimeAtX(point.X));
                 if (e.ChangedButton == MouseButton.Left) { _pressedClip = clip.Id; _mouseDown = point; CaptureMouse(); }
-                else if (e.ChangedButton == MouseButton.Right)
-                {
-                    var menu = new ContextMenu { PlacementTarget = this };
-                    var delete = new MenuItem { Header = "删除片段", InputGestureText = "Delete / X" };
-                    delete.Click += (_, _) => DeleteRequested?.Invoke();
-                    menu.Items.Add(delete);
-                    menu.IsOpen = true;
-                }
             }
-            else if (e.ChangedButton == MouseButton.Left) SeekRequested?.Invoke(track.Id, TimeAtX(point.X));
+            else if (e.ChangedButton == MouseButton.Left) TrackSelectionChanged?.Invoke(track.Id, TimeAtX(point.X));
         }
-        e.Handled = true;
+        // Let WPF open the shared timeline context menu after right-button selection.
+        if (e.ChangedButton == MouseButton.Left) e.Handled = true;
     }
 
     protected override void OnMouseMove(MouseEventArgs e)

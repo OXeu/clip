@@ -33,14 +33,24 @@ public partial class MainWindow
     private void SelectClip(Guid id, double time)
     {
         if (_operation is not null || _project.FindClip(id) is not { } p) return;
+        _selectedTrackId = null;
         var source = Math.Clamp(p.Clip.Start + (time - p.TimelineStart) * p.Clip.Speed, p.Clip.Start,
             Math.Max(p.Clip.Start, p.Clip.End - 1 / p.Clip.Media.FrameRate));
         ActivatePreview(p with { SourceTime = source }, _playing);
     }
 
+    private void SelectTrack(Guid id, double time)
+    {
+        if (_operation is not null || _project.FindTrack(id) is null) return;
+        _selectedTrackId = id;
+        Seek(id, time);
+        StatusText.Text = $"已选中 {_project.FindTrack(id)!.Name} · 点击导出可导出整条轨道";
+    }
+
     private void Seek(Guid trackId, double time)
     {
         if (_operation is not null) return;
+        if (_selectedTrackId != trackId) _selectedTrackId = null;
         if (_project.Locate(trackId, time) is { } p) ActivatePreview(p, false);
         else
         {
@@ -54,8 +64,10 @@ public partial class MainWindow
 
     private void ActivatePreview(ClipPosition position, bool play, bool forceSourceReload = false)
     {
+        if (_selectedTrackId != position.TrackId) _selectedTrackId = null;
         _activeTrackId = position.TrackId;
-        _selected = _playbackClip = position.Clip.Id;
+        _playbackClip = position.Clip.Id;
+        _selected = _selectedTrackId is null ? position.Clip.Id : null;
         _position = position.TimelineTime;
         var asset = AssetFor(position.Clip.Media);
         _playing = _resumeOnOpen = play;
@@ -180,7 +192,7 @@ public partial class MainWindow
         _position = p.TimelineTime;
         if (changed)
         {
-            _selected = p.Clip.Id;
+            _selected = _selectedTrackId is null ? p.Clip.Id : null;
             Preview.SpeedRatio = p.Clip.Speed;
             Refresh();
         }

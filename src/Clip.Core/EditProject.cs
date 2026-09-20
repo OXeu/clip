@@ -1,6 +1,6 @@
 namespace Clip.Core;
 
-/// <summary>A ripple-edited main track and independent candidate tracks, with project-wide undo.</summary>
+/// <summary>Independently exportable, ripple-edited tracks with project-wide undo.</summary>
 public sealed class EditProject
 {
     private sealed record State(VideoTrack[] Tracks, MediaInfo[] Sources);
@@ -14,6 +14,7 @@ public sealed class EditProject
     public double Duration => _tracks.Max(t => t.Duration);
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
+    public IReadOnlyList<VideoTrack> ExportableTracks => _tracks.Where(t => t.Clips.Count > 0).ToArray();
 
     public EditProject() => _tracks.Add(new(Guid.NewGuid(), "主轨", true, Array.AsReadOnly(Array.Empty<VideoClip>())));
 
@@ -113,6 +114,38 @@ public sealed class EditProject
         return true;
     }
 
+    public bool Rename(Guid clipId, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("请输入片段名称。", nameof(name));
+        if (FindClip(clipId) is not { } position) return false;
+        name = name.Trim();
+        if (position.Clip.DisplayName == name) return false;
+        SaveUndo();
+        var clips = FindTrack(position.TrackId)!.Clips.ToList();
+        clips[position.Index] = position.Clip with { Name = name };
+        ReplaceClips(position.TrackId, clips);
+        return true;
+    }
+
+    public Guid? Duplicate(Guid clipId)
+    {
+        if (FindClip(clipId) is not { } position) return null;
+        SaveUndo();
+        var copy = position.Clip with { Id = Guid.NewGuid() };
+        if (copy.Duration < 10)
+        {
+            var clips = FindTrack(position.TrackId)!.Clips.ToList();
+            clips.Insert(position.Index + 1, copy);
+            ReplaceClips(position.TrackId, clips);
+        }
+        else
+        {
+            var row = _tracks.FindIndex(t => t.Id == position.TrackId);
+            _tracks.Insert(row + 1, new(Guid.NewGuid(), $"候选 {_tracks.Count:00}", false, Array.AsReadOnly(new[] { copy })));
+        }
+        return copy.Id;
+    }
+
     public bool Delete(Guid clipId)
     {
         if (FindClip(clipId) is not { } position) return false;
@@ -138,7 +171,17 @@ public sealed class EditProject
         }
     }
 
-    public IReadOnlyList<VideoClip> ExportClips() => Array.AsReadOnly(MainTrack.Clips.ToArray());
+    public VideoTrack? ResolveExportTrack(Guid? selectedTrackId)
+    {
+        if (selectedTrackId is { } id)
+            return FindTrack(id) is { Clips.Count: > 0 } selected ? selected : null;
+        var tracks = ExportableTracks;
+        return tracks.Count == 1 ? tracks[0] : null;
+    }
+
+    public IReadOnlyList<VideoClip> ExportClips() => ExportClips(MainTrack.Id);
+    public IReadOnlyList<VideoClip> ExportClips(Guid trackId) =>
+        Array.AsReadOnly((FindTrack(trackId) ?? throw new ArgumentException("导出轨道不存在。", nameof(trackId))).Clips.ToArray());
     public bool Undo() => Restore(_undo, _redo);
     public bool Redo() => Restore(_redo, _undo);
     public static bool SameSource(MediaInfo a, MediaInfo b) => string.Equals(a.Path, b.Path, StringComparison.OrdinalIgnoreCase);

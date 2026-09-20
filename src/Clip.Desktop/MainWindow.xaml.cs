@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Windows;
@@ -29,11 +28,14 @@ public partial class MainWindow : Window
     private bool _closed;
     private bool _previewRetryPending;
     private Guid _activeTrackId;
+    private Guid? _selectedTrackId;
     private Guid? _selected;
     private double _position;
+    private double _timelineZoom = 1;
+    private const double MaximumTimelineZoom = 20;
     private DateTime _lastAutoScroll;
     internal Task InitializationCompleted => _initialization.Task;
-    internal MediaInfo? CurrentMedia => _selected is { } id ? _project.FindClip(id)?.Clip.Media : _project.Sources.FirstOrDefault();
+    internal MediaInfo? CurrentMedia => _playbackClip is { } id ? _project.FindClip(id)?.Clip.Media : _project.Sources.FirstOrDefault();
     internal bool ToolsReady { get; private set; }
     private VideoTrack ActiveTrack => _project.FindTrack(_activeTrackId) ?? _project.MainTrack;
     private double FrameDuration => _project.Locate(_activeTrackId, _position) is { } p ? 1 / (p.Clip.Media.FrameRate * p.Clip.Speed) : 1.0 / 30;
@@ -52,9 +54,9 @@ public partial class MainWindow : Window
         Height = Math.Min(Height, workArea.Height);
         TimelineView.Project = _project;
         TimelineView.SelectionChanged += SelectClip;
+        TimelineView.TrackSelectionChanged += SelectTrack;
         TimelineView.SeekRequested += (track, time) => Seek(track, time);
         TimelineView.MoveRequested += MoveClip;
-        TimelineView.DeleteRequested += DeleteSelected;
         TimelineView.AutoScrollRequested += AutoScrollTimeline;
         _timer.Tick += Tick;
         Loaded += OnLoaded;
@@ -173,40 +175,10 @@ public partial class MainWindow : Window
             ActivatePreview(p, false);
             RevealTrack(p.TrackId);
             StatusText.Text = cancelled ? $"已停止导入，保留已导入的 {imported} 个素材。" :
-                $"已导入 {imported} 个素材到独立候选轨 · 将需要的片段拖到主轨导出。";
+                $"已导入 {imported} 个素材到独立候选轨 · 可选择任意有内容的轨道导出。";
         }
         Refresh();
         if (failures.Count > 0) ShowError(new InvalidOperationException("以下素材未导入；其他素材已保留。\n\n" + string.Join("\n", failures)));
-    }
-
-    private async void ExportClick(object sender, RoutedEventArgs e)
-    {
-        if (_operation is not null || _project.MainTrack.Clips.Count == 0) return;
-        Pause();
-        var media = _project.MainTrack.Clips[0].Media;
-        var options = new ExportWindow(media, _nvidiaProbe?.IsAvailable == true, _nvidiaProbe?.Summary,
-            $"主轨 · {_project.MainTrack.Clips.Count} 个片段 · {_project.MainTrack.Duration:0.##} 秒") { Owner = this };
-        if (options.ShowDialog() != true) return;
-        var save = new SaveFileDialog
-        {
-            Title = "导出主轨（请选择新文件名）", Filter = "MP4 视频|*.mp4", DefaultExt = ".mp4", AddExtension = true,
-            FileName = Path.GetFileNameWithoutExtension(media.Path) + "_clip.mp4", OverwritePrompt = false
-        };
-        if (save.ShowDialog() != true) return;
-        SetBusy(true, "准备导出主轨…");
-        OperationProgress.IsIndeterminate = false;
-        try
-        {
-            var progress = new Progress<ExportProgress>(p => { OperationProgress.Value = p.Fraction; StatusText.Text = $"{p.Message} {p.Fraction:P0}"; });
-            await new ExportService(_tools).ExportAsync(_project, options.Options!, save.FileName, progress, _operation!.Token);
-            StatusText.Text = "主轨导出完成 · " + save.FileName;
-            if (!_closed && MessageBox.Show(this, $"已导出主轨 {TimelineControl.FormatTime(_project.MainTrack.Duration)} 的视频。候选轨未参与导出。\n\n在资源管理器中查看？",
-                "导出完成", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
-                Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true, Arguments = $"/select,{(char)34}{save.FileName}{(char)34}" });
-        }
-        catch (OperationCanceledException) { StatusText.Text = "已取消导出，临时文件已清理"; }
-        catch (Exception exception) { ShowError(exception); }
-        finally { SetBusy(false); }
     }
 
     private void SetBusy(bool busy, string? message = null)
@@ -304,8 +276,8 @@ public partial class MainWindow : Window
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
-        // Inspector text remains editable; buttons elsewhere never consume Space as an accidental click.
-        if (Keyboard.FocusedElement is TextBoxBase or ComboBox or ComboBoxItem or MenuItem || SpeedBox.IsKeyboardFocusWithin) return;
+        // Text and menus retain native input; buttons never consume Space as an accidental click.
+        if (Keyboard.FocusedElement is TextBoxBase or ComboBox or ComboBoxItem or MenuItem) return;
         if (e.Key == Key.Space && Keyboard.Modifiers == ModifierKeys.None)
         {
             e.Handled = true;
@@ -313,7 +285,6 @@ public partial class MainWindow : Window
             return;
         }
         if (_operation is not null) return;
-        if (ZoomSlider.IsKeyboardFocusWithin && e.Key is Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End or Key.PageUp or Key.PageDown) return;
         var control = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
         if (control && e.Key == Key.O) ImportClick(sender, e);
         else if (control && e.Key == Key.Z) Restore(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
@@ -350,15 +321,18 @@ public partial class MainWindow : Window
         if (e.Data.GetData(DataFormats.FileDrop) is string[] files) await ImportFilesAsync(files);
     }
 
-    private void ZoomChanged(object sender, RoutedPropertyChangedEventArgs<double> e) => UpdateTimelineWidth();
     private void TimelineSizeChanged(object sender, SizeChangedEventArgs e) => UpdateTimelineWidth();
-    private void FitClick(object sender, RoutedEventArgs e) { ZoomSlider.Value = 1; TimelineScroll.ScrollToHorizontalOffset(0); }
+    private void ResetTimelineZoom() { SetTimelineZoom(1); TimelineScroll.ScrollToHorizontalOffset(0); }
+    private void SetTimelineZoom(double zoom)
+    {
+        _timelineZoom = Math.Clamp(zoom, 1, MaximumTimelineZoom);
+        UpdateTimelineWidth();
+    }
 
     private void TimelineMouseWheel(object sender, MouseWheelEventArgs e)
     {
         var point = e.GetPosition(TimelineScroll);
         var modifiers = Keyboard.Modifiers;
-        if (modifiers == ModifierKeys.None && TimelineView.IsMouseOver && point.X < TimelineControl.ContentInset) modifiers = ModifierKeys.Alt;
         e.Handled = ApplyTimelineWheel(e.Delta, modifiers, point.X);
     }
 
@@ -369,11 +343,11 @@ public partial class MainWindow : Window
         if (modifiers.HasFlag(ModifierKeys.Alt)) TimelineScroll.ScrollToVerticalOffset(TimelineScroll.VerticalOffset - notches * 48);
         else if ((modifiers & (ModifierKeys.Shift | ModifierKeys.Control)) != 0)
         {
-            var anchorX = Math.Clamp(pointerX, TimelineControl.ContentInset, Math.Max(TimelineControl.ContentInset, TimelineScroll.ViewportWidth));
+            var anchorX = Math.Clamp(pointerX, 0, TimelineScroll.ViewportWidth);
             var anchorTime = TimelineView.TimeAtX(TimelineScroll.HorizontalOffset + anchorX);
-            var zoom = Math.Clamp(ZoomSlider.Value * Math.Pow(1.2, notches), ZoomSlider.Minimum, ZoomSlider.Maximum);
-            if (zoom == ZoomSlider.Value) return true;
-            ZoomSlider.Value = zoom;
+            var zoom = Math.Clamp(_timelineZoom * Math.Pow(1.2, notches), 1, MaximumTimelineZoom);
+            if (zoom == _timelineZoom) return true;
+            SetTimelineZoom(zoom);
             TimelineScroll.UpdateLayout();
             TimelineScroll.ScrollToHorizontalOffset(TimelineView.XAtTime(anchorTime) - anchorX);
         }
@@ -396,7 +370,7 @@ public partial class MainWindow : Window
     {
         if (TimelineView is null || TimelineScroll is null) return;
         var viewport = TimelineScroll.ViewportWidth > 0 ? TimelineScroll.ViewportWidth : TimelineScroll.ActualWidth;
-        TimelineView.Width = Math.Max(TimelineControl.ContentInset + 100, viewport) * ZoomSlider.Value;
+        TimelineView.Width = Math.Max(TimelineControl.ContentInset + 100, viewport) * _timelineZoom;
     }
     private void RevealTrack(Guid id)
     {
@@ -410,7 +384,7 @@ public partial class MainWindow : Window
         _lastAutoScroll = DateTime.UtcNow;
         var x = point.X - TimelineScroll.HorizontalOffset;
         var y = point.Y - TimelineScroll.VerticalOffset;
-        if (x < TimelineControl.ContentInset + 16) TimelineScroll.ScrollToHorizontalOffset(TimelineScroll.HorizontalOffset - 24);
+        if (x < 24) TimelineScroll.ScrollToHorizontalOffset(TimelineScroll.HorizontalOffset - 24);
         else if (x > TimelineScroll.ViewportWidth - 24) TimelineScroll.ScrollToHorizontalOffset(TimelineScroll.HorizontalOffset + 24);
         if (y < TimelineControl.RulerHeight + 16) TimelineScroll.ScrollToVerticalOffset(TimelineScroll.VerticalOffset - 24);
         else if (y > TimelineScroll.ViewportHeight - 24) TimelineScroll.ScrollToVerticalOffset(TimelineScroll.VerticalOffset + 24);
@@ -431,7 +405,6 @@ public partial class MainWindow : Window
         _closed = true;
         _timer.Stop();
         Preview.Close();
-        Thumbnail.Source = null;
         PreviewPoster.Source = null;
         _assets.Clear();
         try { if (Directory.Exists(_cacheDirectory)) Directory.Delete(_cacheDirectory, recursive: true); }

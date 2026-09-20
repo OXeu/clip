@@ -101,6 +101,10 @@ public sealed class ExportService(FfmpegTools tools)
         IProgress<ExportProgress>? progress = null, CancellationToken token = default) =>
         ExportAsync(project.ExportClips(), options, output, progress, token);
 
+    public Task ExportAsync(EditProject project, Guid trackId, ExportOptions options, string output,
+        IProgress<ExportProgress>? progress = null, CancellationToken token = default) =>
+        ExportAsync(project.ExportClips(trackId), options, output, progress, token);
+
     public async Task ExportAsync(IReadOnlyList<VideoClip> clips, ExportOptions options,
         string output, IProgress<ExportProgress>? progress = null, CancellationToken token = default)
     {
@@ -122,7 +126,7 @@ public sealed class ExportService(FfmpegTools tools)
             await File.WriteAllTextAsync(script, filter, new UTF8Encoding(false), token);
             var duration = snapshot.Sum(s => s.Duration);
             double lastFraction = 0;
-            progress?.Report(new(0, "正在编码主轨…"));
+            progress?.Report(new(0, "正在编码所选轨道…"));
             var result = await ProcessRunner.RunAsync(tools.Ffmpeg, BuildArguments(snapshot, options, script, staging), token, line =>
             {
                 var fraction = lastFraction;
@@ -133,7 +137,7 @@ public sealed class ExportService(FfmpegTools tools)
                     double.TryParse(line.AsSpan(6), CultureInfo.InvariantCulture, out var frames))
                     fraction = frames / (duration * snapshot[0].Media.FrameRate);
                 lastFraction = Math.Clamp(Math.Max(lastFraction, fraction), 0, 0.99);
-                progress?.Report(new(lastFraction, "正在变速并拼合主轨片段…"));
+                progress?.Report(new(lastFraction, "正在变速并拼合轨道片段…"));
             });
             if (result.ExitCode != 0)
             {
@@ -165,7 +169,7 @@ public sealed class ExportService(FfmpegTools tools)
 
     private static void Validate(IReadOnlyList<VideoClip> clips, ExportOptions options)
     {
-        if (clips.Count == 0) throw new InvalidOperationException("主轨为空，请先将候选片段拖入主轨。");
+        if (clips.Count == 0) throw new InvalidOperationException("所选轨道为空，请选择包含片段的轨道。");
         foreach (var clip in clips)
         {
             clip.Validate();

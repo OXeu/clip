@@ -10,19 +10,15 @@ public partial class ExportWindow : Window
     private bool _updating;
     public ExportOptions? Options { get; private set; }
 
-    public ExportWindow(MediaInfo media, bool hasNvidia, string? nvidiaDiagnostic = null, string? mainTrackSummary = null)
+    public ExportWindow(MediaInfo media, bool hasNvidia, string? nvidiaDiagnostic = null, string? trackSummary = null)
     {
         _media = media;
         InitializeComponent();
         WindowPresentation.HideCaptionIcon(this);
         NvidiaItem.IsEnabled = hasNvidia;
         EncoderBox.SelectedIndex = hasNvidia ? 0 : 1;
-        HardwareDecodeBox.IsEnabled = hasNvidia;
-        HardwareDecodeBox.IsChecked = hasNvidia;
-        HardwareHint.Text = hasNvidia
-            ? "NVENC 编码检测通过。解码支持取决于显卡和素材格式；失败时可关闭硬件解码重试。"
-            : $"{nvidiaDiagnostic ?? "NVENC 检测未通过。"} 当前使用 CPU，可在设置中查看检测详情或重新检测。";
-        SourceNameText.Text = mainTrackSummary ?? media.FileName;
+        NvidiaItem.ToolTip = hasNvidia ? null : nvidiaDiagnostic ?? "NVENC 检测未通过，可在设置中查看检测详情或重新检测。";
+        SourceNameText.Text = trackSummary ?? media.FileName;
         SourceInfoText.Text = $"{media.Width} × {media.Height} · {media.FrameRate:0.##} fps";
         UpdateQuality();
         UpdateDimensions();
@@ -43,7 +39,7 @@ public partial class ExportWindow : Window
         if (QualityBox.SelectedIndex == 0) SizeBox.SelectedIndex = 0;
         QualityDescriptionText.Text = QualityBox.SelectedIndex switch
         {
-            0 => "以主轨首个素材的分辨率为基准，高质量重编码；不同尺寸素材保持比例并补边。",
+            0 => "以所选轨道首个素材的分辨率为基准，高质量重编码；不同尺寸素材保持比例并补边。",
             1 => "保留更多画面细节，适合高质量分享。",
             2 => "兼顾画面质量与文件大小，适合日常使用。",
             _ => "优先减小文件体积，画面细节会有所减少。"
@@ -99,7 +95,7 @@ public partial class ExportWindow : Window
                 throw new ArgumentException("请输入有效的整数宽高。");
             Options = new((ExportQuality)QualityBox.SelectedIndex, SizeBox.SelectedIndex == 0 ? null : width,
                 SizeBox.SelectedIndex == 0 ? null : height, EncoderBox.SelectedIndex == 0 ? VideoEncoder.Nvidia : VideoEncoder.Software,
-                HardwareDecodeBox.IsChecked == true);
+                HardwareDecode: false);
             Options.GetDimensions(_media);
             DialogResult = true;
         }
@@ -131,8 +127,8 @@ public partial class ExportWindow : Window
         UpdateLayout();
         ExportScroll.ScrollToEnd();
         UpdateLayout();
-        var hardwareBounds = HardwareDecodeBox.TransformToAncestor(ExportScroll).TransformBounds(new Rect(HardwareDecodeBox.RenderSize));
-        if (hardwareBounds.Top < 0 || hardwareBounds.Bottom > ExportScroll.ActualHeight)
+        var encoderBounds = EncoderBox.TransformToAncestor(ExportScroll).TransformBounds(new Rect(EncoderBox.RenderSize));
+        if (encoderBounds.Top < 0 || encoderBounds.Bottom > ExportScroll.ActualHeight)
             throw new InvalidOperationException("Expanded export controls are outside the viewport.");
         UiCapture.Save(DialogRoot, "smoke-export-advanced.png");
     }

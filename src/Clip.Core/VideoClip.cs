@@ -4,6 +4,8 @@ public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double En
 {
     public const double MinimumSpeed = 0.1;
     public const double MaximumSpeed = 8;
+    public string? Name { get; init; }
+    public string DisplayName => Name ?? Media.FileName;
     public double SourceDuration => End - Start;
     public double Duration => SourceDuration / Speed;
     public static VideoClip Create(MediaInfo media) => new(Guid.NewGuid(), media, 0, media.Duration);
