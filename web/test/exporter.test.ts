@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { FrameQueue, muxerFrameRate } from '../src/exporter.ts';
+import { FrameQueue, muxerFrameRate, preferredWebCodecsAudioCodec } from '../src/exporter.ts';
 
 const fakeFrame = (): VideoFrame => ({ close() {} }) as VideoFrame;
 
@@ -41,5 +41,25 @@ describe('WebCodecs 解码背压', () => {
     await producer;
     assert.equal(released, true, '消费帧后生产方应立即恢复');
     queue.stop();
+  });
+});
+
+describe('WebCodecs 音轨选择', () => {
+  it('无声项目即使浏览器支持音频编码也不创建音轨', () => {
+    assert.equal(preferredWebCodecsAudioCodec(false, {
+      aacEncoder: true,
+      opusEncoder: true,
+    }), null);
+  });
+
+  it('有声音时优先 AAC，其次 Opus', () => {
+    assert.equal(preferredWebCodecsAudioCodec(true, {
+      aacEncoder: true,
+      opusEncoder: true,
+    }), 'aac');
+    assert.equal(preferredWebCodecsAudioCodec(true, {
+      aacEncoder: false,
+      opusEncoder: true,
+    }), 'opus');
   });
 });

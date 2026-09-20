@@ -104,6 +104,17 @@ export function muxerFrameRate(frameRate: number): number | undefined {
   return Number.isInteger(frameRate) && frameRate > 0 ? frameRate : undefined;
 }
 
+/** 只有项目确实包含源音轨时才声明输出音轨。 */
+export function preferredWebCodecsAudioCodec(
+  anyAudio: boolean,
+  capabilities: Pick<Capabilities, 'aacEncoder' | 'opusEncoder'>,
+): WebCodecsAudioCodec | null {
+  if (!anyAudio) return null;
+  if (capabilities.aacEncoder) return 'aac';
+  if (capabilities.opusEncoder) return 'opus';
+  return null;
+}
+
 /** 缓存已解封装的素材，避免同一素材被多个片段重复解析。 */
 class SourceCache {
   private readonly files = new Map<string, Promise<DemuxedFile>>();
@@ -681,9 +692,7 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
     if (route === EncoderRoute.WebCodecsVideo && capabilities.webCodecsVideo) {
       report({ fraction: 0.01, message: '正在解析并启动 WebCodecs 编码…' });
       const anyAudio = clips.some((clip) => hasAudio(clip.media));
-      let webCodecsAudioCodec: WebCodecsAudioCodec | null = capabilities.aacEncoder
-        ? 'aac'
-        : capabilities.opusEncoder ? 'opus' : null;
+      let webCodecsAudioCodec = preferredWebCodecsAudioCodec(anyAudio, capabilities);
       let audioFallback: string | undefined;
       if (anyAudio && webCodecsAudioCodec) {
         try {
