@@ -60,6 +60,7 @@ public partial class MainWindow
         UpdateLayout();
         Require(_timelineZoom == 1 && TimelineScroll.HorizontalOffset == 0, "Zoom did not return to fit.");
 
+        TimelineScroll.ScrollToVerticalOffset(0);
         SetTimelineZoom(4);
         UpdateLayout();
         var main = _project.MainTrack;
