@@ -29,6 +29,7 @@ internal static class UiTheme
         ("ColorBrandForeground", "#A1325A", "#F79FB9"),
         ("ColorBrandStroke", "#D66B94", "#D66B94"),
         ("ColorOnBrand", "#26141D", "#26141D"),
+        ("ColorExportForeground", "#FFFFFF", "#FFFFFF"),
         ("ColorDangerForeground", "#B4233C", "#FDA4AF"),
         ("ColorDangerBackground", "#FFF1F2", "#32191E"),
         ("ColorPreviewBackground", "#171717", "#080808"),
@@ -135,7 +136,7 @@ internal static class UiTheme
 
     private static Color ContrastColor(string key) => key switch
     {
-        "ColorOnBrand" or "ColorSelectionForeground" => SystemColors.HighlightTextColor,
+        "ColorOnBrand" or "ColorExportForeground" or "ColorSelectionForeground" => SystemColors.HighlightTextColor,
         "ColorBrandBackground" or "ColorBrandBackgroundHover" or "ColorBrandBackgroundPressed" or
             "ColorSelectionBackground" or "ColorTimelineClipSelected" => SystemColors.HighlightColor,
         "ColorDisabledForeground" => SystemColors.GrayTextColor,

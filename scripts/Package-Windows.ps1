@@ -16,7 +16,7 @@ if (-not $SevenZip) {
     elseif ($IsWindows -and (Test-Path "$env:ProgramFiles/7-Zip/7z.exe")) { $SevenZip = "$env:ProgramFiles/7-Zip/7z.exe" }
     else { throw '7-Zip is required for packaging. Install it or pass -SevenZip with its executable path.' }
 }
-foreach ($required in @('Clip.exe', 'ffmpeg/ffmpeg.exe', 'ffmpeg/ffprobe.exe', 'ffmpeg/LICENSE-FFmpeg.txt', 'ffmpeg/README-FFmpeg.txt')) {
+foreach ($required in @('Clip.exe', 'LICENSE', 'ffmpeg/ffmpeg.exe', 'ffmpeg/ffprobe.exe', 'ffmpeg/LICENSE-FFmpeg.txt', 'ffmpeg/README-FFmpeg.txt')) {
     if (-not (Test-Path -LiteralPath (Join-Path $sourcePath $required) -PathType Leaf)) { throw "Missing published file: $required" }
 }
 

@@ -23,13 +23,13 @@
           </Button>
           <Grid x:Name="ExportButtonGroup" Visibility="Collapsed" Margin="0,0,12,0">
             <Button x:Name="ExportButton" Style="{StaticResource PrimaryButton}" Click="ExportClick" IsEnabled="False">
-              <StackPanel Orientation="Horizontal"><local:RemixIcon Kind="Export" Margin="0,0,8,0" /><TextBlock Text="导出视频" /></StackPanel>
+              <StackPanel Orientation="Horizontal" Style="{StaticResource ExportButtonContent}"><local:RemixIcon Kind="Export" Margin="0,0,8,0" /><TextBlock Text="导出视频" /></StackPanel>
             </Button>
             <Button x:Name="ExportTracksButton" Style="{StaticResource SplitArrowButton}" Background="Transparent" BorderBrush="Transparent" BorderThickness="0"
                     Width="36" Padding="0" HorizontalAlignment="Right"
                     Click="ExportTracksClick" Visibility="Collapsed" ToolTip="选择要导出的轨道" AutomationProperties.Name="选择导出轨道">
-              <Border Padding="10,0">
-                <Path Data="M 0,0 L 4,4 L 8,0" Stroke="{DynamicResource ColorOnBrand}" StrokeThickness="1.5" VerticalAlignment="Center" />
+              <Border Padding="10,0" Style="{StaticResource ExportButtonContent}">
+                <Path Data="M 0,0 L 4,4 L 8,0" Stroke="{Binding Path=(TextElement.Foreground), RelativeSource={RelativeSource Self}}" StrokeThickness="1.5" VerticalAlignment="Center" />
               </Border>
               <Button.ContextMenu><ContextMenu x:Name="ExportTracksMenu" Placement="Bottom" Opened="ExportTracksMenuOpened" Closed="ExportTracksMenuClosed" /></Button.ContextMenu>
             </Button>

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 使用指南与常见问题
+    url: https://github.com/OXeu/clip/blob/master/docs/usage.md
+    about: 查看剪辑、导出、快捷键及启动故障排查方法。
+  - name: 贡献指南
+    url: https://github.com/OXeu/clip/blob/master/CONTRIBUTING.md
+    about: 了解开发环境、验证要求和 Pull Request 流程。

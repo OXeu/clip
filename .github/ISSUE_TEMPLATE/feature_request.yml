@@ -1,0 +1,33 @@
+name: 功能建议
+description: 描述希望改善的剪辑场景、界面或工作流程。
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        欢迎提出建议。请先搜索[已有 Issue](https://github.com/OXeu/clip/issues)，并遵守[行为准则](https://github.com/OXeu/clip/blob/master/CODE_OF_CONDUCT.md)。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 希望解决什么问题？
+      description: 说明具体的剪辑场景，以及目前操作中的困难。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的行为
+      description: 描述使用者应如何操作、得到什么结果；可附草图或示例。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的替代方案
+      description: 目前的绕过方法，或其他可能的设计。
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息
+      description: 相关 Issue、参考链接、截图或适用条件。

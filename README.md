@@ -36,3 +36,11 @@ Windows 10 / 11 x64，内置 .NET 和 FFmpeg，无需另行安装。
 ## 文档与参考
 
 [开发指南](https://github.com/OXeu/clip/blob/master/docs/development.md) · [更新指南](https://github.com/OXeu/clip/blob/master/docs/updates.md) · [第三方许可](THIRD-PARTY-NOTICES.md)
+
+## 参与贡献
+
+欢迎反馈问题、提出建议或提交 PR。开始前请阅读[贡献指南](https://github.com/OXeu/clip/blob/master/CONTRIBUTING.md)和[行为准则](https://github.com/OXeu/clip/blob/master/CODE_OF_CONDUCT.md)；[新建 Issue](https://github.com/OXeu/clip/issues/new/choose) 时可选择问题反馈或功能建议模板。
+
+## 许可证
+
+Clip 自有代码采用 [MIT License](LICENSE)。FFmpeg、Remix Icon、.NET 运行时等第三方内容仍适用各自的许可证，详见[第三方许可说明](THIRD-PARTY-NOTICES.md)。行为准则的许可和署名见其文末说明。

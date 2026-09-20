@@ -1,5 +1,11 @@
 # Third-party components
 
+Clip's own code is licensed under the [MIT License](LICENSE). The third-party components and documents below retain their respective licenses; the project's MIT license does not replace those terms.
+
+## Contributor Covenant
+
+`CODE_OF_CONDUCT.md` is adapted from the [Contributor Covenant 2.1 Chinese translation](https://www.contributor-covenant.org/zh-cn/version/2/1/code_of_conduct/), by Coraline Ada Ehmke and Contributor Covenant contributors, under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Its wording, project scope, and reporting contacts have been adapted for Clip; the document retains its attribution and license links.
+
 ## Remix Icon
 
 Application action icons use original SVG paths from [Remix Icon](https://remixicon.com/), revision [9fb7967c0a4c09910161192bde99efd3df09f5eb](https://github.com/Remix-Design/RemixIcon/tree/9fb7967c0a4c09910161192bde99efd3df09f5eb), under the Remix Icon License v1.0. Source SVGs and the license are retained in `src/Clip.Desktop/Assets/RemixIcon`; the Windows package includes `licenses/RemixIcon.txt`. The WPF geometry resource preserves those SVG paths. The Clip wordmark is separate from the functional icon library.

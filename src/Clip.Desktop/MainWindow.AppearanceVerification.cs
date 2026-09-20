@@ -34,8 +34,10 @@ public partial class MainWindow
                     "An existing editor retained the previous theme.");
                 Require(SameColor(export.QualityBox.Background, (Brush)FindResource("ColorNeutralBackground1")),
                     "An existing export field retained the previous theme.");
-                Require(Contrast(ExportButton.Foreground, ExportButton.Background) >= 4.5,
-                    "The primary action does not have readable text.");
+                Require(SameColor(System.Windows.Documents.TextElement.GetForeground((StackPanel)ExportButton.Content),
+                    (Brush)FindResource("ColorExportForeground")), "The export action did not use its foreground color.");
+                Require(Contrast(PlayButton.Foreground, PlayButton.Background) >= 4.5,
+                    "The playback action does not have readable text.");
                 var desktopDpi = VisualTreeHelper.GetDpi(WindowRoot);
                 UiCapture.Save(WindowRoot, $"smoke-theme-{theme}-editor.png", minimumPixelsPerDip: 3);
                 Require(VisualTreeHelper.GetDpi(WindowRoot).Equals(desktopDpi),

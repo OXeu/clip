@@ -1,0 +1,73 @@
+name: 问题反馈
+description: 报告启动、剪辑、预览、导出或更新中的问题。
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先阅读[使用指南](https://github.com/OXeu/clip/blob/master/docs/usage.md)，并遵守[行为准则](https://github.com/OXeu/clip/blob/master/CODE_OF_CONDUCT.md)。
+        Issue 是公开的，请移除日志、截图和素材中的令牌及个人信息。安全问题请私下发送至 thankrain@qq.com。
+  - type: checkboxes
+    id: existing-issues
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我已搜索已有 Issue，没有找到相同问题。
+          required: true
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: 实际发生了什么？
+      description: 描述问题及界面上的错误提示。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 导入……
+        2. 操作……
+        3. 出现……
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: 预期结果
+      description: 同样的操作应该得到什么结果？
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Clip 版本或构建来源
+      description: 填写版本号、下载的 Actions 构建链接或自行编译使用的提交号。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境
+      description: Windows 版本必填；显示或编码问题请同时提供缩放比例、显卡和驱动信息。
+      placeholder: |
+        Windows 版本：
+        显示缩放、明暗主题：
+        显卡及驱动版本：
+        导出编码器（NVIDIA / CPU）：
+    validations:
+      required: true
+  - type: textarea
+    id: media
+    attributes:
+      label: 素材与导出设置（如适用）
+      description: 提供封装格式、编码、分辨率、帧率、音轨和时长；若问题与导出有关，请补充画质与尺寸设置。样例视频应可公开分享。
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 日志、截图或最小样例
+      description: |
+        可粘贴日志或拖入附件。启动失败时运行程序旁的 Start-Clip-Diagnostics.cmd。
+        日常日志在 %LOCALAPPDATA%\Clip\logs，诊断报告在 %LOCALAPPDATA%\Clip\diagnostics。
+        NVIDIA 问题可附“设置 → 高级设置 → NVIDIA 检测详情”中的输出。

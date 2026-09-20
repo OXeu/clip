@@ -18,6 +18,7 @@ $ffmpegOutput = Join-Path $outputPath 'ffmpeg'
 New-Item $ffmpegOutput -ItemType Directory -Force | Out-Null
 Copy-Item (Join-Path $repo '.tools/ffmpeg/*') $ffmpegOutput -Force
 Copy-Item (Join-Path $repo 'README.md') $outputPath -Force
+Copy-Item (Join-Path $repo 'LICENSE') $outputPath -Force
 $readmeAssetPath = Join-Path $outputPath 'src/Clip.Desktop/Assets'
 New-Item $readmeAssetPath -ItemType Directory -Force | Out-Null
 Copy-Item (Join-Path $repo 'src/Clip.Desktop/Assets/Clip.png') $readmeAssetPath -Force
