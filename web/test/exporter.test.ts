@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { h264CodecCandidates } from '../src/capabilities.ts';
 import {
   buildWasmConcatArguments,
   FrameQueue,
@@ -48,6 +49,12 @@ describe('mp4-muxer 视频元数据', () => {
 });
 
 describe('WebCodecs 视频时间戳', () => {
+  it('按实际 1440p60 输出提升能力探测缓存的 H.264 level', () => {
+    const candidates = h264CodecCandidates(2560, 1440, 60, 'avc1.640020');
+    assert.equal(candidates[0], 'avc1.640032');
+    assert.equal(candidates.includes('avc1.640020'), false);
+  });
+
   it('使用 realtime 模式防止硬件编码器输出 B 帧重排', () => {
     const config = webCodecsVideoConfig('avc1.640028', 1920, 1080, 8_000_000, 60);
     assert.equal(config.latencyMode, 'realtime');

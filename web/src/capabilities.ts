@@ -47,6 +47,29 @@ export function h264CodecFor(width: number, height: number, frameRate: number): 
   return `avc1.6400${level}`;
 }
 
+/**
+ * 为实际输出规格生成 H.264 候选配置。
+ *
+ * 能力探测通常发生在首屏的 1080p30；导出尺寸或帧率更高时，不能继续复用
+ * 探测结果里的旧 level，否则 isConfigSupported 会把本来可编码的配置判为不支持。
+ * 保留已探测成功的 profile/compatibility，仅把 level 提升到当前输出所需值，
+ * 再依次尝试 High、Main 与 Baseline profile。
+ */
+export function h264CodecCandidates(
+  width: number,
+  height: number,
+  frameRate: number,
+  preferred?: string | null,
+): string[] {
+  const high = h264CodecFor(width, height, frameRate);
+  const level = high.slice(-2);
+  const candidates: string[] = [];
+  const match = preferred?.match(/^(avc1\.[0-9a-f]{4})[0-9a-f]{2}$/i);
+  if (match) candidates.push(`${match[1]}${level}`);
+  candidates.push(high, `avc1.4d00${level}`, `avc1.4200${level}`);
+  return [...new Set(candidates)];
+}
+
 async function videoSupported(
   codec: string,
   width: number,
@@ -115,7 +138,7 @@ export async function detectCapabilities(
   // 依次尝试：硬件优先 -> 默认 -> 软件。记录第一个可用的。
   let h264Codec: string | null = null;
   let h264Hardware = false;
-  const codecs = [h264CodecFor(width, height, frameRate), 'avc1.4d0028', 'avc1.42001f'];
+  const codecs = h264CodecCandidates(width, height, frameRate);
   for (const codec of codecs) {
     if (await videoSupported(codec, width, height, frameRate, bitrate, 'prefer-hardware')) {
       h264Codec = codec;

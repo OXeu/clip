@@ -17,7 +17,7 @@
 
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 
-import { EncoderRoute, h264CodecFor, type Capabilities } from './capabilities.ts';
+import { EncoderRoute, h264CodecCandidates, type Capabilities } from './capabilities.ts';
 import { FfmpegRunner, type ExportProgress } from './ffmpeg.ts';
 import {
   buildAudioFilter,
@@ -420,17 +420,33 @@ async function encodeVideoTrack(
   const first = clips[0]!;
   const { width, height } = getDimensions(options, first.media);
   const fps = first.media.frameRate > 0 ? first.media.frameRate : 30;
-  const codec = capabilities.h264Codec ?? h264CodecFor(width, height, fps);
   const bitrate = bitrateFor(options.quality, width, height, fps);
 
-  // 先复核实际输出配置；不支持就不要开始编码。
+  // 能力探测可能使用的是首屏默认规格。按本次实际尺寸和帧率重新计算 H.264
+  // level 并复核，不能直接复用诸如 1080p30 的旧 codec 字符串。
   if (typeof VideoEncoder === 'undefined') {
     throw new WebCodecsUnavailableError('此浏览器没有 VideoEncoder。');
   }
-  const encoderConfig = webCodecsVideoConfig(codec, width, height, bitrate, fps);
-  const supported = await VideoEncoder.isConfigSupported(encoderConfig);
-  if (!supported.supported) {
-    throw new WebCodecsUnavailableError(`WebCodecs 不支持 ${codec} @ ${width}×${height}。`);
+  let codec: string | null = null;
+  let encoderConfig: VideoEncoderConfig | null = null;
+  const candidates = h264CodecCandidates(width, height, fps, capabilities.h264Codec);
+  for (const candidate of candidates) {
+    const config = webCodecsVideoConfig(candidate, width, height, bitrate, fps);
+    try {
+      const supported = await VideoEncoder.isConfigSupported(config);
+      if (supported.supported) {
+        codec = candidate;
+        encoderConfig = config;
+        break;
+      }
+    } catch {
+      // 某些平台会对不支持的 profile 直接抛错，继续尝试下一个候选。
+    }
+  }
+  if (!codec || !encoderConfig) {
+    throw new WebCodecsUnavailableError(
+      `WebCodecs 不支持 ${width}×${height} @ ${fps.toFixed(3)}fps（已尝试 ${candidates.join('、')}）。`,
+    );
   }
 
   const canvas = new OffscreenCanvas(width, height);
@@ -730,9 +746,15 @@ async function exportWithWasm(
   report: (progress: ExportProgress) => void,
   width: number,
   height: number,
+  fallbackReason?: string,
 ): Promise<ExportResult> {
   const { clips, options, capabilities, ffmpegBase, readSource, signal, onLog } = request;
-  report({ fraction: 0.01, message: '正在加载 ffmpeg.wasm 核心…' });
+  report({
+    fraction: 0.01,
+    message: fallbackReason
+      ? `WebCodecs 不可用（${fallbackReason}），正在加载 ffmpeg.wasm 核心…`
+      : '正在加载 ffmpeg.wasm 核心…',
+  });
   const loaded = await runner.load(ffmpegBase, capabilities.sharedArrayBuffer, onLog, signal);
   const threading = loaded.fellBackFromMultithreaded
     ? '多线程核心不可用，已改用单线程核心（速度较慢）。'
@@ -993,14 +1015,23 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
     }
 
     // ---- 兜底路线 ----
-    const result = await exportWithWasm(
-      { ...request, route: EncoderRoute.Wasm },
-      runner,
-      report,
-      width,
-      height,
-    );
-    return fellBack ? { ...result, fellBack } : result;
+    try {
+      const result = await exportWithWasm(
+        { ...request, route: EncoderRoute.Wasm },
+        runner,
+        report,
+        width,
+        height,
+        fellBack,
+      );
+      return fellBack ? { ...result, fellBack } : result;
+    } catch (error) {
+      if (!fellBack) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `WebCodecs 导出不可用：${fellBack}\n\n回退到 ffmpeg.wasm 后仍然失败：${detail}`,
+      );
+    }
   } finally {
     cache.clear();
     await runner.dispose();
