@@ -10,6 +10,7 @@ import { describe, it } from 'node:test';
 
 import {
   type MediaInfo,
+  ClipKind,
   EditProject,
   TrackKind,
   clipDuration,
@@ -31,6 +32,19 @@ const media: MediaInfo = {
   isHdr: false,
 };
 
+const audioMedia: MediaInfo = {
+  path: 'music.m4a',
+  duration: 12,
+  width: 0,
+  height: 0,
+  frameRate: 30,
+  videoStreamIndex: -1,
+  audioStreamIndex: 0,
+  codec: 'mp4a.40.2',
+  videoTimestampOffset: 0,
+  isHdr: false,
+};
+
 const near = (actual: number, expected: number, tolerance = 0.001): void => {
   assert.ok(
     Math.abs(actual - expected) <= tolerance,
@@ -39,7 +53,7 @@ const near = (actual: number, expected: number, tolerance = 0.001): void => {
 };
 
 const assertSingleTrailingEmptyTrack = (project: EditProject): void => {
-  const empty = project.allTracks.filter((track) => track.clips.length === 0);
+  const empty = project.allTracks.filter((track) => track.clips.length === 0 && !track.companionGroupId);
   assert.equal(empty.length, 1, '项目应始终恰好有一条空轨');
   assert.equal(project.allTracks.at(-1)?.id, empty[0]!.id, '空轨应始终位于末尾');
   assert.equal(project.allTracks.filter((track) => track.isMain).length, 1, '只能有一条主轨');
@@ -125,6 +139,44 @@ describe('音视频分轨与对齐绑定', () => {
     const imported = project.importSeparated({ ...media, audioStreamIndex: null });
     assert.equal(imported.audioTrack.kind, TrackKind.Audio);
     assert.equal(imported.audioTrack.companionGroupId, imported.videoTrack.companionGroupId);
+  });
+
+  it('普通音频会创建空视频轨，并加载到紧邻的伴生音频轨', () => {
+    const project = new EditProject();
+    const imported = project.importAudio(audioMedia);
+    assert.equal(imported.videoTrack.kind, TrackKind.Video);
+    assert.equal(imported.videoTrack.clips.length, 0);
+    assert.equal(imported.videoTrack.isMain, true);
+    assert.equal(imported.audioTrack.kind, TrackKind.Audio);
+    assert.equal(imported.audioTrack.clips.length, 1);
+    assert.equal(imported.audioTrack.clips[0]!.kind, ClipKind.Audio);
+    assert.equal(imported.audioTrack.clips[0]!.media, audioMedia);
+    assert.equal(imported.videoTrack.companionGroupId, imported.audioTrack.companionGroupId);
+    assert.deepEqual(project.allTracks.slice(0, 2).map((track) => track.id),
+      [imported.videoTrack.id, imported.audioTrack.id]);
+    assert.equal(project.exportableTracks.length, 0, '空视频轨不能成为视频导出目标');
+    near(project.duration, audioMedia.duration);
+    assertSingleTrailingEmptyTrack(project);
+  });
+
+  it('普通音频项目可以保存、恢复和撤销导入', () => {
+    const project = new EditProject();
+    const imported = project.importAudio(audioMedia);
+    const snapshot = JSON.parse(JSON.stringify(project.exportSnapshot()));
+    const restored = EditProject.fromSnapshot(snapshot);
+    assert.deepEqual(restored.exportSnapshot(), project.exportSnapshot());
+    assert.equal(restored.companionTracks(imported.audioTrack.id).length, 2);
+    assert.ok(project.undo());
+    assert.equal(project.sources.length, 0);
+    assert.equal(project.allTracks.length, 1);
+  });
+
+  it('普通音频不能被误导入为视频片段', () => {
+    const project = new EditProject();
+    assert.throws(() => project.import(audioMedia), /音频素材/);
+    assert.throws(() => project.importSeparated(audioMedia), /音频素材/);
+    assert.throws(() => validateClip(createClip(audioMedia)));
+    assert.doesNotThrow(() => validateClip(createClip(audioMedia, ClipKind.Audio)));
   });
 
   it('空伴生音轨不阻止视频分割，也不会被凭空填充', () => {

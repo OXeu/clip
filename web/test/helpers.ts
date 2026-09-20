@@ -69,6 +69,16 @@ function silentArgs(path: string, duration: number, size: string, rate: number):
   ];
 }
 
+function audioArgs(path: string, duration: number, frequency: number): string[] {
+  return [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    '-f', 'lavfi', '-i', `sine=frequency=${frequency}:sample_rate=48000:duration=${duration}`,
+    '-vn', '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
+    '-movflags', '+faststart',
+    path,
+  ];
+}
+
 /** 前半纯红、后半纯蓝，用于确认剪辑边界没有泄漏相邻帧。 */
 function cutBoundaryArgs(path: string): string[] {
   return [
@@ -135,6 +145,10 @@ export function prepareFixtures(): readonly FixtureFile[] {
     {
       file: { name: 'high-rate-1s-60fps.mp4', path: join(fixtureDir, 'high-rate-1s-60fps.mp4'), duration: 1, width: 320, height: 180, hasAudio: false },
       args: silentArgs(join(fixtureDir, 'high-rate-1s-60fps.mp4'), 1, '320x180', 60),
+    },
+    {
+      file: { name: 'tone-3s.m4a', path: join(fixtureDir, 'tone-3s.m4a'), duration: 3, width: 0, height: 0, hasAudio: true },
+      args: audioArgs(join(fixtureDir, 'tone-3s.m4a'), 3, 523.25),
     },
   ];
 

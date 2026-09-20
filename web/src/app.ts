@@ -36,6 +36,8 @@ import {
   clipDuration,
   defaultExportOptions,
   displayName,
+  fileName,
+  hasVideo,
   trackDuration,
 } from './model.ts';
 import { probeFile } from './probe.ts';
@@ -113,6 +115,8 @@ const video = $<HTMLVideoElement>('preview');
 const previewFrame = $<HTMLCanvasElement>('preview-frame');
 const previewRegion = $('preview-region');
 const previewCanvas = $('preview-canvas');
+const audioPreview = $('audio-preview');
+const audioPreviewName = $('audio-preview-name');
 const emptyState = $('empty-state');
 const previewFooter = $('preview-footer');
 const timelineRegion = $('timeline-region');
@@ -311,6 +315,7 @@ async function importFiles(list: readonly File[]): Promise<void> {
   pause();
   const controller = beginOperation('正在导入素材…');
   let imported = 0;
+  let importedAudio = 0;
   let cancelled = false;
   const failures: string[] = [];
   let lastClipId: string | null = null;
@@ -328,7 +333,7 @@ async function importFiles(list: readonly File[]): Promise<void> {
           },
           controller.signal,
         );
-        const parsed = await probeFile(file.name, prepared.data);
+        const parsed = await probeFile(file.name, prepared.data, prepared.file.type || file.type);
         const probe = prepared.frameRate === undefined
           ? parsed
           : { ...parsed, media: { ...parsed.media, frameRate: prepared.frameRate } };
@@ -338,8 +343,14 @@ async function importFiles(list: readonly File[]): Promise<void> {
         sourceFingerprints.set(probe.media.path, fingerprint);
         // 同一素材只登记一次；重复导入会新建轨道但复用源文件。
         const existing = project.sources.find((source) => source.path === probe.media.path);
-        const separated = project.importSeparated(existing ?? probe.media);
-        lastClipId = separated.videoTrack.clips[0]!.id;
+        const source = existing ?? probe.media;
+        const separated = hasVideo(source)
+          ? project.importSeparated(source)
+          : project.importAudio(source);
+        lastClipId = hasVideo(source)
+          ? separated.videoTrack.clips[0]!.id
+          : separated.audioTrack.clips[0]!.id;
+        if (!hasVideo(source)) importedAudio++;
         if (probe.media.audioStreamIndex !== null) {
           try {
             timeline.setWaveform(probe.media.path, await extractWaveform(prepared.data));
@@ -349,7 +360,7 @@ async function importFiles(list: readonly File[]): Promise<void> {
         }
         imported++;
         status(`已导入 ${imported} 个素材…`);
-        if (!capabilities) {
+        if (!capabilities && hasVideo(probe.media)) {
           capabilities = await detectCapabilities({
             width: probe.media.width,
             height: probe.media.height,
@@ -380,7 +391,9 @@ async function importFiles(list: readonly File[]): Promise<void> {
     const found = project.findClip(lastClipId);
     if (found) activatePreview(found, false);
   }
-  status(imported > 0 ? `已导入 ${imported} 个素材 · 有声音的素材已自动分轨` : '未导入任何素材');
+  status(imported > 0
+    ? `已导入 ${imported} 个素材${importedAudio > 0 ? ` · ${importedAudio} 个普通音频已放入空视频轨的伴生轨` : ' · 有声音的素材已自动分轨'}`
+    : '未导入任何素材');
   if (failures.length > 0) {
     await showAlert('部分素材未导入', `${failures.join('\n')}\n\n其余素材已保留，可继续编辑。`);
   }
@@ -495,7 +508,7 @@ function activatePreview(found: ClipPosition, play: boolean, forceReload = false
   playing = resumeOnOpen = play;
 
   const media = found.clip.media;
-  // 伴生音频槽用于对齐与编辑；视频预览仍播放源文件的内嵌音频。
+  // 伴生音频槽用于对齐与编辑；普通音频也复用同一个隐藏媒体时钟。
   video.muted = false;
   const needsSource = video.dataset.source !== media.path || forceReload;
   if (needsSource) {
@@ -945,6 +958,8 @@ function refresh(): void {
 
   const track = activeTrack();
   const any = track.clips.length > 0;
+  const activeMedia = project.locate(track.id, position)?.clip.media ?? track.clips[0]?.media;
+  const audioOnly = activeMedia !== undefined && !hasVideo(activeMedia);
   splitButton.disabled = !(ready && any && !multiSelectMode);
   deleteButton.disabled = duplicateButton.disabled = renameButton.disabled =
     !(ready && selectedClipId !== null && project.findClip(selectedClipId) !== undefined);
@@ -961,7 +976,10 @@ function refresh(): void {
   stepBackButton.disabled = stepForwardButton.disabled = !(ready && any);
   syncPlayButton();
 
-  previewFrame.hidden = !(any && mediaReady);
+  previewFrame.hidden = audioOnly || !(any && mediaReady);
+  audioPreview.hidden = !audioOnly;
+  audioPreviewName.textContent = audioOnly ? fileName(activeMedia) : '';
+  previewRegion.classList.toggle('is-audio-only', audioOnly);
 
   timeline.activeTrackId = activeTrackId;
   timeline.selectedTrackId = selectedTrackId;
@@ -1304,7 +1322,7 @@ function exportProjectFile(): void {
   if (operation) return;
   const snapshot = createSessionSnapshot();
   if (!snapshot) {
-    void showAlert('无法导出项目', '请先导入原视频；素材仍在处理中时，请稍后再试。');
+    void showAlert('无法导出项目', '请先导入素材；素材仍在处理中时，请稍后再试。');
     return;
   }
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
@@ -1318,7 +1336,7 @@ function exportProjectFile(): void {
   anchor.click();
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  status(`项目已导出 · ${name}（不包含原视频）`);
+  status(`项目已导出 · ${name}（不包含原始素材）`);
 }
 
 async function openProjectFile(file: File): Promise<void> {
@@ -1362,7 +1380,7 @@ function renderRecoverySources(): void {
   }
   const missing = missingRecoverySources().length;
   recoveryChooseLabel.textContent = missing === pendingRecovery.sources.length
-    ? '重新选择原视频'
+    ? '重新选择原始素材'
     : `继续选择（还差 ${missing} 个）`;
 }
 
@@ -1466,14 +1484,14 @@ async function acceptRecoveryFiles(selectedFiles: readonly File[]): Promise<void
     }
     if (rejected.length > 0) {
       recoveryError.hidden = false;
-      recoveryError.textContent = `“${rejected.join('”、“')}”与上次使用的视频不一致。请重新选择；已核对的视频会保留。`;
+      recoveryError.textContent = `“${rejected.join('”、“')}”与上次使用的素材不一致。请重新选择；已核对的素材会保留。`;
     } else {
       recoveryError.hidden = false;
       recoveryError.textContent = `还需要选择：${missing.map((source) => source.name).join('、')}`;
     }
   } catch (error) {
     recoveryError.hidden = false;
-    recoveryError.textContent = `无法核对所选视频：${error instanceof Error ? error.message : String(error)}`;
+    recoveryError.textContent = `无法核对所选素材：${error instanceof Error ? error.message : String(error)}`;
   } finally {
     if (pendingRecovery) {
       recoveryChooseButton.disabled = false;
@@ -1489,8 +1507,8 @@ function offerRecovery(): void {
   recoveryTitle.textContent = fromFile ? '导入这份项目？' : '继续上次的工作？';
   recoveryBadge.textContent = fromFile ? '.clip 文件' : '已自动保存';
   recoveryCopy.textContent = fromFile
-    ? '轨道、片段和工作位置已读取。项目不包含视频本体，请重新选择原视频完成核对。'
-    : '剪辑点和工作位置已经找回。出于浏览器隐私限制，还需要重新选择原视频才能继续。';
+    ? '轨道、片段和工作位置已读取。项目不包含素材本体，请重新选择原始素材完成核对。'
+    : '剪辑点和工作位置已经找回。出于浏览器隐私限制，还需要重新选择原始素材才能继续。';
   recoveryDiscardButton.textContent = fromFile ? '取消导入' : '放弃上次进度';
   renderRecoverySources();
   $('recovery-saved-at').textContent = `${fromFile ? '项目导出于' : '保存于'} ${new Date(pendingRecovery.savedAt).toLocaleString()}`;
@@ -1629,7 +1647,7 @@ function discardPendingRecovery(): void {
     clearStoredSession(sessionStorage);
   }
   recoveryDialog.close();
-  status(fromFile ? '已取消导入项目，当前剪辑未改变' : '已放弃上次进度 · 导入视频开始新的剪辑');
+  status(fromFile ? '已取消导入项目，当前剪辑未改变' : '已放弃上次进度 · 导入素材开始新的剪辑');
 }
 
 recoveryDiscardButton.addEventListener('click', () => {

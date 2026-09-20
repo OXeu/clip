@@ -1,6 +1,6 @@
 /**
- * 刷新恢复：sessionStorage 只保存轻量项目数据，不保存视频字节。
- * 原视频通过固定大小的头/中/尾采样哈希重新关联，超大文件也不会被全量读取。
+ * 刷新恢复：sessionStorage 只保存轻量项目数据，不保存素材字节。
+ * 原始素材通过固定大小的头/中/尾采样哈希重新关联，超大文件也不会被全量读取。
  */
 
 import type { EditProjectSnapshot } from './model.ts';
@@ -151,7 +151,7 @@ export async function fingerprintFile(file: FingerprintFile, path = file.name): 
   };
 }
 
-/** 名称和修改时间可能因复制/重命名而变化，不参与“同一视频”的硬性判断。 */
+/** 名称和修改时间可能因复制/重命名而变化，不参与“同一素材”的硬性判断。 */
 export function sameVideo(file: SourceFingerprint, expected: SourceFingerprint): boolean {
   return file.size === expected.size && file.sampleHash === expected.sampleHash;
 }

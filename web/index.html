@@ -50,6 +50,13 @@
       <section class="preview-region is-empty" id="preview-region">
         <div class="preview-canvas" id="preview-canvas" title="滚轮或双指缩放预览 · 双击恢复适应">
           <canvas id="preview-frame" class="preview-frame" aria-label="视频预览画面" hidden></canvas>
+          <div id="audio-preview" class="audio-preview" hidden aria-label="音频素材预览">
+            <div class="audio-preview-mark" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span>
+            </div>
+            <strong id="audio-preview-name"></strong>
+            <span>普通音频 · 已加载到伴生轨</span>
+          </div>
           <video
             id="preview"
             class="preview-decoder"
@@ -70,9 +77,9 @@
               <svg class="ri-icon ri-icon-large"><use href="./remixicon.svg#ri-film-line"></use></svg>
             </div>
             <h1>留下精彩的片段</h1>
-            <p>导入视频，从这里开始剪辑。</p>
+            <p>导入视频或音频，从这里开始剪辑。</p>
             <button id="empty-import" class="btn btn-primary" type="button">
-              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-import-line"></use></svg>导入视频
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-import-line"></use></svg>导入素材
             </button>
             <p class="empty-shortcut"><span class="keycap">Ctrl + O</span> 支持一次导入多个素材 · 全部在本机处理</p>
           </div>
@@ -145,7 +152,7 @@
       </section>
 
       <footer class="status-bar">
-        <span class="status-text" id="status-text">就绪 · 导入视频开始剪辑</span>
+        <span class="status-text" id="status-text">就绪 · 导入视频或音频开始剪辑</span>
         <span class="status-text capability-text" id="capability-text"></span>
         <progress class="progress" id="progress" max="1" value="0" hidden></progress>
       </footer>
@@ -307,14 +314,14 @@
         </div>
         <div class="dialog-body">
           <p class="recovery-copy" id="recovery-copy">
-            剪辑点和工作位置已经找回。出于浏览器隐私限制，还需要重新选择原视频才能继续。
+            剪辑点和工作位置已经找回。出于浏览器隐私限制，还需要重新选择原始素材才能继续。
           </p>
           <div class="recovery-files" aria-live="polite">
-            <div class="recovery-files-label">需要原视频</div>
+            <div class="recovery-files-label">需要原始素材</div>
             <ul id="recovery-file-list"></ul>
           </div>
           <div class="callout info">
-            只读取文件头、中段和尾段的少量内容来核对视频，不会上传，也不会扫描整个大文件。
+            只读取文件头、中段和尾段的少量内容来核对素材，不会上传，也不会扫描整个大文件。
           </div>
           <div class="callout warn" id="recovery-error" role="alert" hidden></div>
         </div>
@@ -324,7 +331,7 @@
             <button class="btn btn-quiet" type="button" id="recovery-discard">放弃上次进度</button>
             <button class="btn btn-primary" type="button" id="recovery-choose" autofocus>
               <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-upload-2-line"></use></svg>
-              <span id="recovery-choose-label">重新选择原视频</span>
+              <span id="recovery-choose-label">重新选择原始素材</span>
             </button>
           </span>
         </div>
@@ -341,7 +348,7 @@
         </div>
         <div class="dialog-body">
           <p class="recovery-copy">已保存的剪辑点、轨道顺序和工作位置都会被清除，之后无法恢复。</p>
-          <div class="callout warn">如果只是暂时找不到原视频，请选择“继续恢复”，保存的进度会继续保留。</div>
+          <div class="callout warn">如果只是暂时找不到原始素材，请选择“继续恢复”，保存的进度会继续保留。</div>
         </div>
         <div class="dialog-footer">
           <span class="hint">建议保留进度</span>
@@ -353,8 +360,8 @@
       </form>
     </dialog>
 
-    <input id="file-input" class="sr-only" type="file" accept="video/*,.mp4,.mov,.m4v,.mkv,.webm" multiple />
-    <input id="recovery-file-input" class="sr-only" type="file" accept="video/*,.mp4,.mov,.m4v,.mkv,.webm" multiple />
+    <input id="file-input" class="sr-only" type="file" accept="video/*,audio/*,.mp4,.mov,.m4v,.mkv,.webm,.m4a,.mp3,.wav,.wave,.aac,.flac,.ogg,.oga,.opus" multiple />
+    <input id="recovery-file-input" class="sr-only" type="file" accept="video/*,audio/*,.mp4,.mov,.m4v,.mkv,.webm,.m4a,.mp3,.wav,.wave,.aac,.flac,.ogg,.oga,.opus" multiple />
     <input id="project-file-input" class="sr-only" type="file" accept=".clip,application/json" />
     <script type="module" src="/src/app.ts"></script>
   </body>

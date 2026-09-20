@@ -20,6 +20,7 @@ export interface MediaInfo {
 }
 
 export const hasAudio = (media: MediaInfo): boolean => media.audioStreamIndex !== null;
+export const hasVideo = (media: MediaInfo): boolean => media.videoStreamIndex >= 0;
 export const fileName = (media: MediaInfo): string => media.path.split(/[/\\]/).pop() ?? media.path;
 
 export const ClipKind = {
@@ -95,6 +96,7 @@ export function validateSpeed(speed: number): void {
 export function validateClip(clip: VideoClip): void {
   validateSpeed(clip.speed);
   const media = clip.media;
+  const audioOnly = !hasVideo(media);
   const invalid =
     !Number.isFinite(clip.start) ||
     !Number.isFinite(clip.end) ||
@@ -105,12 +107,13 @@ export function validateClip(clip: VideoClip): void {
     media.duration <= 0 ||
     !Number.isFinite(media.frameRate) ||
     media.frameRate <= 0 ||
-    media.width < 1 ||
-    media.height < 1 ||
-    media.videoStreamIndex < 0 ||
+    (audioOnly
+      ? clip.kind !== ClipKind.Audio || !hasAudio(media) || media.videoStreamIndex !== -1
+        || media.width !== 0 || media.height !== 0
+      : media.width < 1 || media.height < 1) ||
     (media.audioStreamIndex !== null && media.audioStreamIndex < 0) ||
     media.path.trim() === '';
-  if (invalid) throw new Error('片段的素材信息或源视频范围无效。');
+  if (invalid) throw new Error('片段的素材信息或源范围无效。');
 }
 
 export function createClip(media: MediaInfo, kind: ClipKind = ClipKind.Combined): VideoClip {
@@ -173,7 +176,14 @@ function parseProjectSnapshot(value: unknown): ProjectState {
       videoTimestampOffset: candidate.videoTimestampOffset,
       isHdr: candidate.isHdr,
     };
-    const probeClip: VideoClip = { id: 'restore-validation', media, start: 0, end: media.duration, speed: 1 };
+    const probeClip: VideoClip = {
+      id: 'restore-validation',
+      media,
+      start: 0,
+      end: media.duration,
+      speed: 1,
+      kind: hasVideo(media) ? ClipKind.Combined : ClipKind.Audio,
+    };
     validateClip(probeClip);
     return media;
   };
@@ -337,6 +347,7 @@ export class EditProject {
   }
 
   import(media: MediaInfo): VideoTrack {
+    if (!hasVideo(media)) throw new Error('音频素材需要导入到伴生音频轨。');
     const clip = createClip(media);
     validateClip(clip);
     if (media.isHdr) throw new Error('暂不支持 HDR 素材，请先转换为 SDR。');
@@ -365,6 +376,7 @@ export class EditProject {
 
   /** 导入一份素材并生成不可拆散的视频轨与伴生音频槽。 */
   importSeparated(media: MediaInfo): SeparatedImport {
+    if (!hasVideo(media)) throw new Error('音频素材需要导入到伴生音频轨。');
     const videoClip = createClip(media, ClipKind.Video);
     validateClip(videoClip);
     if (media.isHdr) throw new Error('暂不支持 HDR 素材，请先转换为 SDR。');
@@ -407,6 +419,52 @@ export class EditProject {
       companionGroupId,
       bindingId: null,
       clips: [createClip(media, ClipKind.Audio)],
+    });
+    this.normalizeTracks();
+    return {
+      videoTrack: this.findTrack(videoTrackId)!,
+      audioTrack: this.findTrack(audioTrackId)!,
+    };
+  }
+
+  /** 导入普通音频：创建一条空视频轨，并把音频放入它的伴生轨。 */
+  importAudio(media: MediaInfo): SeparatedImport {
+    if (hasVideo(media) || !hasAudio(media)) throw new Error('所选素材不是普通音频。');
+    const audioClip = createClip(media, ClipKind.Audio);
+    validateClip(audioClip);
+    this.saveUndo();
+    if (!this.sourceList.some((source) => sameSource(source, media))) this.sourceList.push(media);
+    const companionGroupId = crypto.randomUUID();
+
+    const empty = this.tracks.find((track) =>
+      track.clips.length === 0 && !track.companionGroupId && track.kind !== TrackKind.Audio);
+    const videoTrackId = empty?.id ?? crypto.randomUUID();
+    const emptyVideoTrack: VideoTrack = {
+      id: videoTrackId,
+      name: `空视频 ${fileName(media)}`,
+      isMain: empty?.isMain ?? false,
+      kind: TrackKind.Video,
+      companionGroupId,
+      bindingId: null,
+      clips: [],
+    };
+    if (empty) {
+      const index = this.tracks.findIndex((track) => track.id === empty.id);
+      this.tracks[index] = emptyVideoTrack;
+    } else {
+      this.tracks.push(emptyVideoTrack);
+    }
+
+    const audioTrackId = crypto.randomUUID();
+    const videoIndex = this.tracks.findIndex((track) => track.id === videoTrackId);
+    this.tracks.splice(videoIndex + 1, 0, {
+      id: audioTrackId,
+      name: `音频 ${fileName(media)}`,
+      isMain: false,
+      kind: TrackKind.Audio,
+      companionGroupId,
+      bindingId: null,
+      clips: [audioClip],
     });
     this.normalizeTracks();
     return {

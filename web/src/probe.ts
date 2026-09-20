@@ -16,6 +16,49 @@ export interface ProbeResult {
   readonly warnings: readonly string[];
 }
 
+const hasOrdinaryAudioExtension = (name: string): boolean =>
+  /\.(?:aac|flac|m4a|mp3|oga|ogg|opus|wav|wave)$/i.test(name);
+
+/** 普通音频容器不经过 MP4Box；Mediabunny 只读取元数据，不转码也不上传。 */
+async function probeOrdinaryAudio(name: string, data: ArrayBuffer): Promise<ProbeResult> {
+  const { ALL_FORMATS, BlobSource, Input } = await import('mediabunny');
+  const input = new Input({
+    source: new BlobSource(new Blob([data])),
+    formats: ALL_FORMATS,
+  });
+  try {
+    const [audio, duration] = await Promise.all([
+      input.getPrimaryAudioTrack(),
+      input.computeDuration(),
+    ]);
+    if (!audio) throw new Error(`${name} 中没有可剪辑的音频轨道。`);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      throw new Error(`${name} 的时长无效；暂不支持直播流。`);
+    }
+    return {
+      media: {
+        path: name,
+        duration,
+        width: 0,
+        height: 0,
+        // 音频剪辑仍需要时间格；30 Hz 与默认视频项目的编辑步长一致。
+        frameRate: 30,
+        videoStreamIndex: -1,
+        audioStreamIndex: 0,
+        codec: await audio.getCodec() ?? 'audio',
+        videoTimestampOffset: 0,
+        isHdr: false,
+      },
+      warnings: [],
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith(name)) throw error;
+    throw new Error(`无法解析 ${name}：${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    input.dispose();
+  }
+}
+
 /** 取第一个非封面视频轨。桌面端会跳过 attached_pic（封面图）。 */
 function pickVideoTrack(info: MP4Info): MP4Info['videoTracks'][number] | null {
   return (
@@ -60,7 +103,12 @@ function isHdrTrack(
 export async function probeFile(
   name: string,
   data: ArrayBuffer,
+  mimeType = '',
 ): Promise<ProbeResult> {
+  if (mimeType.toLowerCase().startsWith('audio/') || hasOrdinaryAudioExtension(name)) {
+    return probeOrdinaryAudio(name, data);
+  }
+
   const file = createFile(true);
   let info: MP4Info | null = null;
   let failure: string | null = null;
@@ -90,42 +138,42 @@ export async function probeFile(
 
   const resolved: MP4Info = info;
   const video = pickVideoTrack(resolved);
-  if (!video) throw new Error(`${name} 中没有可剪辑的视频轨道。`);
-
   const warnings: string[] = [];
   const audio = resolved.audioTracks[0] ?? null;
+  if (!video && !audio) throw new Error(`${name} 中没有可剪辑的音视频轨道。`);
+  const primary = video ?? audio!;
 
   const duration =
-    video.movie_duration !== undefined && resolved.timescale > 0
-      ? video.movie_duration / resolved.timescale
+    primary.movie_duration !== undefined && resolved.timescale > 0
+      ? primary.movie_duration / resolved.timescale
       : resolved.timescale > 0
         ? resolved.duration / resolved.timescale
         : 0;
-  const trackDurationSeconds = video.timescale > 0 ? video.duration / video.timescale : 0;
+  const trackDurationSeconds = primary.timescale > 0 ? primary.duration / primary.timescale : 0;
   const effectiveDuration = duration > 0 ? duration : trackDurationSeconds;
 
   if (!Number.isFinite(effectiveDuration) || effectiveDuration <= 0) {
     throw new Error(`${name} 的时长无效；暂不支持直播流与静态图片。`);
   }
 
-  const rawWidth = video.video?.width ?? video.track_width ?? 0;
-  const rawHeight = video.video?.height ?? video.track_height ?? 0;
-  if (rawWidth < 1 || rawHeight < 1) throw new Error(`${name} 的视频尺寸无效。`);
+  const rawWidth = video ? (video.video?.width ?? video.track_width ?? 0) : 0;
+  const rawHeight = video ? (video.video?.height ?? video.track_height ?? 0) : 0;
+  if (video && (rawWidth < 1 || rawHeight < 1)) throw new Error(`${name} 的视频尺寸无效。`);
 
   // 平均帧率：样本数 / 样本总时长。QuickTime 的 edit list 可能修改轨道展示
   // 时长；若拿它算帧率，会把 30 fps 之类的素材误算成 32.108... fps。
-  const sampleDurationSeconds =
+  const sampleDurationSeconds = video &&
     video.samples_duration !== undefined && video.samples_duration > 0 && video.timescale > 0
       ? video.samples_duration / video.timescale
       : trackDurationSeconds;
-  const frameRate = sampleDurationSeconds > 0
+  const frameRate = video && sampleDurationSeconds > 0
     ? video.nb_samples / sampleDurationSeconds
     : 30;
   if (!Number.isFinite(frameRate) || frameRate <= 0) {
     warnings.push(`${name} 未提供帧率，已按 30 fps 处理。`);
   }
 
-  const hdr = isHdrTrack(file, video.id);
+  const hdr = video ? isHdrTrack(file, video.id) : false;
 
   return {
     media: {
@@ -134,10 +182,10 @@ export async function probeFile(
       width: rawWidth,
       height: rawHeight,
       frameRate: Number.isFinite(frameRate) && frameRate > 0 ? frameRate : 30,
-      videoStreamIndex: 0,
+      videoStreamIndex: video ? 0 : -1,
       // 桌面端记录的是全局流下标；浏览器端 filter 不使用它，这里用 0/1 占位。
-      audioStreamIndex: audio ? 1 : null,
-      codec: video.codec,
+      audioStreamIndex: audio ? (video ? 1 : 0) : null,
+      codec: primary.codec,
       videoTimestampOffset: 0,
       isHdr: hdr,
     },

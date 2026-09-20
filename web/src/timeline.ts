@@ -340,9 +340,12 @@ export class TimelineView {
 
       if (track.clips.length === 0) {
         context.fillStyle = track.id === this.selectedTrackId ? colors.selectionForeground : colors.foregroundMuted;
-        context.fillText(track.kind === TrackKind.Audio && track.companionGroupId
+        const emptyLabel = track.kind === TrackKind.Audio && track.companionGroupId
           ? '伴生音频槽（当前无片段）'
-          : '拖拽片段到这里', CONTENT_INSET, top + rowHeight / 2 + 4);
+          : track.kind === TrackKind.Video && track.companionGroupId
+            ? '空视频轨道'
+            : '拖拽片段到这里';
+        context.fillText(emptyLabel, CONTENT_INSET, top + rowHeight / 2 + 4);
       }
 
       let offset = 0;

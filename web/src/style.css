@@ -466,6 +466,78 @@ button:disabled {
   will-change: transform;
 }
 
+.audio-preview {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-8);
+  max-width: min(420px, calc(100% - 48px));
+  color: var(--preview-foreground);
+  text-align: center;
+}
+
+.audio-preview::before {
+  position: absolute;
+  inset: -56px -88px;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--brand-background) 18%, transparent), transparent 68%);
+  content: '';
+}
+
+.audio-preview strong {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: var(--text-title);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-preview > span {
+  color: color-mix(in srgb, var(--preview-foreground) 68%, transparent);
+  font-size: var(--text-caption);
+}
+
+.audio-preview-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 72px;
+  height: 72px;
+  margin-bottom: var(--space-8);
+  border: 1px solid color-mix(in srgb, var(--brand-background) 55%, transparent);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--brand-background-2) 70%, transparent);
+  box-shadow: 0 14px 44px rgb(0 0 0 / 24%);
+}
+
+.audio-preview-mark span {
+  width: 4px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--brand-background);
+  animation: audio-preview-pulse 1.4s ease-in-out infinite;
+}
+
+.audio-preview-mark span:nth-child(2),
+.audio-preview-mark span:nth-child(4) {
+  height: 36px;
+  animation-delay: -0.35s;
+}
+
+.audio-preview-mark span:nth-child(3) {
+  height: 46px;
+  animation-delay: -0.7s;
+}
+
+@keyframes audio-preview-pulse {
+  0%, 100% { transform: scaleY(0.55); opacity: 0.7; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+
 /*
  * video 只作为媒体解码与音频时钟，画面统一绘制到 canvas。
  * 不使用 display:none / visibility:hidden，否则部分移动浏览器会停止解码。
@@ -513,6 +585,10 @@ button:disabled {
 @media (prefers-reduced-motion: reduce) {
   .preview-frame {
     transition: none;
+  }
+
+  .audio-preview-mark span {
+    animation: none;
   }
 }
 

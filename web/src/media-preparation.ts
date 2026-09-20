@@ -34,7 +34,7 @@ async function discardedTrackSummary(conversion: MediaConversion): Promise<strin
 }
 
 /**
- * 普通 MP4/MOV 原样返回；MKV/WebM 则转换容器后返回同名、MIME 为 video/mp4 的 File。
+ * 普通 MP4/MOV 与常见音频原样返回；MKV/WebM 则转换容器后返回同名的 MP4 File。
  */
 export async function prepareMediaFile(
   file: File,
@@ -79,9 +79,10 @@ export async function prepareMediaFile(
       input.getPrimaryVideoTrack(),
       input.getPrimaryAudioTrack(),
     ]);
-    if (!videoTrack) throw new Error('MKV/WebM 中没有可剪辑的视频轨道。');
-    const frameRateMetrics = await videoTrack.computeFrameRateMetrics();
-    const frameRate = frameRateMetrics.bestGuessFrameRate;
+    if (!videoTrack && !audioTrack) throw new Error('MKV/WebM 中没有可剪辑的音视频轨道。');
+    const frameRate = videoTrack
+      ? (await videoTrack.computeFrameRateMetrics()).bestGuessFrameRate
+      : undefined;
 
     const target = new BufferTarget();
     const output = new Output({
@@ -97,7 +98,7 @@ export async function prepareMediaFile(
       showWarnings: false,
     });
 
-    const requiredTracks = audioTrack ? [videoTrack, audioTrack] : [videoTrack];
+    const requiredTracks = [videoTrack, audioTrack].filter((track) => track !== null);
     const missingRequiredTrack = requiredTracks.some(
       (track) => !conversion!.utilizedTracks.includes(track),
     );
@@ -118,7 +119,7 @@ export async function prepareMediaFile(
     const buffer = target.buffer;
     if (!buffer || buffer.byteLength === 0) throw new Error('MKV/WebM 转换后没有产生有效数据。');
     const prepared = new File([buffer], file.name, {
-      type: 'video/mp4',
+      type: videoTrack ? 'video/mp4' : 'audio/mp4',
       lastModified: file.lastModified,
     });
     onProgress?.(1, 'MKV/WebM 准备完成');
@@ -126,7 +127,7 @@ export async function prepareMediaFile(
       file: prepared,
       data: buffer,
       converted: true,
-      ...(Number.isFinite(frameRate) && frameRate > 0 ? { frameRate } : {}),
+      ...(frameRate !== undefined && Number.isFinite(frameRate) && frameRate > 0 ? { frameRate } : {}),
     };
   } catch (error) {
     if (signal?.aborted) throw new DOMException('已取消导入', 'AbortError');
