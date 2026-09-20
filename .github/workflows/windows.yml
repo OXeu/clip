@@ -102,7 +102,7 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "Normal startup test failed: $($process.ExitCode)" }
           if (-not (Test-Path 'artifacts/Clip-win-x64/smoke-success.txt')) { throw 'UI verification did not finish.' }
           if (-not (Test-Path 'artifacts/Clip-win-x64/smoke-ui.png')) { throw 'UI screenshot missing.' }
-          foreach ($state in @('empty', 'imported', 'multitrack', 'compact', 'export-basic', 'export-advanced')) {
+          foreach ($state in @('empty', 'imported', 'resized', 'multitrack', 'compact', 'export-basic', 'export-advanced')) {
             if (-not (Test-Path "artifacts/Clip-win-x64/smoke-$state.png")) { throw "Missing UI state screenshot: $state" }
           }
           foreach ($theme in @('light', 'dark')) {

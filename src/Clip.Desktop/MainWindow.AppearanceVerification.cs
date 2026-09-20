@@ -30,6 +30,7 @@ public partial class MainWindow
                 await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
                 UpdateLayout();
                 export.UpdateLayout();
+                VerifyWorkspaceLayout();
                 var theme = dark ? "dark" : "light";
                 Require(SameColor(WindowRoot.Background, (Brush)FindResource("ColorNeutralBackground3")),
                     "An existing editor retained the previous theme.");

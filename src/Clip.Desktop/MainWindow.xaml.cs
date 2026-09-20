@@ -279,8 +279,8 @@ public partial class MainWindow : Window
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
-        // Text and menus retain native input; buttons never consume Space as an accidental click.
-        if (Keyboard.FocusedElement is TextBoxBase or ComboBox or ComboBoxItem or MenuItem) return;
+        // Text, menus and splitters retain native input; buttons never consume Space as an accidental click.
+        if (Keyboard.FocusedElement is TextBoxBase or ComboBox or ComboBoxItem or MenuItem or GridSplitter) return;
         if (e.Key == Key.Space && Keyboard.Modifiers == ModifierKeys.None)
         {
             e.Handled = true;

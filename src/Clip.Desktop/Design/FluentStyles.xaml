@@ -12,6 +12,34 @@
   <Style x:Key="DialogWindow" TargetType="Window" BasedOn="{StaticResource ClipWindow}">
     <Setter Property="ShowInTaskbar" Value="False" />
   </Style>
+  <Style x:Key="WorkspaceSplitter" TargetType="GridSplitter">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Cursor" Value="SizeNS" />
+    <Setter Property="Focusable" Value="True" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="GridSplitter">
+          <Grid Background="{TemplateBinding Background}">
+            <Border x:Name="Line" Height="1" VerticalAlignment="Center" Background="{DynamicResource ColorNeutralStroke2}" />
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Line" Property="Background" Value="{DynamicResource ColorBrandStroke}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="Line" Property="Background" Value="{DynamicResource ColorBrandStroke}" />
+              <Setter TargetName="Line" Property="Height" Value="2" />
+            </Trigger>
+            <Trigger Property="IsDragging" Value="True">
+              <Setter TargetName="Line" Property="Background" Value="{DynamicResource ColorBrandStroke}" />
+              <Setter TargetName="Line" Property="Height" Value="2" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
   <Style x:Key="Surface" TargetType="Border">
     <Setter Property="Background" Value="{DynamicResource ColorNeutralBackground1}" />
     <Setter Property="BorderBrush" Value="{DynamicResource ColorNeutralStroke2}" />

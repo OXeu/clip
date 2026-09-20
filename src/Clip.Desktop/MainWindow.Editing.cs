@@ -109,9 +109,22 @@ public partial class MainWindow
         var any = ActiveTrack.Clips.Count > 0;
         TimelineView.Duration = _project.Duration;
         var mediaVisibility = hasMedia ? Visibility.Visible : Visibility.Collapsed;
-        TimelineRegion.Visibility = ImportButton.Visibility = ExportButtonGroup.Visibility = mediaVisibility;
+        TimelineRegion.Visibility = TimelineSplitter.Visibility = ImportButton.Visibility = ExportButtonGroup.Visibility = mediaVisibility;
         PreviewFooter.Visibility = mediaVisibility;
-        TimelineRow.Height = new GridLength(hasMedia ? Math.Clamp(TimelineView.ContentHeight + 88, 260, 332) : 0);
+        TimelineRow.MinHeight = hasMedia ? 180 : 0;
+        // 两个星号行由原生 GridSplitter 调整比例；编辑、播放和窗口缩放不重置用户的布局。
+        if (hasMedia && !TimelineRow.Height.IsStar)
+        {
+            var timelineHeight = Math.Clamp(TimelineView.ContentHeight + 88, 260, 332);
+            var availableHeight = WindowRoot.ActualHeight - WindowRoot.RowDefinitions[0].ActualHeight - WindowRoot.RowDefinitions[3].ActualHeight;
+            PreviewRow.Height = new GridLength(Math.Max(PreviewRow.MinHeight, availableHeight - timelineHeight), GridUnitType.Star);
+            TimelineRow.Height = new GridLength(timelineHeight, GridUnitType.Star);
+        }
+        else if (!hasMedia)
+        {
+            PreviewRow.Height = new GridLength(1, GridUnitType.Star);
+            TimelineRow.Height = new GridLength(0);
+        }
         TimelineView.Height = TimelineView.ContentHeight;
         PreviewFooterRow.Height = new GridLength(hasMedia ? 64 : 0);
         EmptyPreview.Visibility = hasMedia ? Visibility.Collapsed : Visibility.Visible;

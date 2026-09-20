@@ -390,6 +390,7 @@ public partial class MainWindow
         VerifyBrandHeader();
         Require(TimelineRegion.Visibility == Visibility.Collapsed && ExportButtonGroup.Visibility == Visibility.Collapsed, "Editing controls leaked into empty state.");
         VerifyBrandButtons(this);
+        VerifyWorkspaceLayout();
         UiCapture.Save(WindowRoot, "smoke-empty.png");
         var source = Environment.GetEnvironmentVariable("CLIP_UI_TEST_VIDEO");
         var second = Environment.GetEnvironmentVariable("CLIP_UI_TEST_VIDEO_SECOND");
@@ -414,6 +415,7 @@ public partial class MainWindow
             _activeTrackId == _project.Tracks[2].Id, "Imports must enter separate candidate tracks and preview the last candidate.");
         VerifyBrandHeader();
         UiCapture.Save(WindowRoot, "smoke-imported.png");
+        await VerifyWorkspaceResizeAsync(realMedia);
         await VerifyTimelineMenuAsync(realMedia);
         await VerifyCopyAndNamingAsync(realMedia);
         await VerifyTrackExportAsync(realMedia);
@@ -481,7 +483,7 @@ public partial class MainWindow
         Width = MinWidth; Height = MinHeight;
         UpdateLayout();
         Require(PreviewCanvas.ActualHeight >= 100, "Compact multitrack layout collapsed the preview.");
-        Require(PreviewCanvas.ActualWidth > WindowRoot.ActualWidth - 80, "The preview lost its full-width workspace layout.");
+        VerifyWorkspaceLayout();
         UiCapture.Save(WindowRoot, "smoke-compact.png");
         Width = width; Height = height;
         StartupDiagnostics.Write("Multi-track verification passed: two candidate imports; timeline context menu and busy guards; clip copy / naming and history; explicit track export selection; native cross-track and same-track drag; live S / X / Delete; candidate continuation and cross-source main playback; Space focus and wheel navigation.");
