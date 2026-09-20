@@ -57,6 +57,7 @@ export interface AutomationApi {
   setSpeed: (clipId: string, speed: number) => boolean;
   deleteClip: (clipId: string) => boolean;
   duplicateClip: (clipId: string) => boolean;
+  moveClip: (clipId: string, trackId: string, index: number) => boolean;
   selectTrack: (trackId: string) => void;
   clips: (trackId?: string) => readonly VideoClip[];
   exportToBlob: (request?: AutomationExportRequest) => Promise<AutomationExportResult>;
@@ -71,6 +72,7 @@ export interface AutomationDeps {
   setSpeed: (clipId: string, speed: number) => boolean;
   deleteClip: (clipId: string) => boolean;
   duplicateClip: (clipId: string) => boolean;
+  moveClip: (clipId: string, trackId: string, index: number) => boolean;
   selectTrack: (trackId: string) => void;
   clips: (trackId?: string) => readonly VideoClip[];
   exportToBytes: (
@@ -93,6 +95,7 @@ export function installAutomation(deps: AutomationDeps): void {
     setSpeed: deps.setSpeed,
     deleteClip: deps.deleteClip,
     duplicateClip: deps.duplicateClip,
+    moveClip: deps.moveClip,
     selectTrack: deps.selectTrack,
     clips: deps.clips,
     async exportToBlob(request = {}) {

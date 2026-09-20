@@ -96,12 +96,21 @@ function validate(clips: readonly VideoClip[], options: ExportOptions): void {
  * 桌面端的完整 filter_complex：为每个源建立输入标签，逐片段裁剪/变速/缩放/补帧，
  * 补静音后 concat。兜底路线直接使用它。
  */
-export function buildFilter(clips: readonly VideoClip[], options: ExportOptions): string {
+export interface FilterBuildOverrides {
+  readonly outputFrameRate?: number;
+  readonly forceAudio?: boolean;
+}
+
+export function buildFilter(
+  clips: readonly VideoClip[],
+  options: ExportOptions,
+  overrides: FilterBuildOverrides = {},
+): string {
   validate(clips, options);
   const { width, height } = getDimensions(options, clips[0]!.media);
   const sources = distinctSources(clips);
-  const anyAudio = clips.some((clip) => hasAudio(clip.media));
-  const fps = clips[0]!.media.frameRate;
+  const anyAudio = overrides.forceAudio === true || clips.some((clip) => hasAudio(clip.media));
+  const fps = overrides.outputFrameRate ?? clips[0]!.media.frameRate;
   const lines: string[] = [];
 
   sources.forEach((source, input) => {
@@ -182,11 +191,13 @@ export function buildWasmExportArguments(
   options: ExportOptions,
   filterFile: string,
   output: string,
+  forceAudio = false,
 ): string[] {
   const sources = distinctSources(clips);
-  const anyAudio = clips.some((clip) => hasAudio(clip.media));
+  const anyAudio = forceAudio || clips.some((clip) => hasAudio(clip.media));
   const args = [
-    '-hide_banner', '-nostdin', '-y', '-loglevel', 'warning', '-copyts', '-start_at_zero',
+    '-hide_banner', '-nostdin', '-y', '-loglevel', 'warning',
+    '-filter_complex_threads', '1', '-copyts', '-start_at_zero',
   ];
   for (const media of sources) args.push('-i', media.path);
   args.push('-filter_complex_script', filterFile, '-map', '[video]');
@@ -197,7 +208,7 @@ export function buildWasmExportArguments(
       '-cq', String(qualityValue(options.quality)), '-b:v', '0');
   } else {
     args.push('-c:v', 'libx264', '-preset', 'medium',
-      '-crf', String(qualityValue(options.quality)));
+      '-crf', String(qualityValue(options.quality)), '-threads', '2');
   }
   args.push('-fps_mode', 'vfr', '-map_metadata', '-1', '-metadata:s:v:0', 'rotate=0',
     '-movflags', '+faststart', output);

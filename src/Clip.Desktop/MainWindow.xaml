@@ -167,7 +167,7 @@
           </Grid>
         </Border>
         <ScrollViewer x:Name="TimelineScroll" Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" SizeChanged="TimelineSizeChanged" ScrollChanged="TimelineScrolled" PreviewMouseWheel="TimelineMouseWheel"
-                      ToolTip="拖动轨道左侧把手调整音视频轨顺序 · 拖拽片段跨同类轨移动 · 右键编辑 · 滚轮横向滚动 · Shift / Ctrl + 滚轮缩放 · Alt + 滚轮上下滚动">
+                      ToolTip="拖动轨道左侧把手调整音视频轨顺序 · 拖拽片段跨同类轨移动 · 右键编辑 · 滚轮上下滚动 · Shift + 滚轮横向滚动 · Ctrl + 滚轮缩放">
           <local:TimelineControl x:Name="TimelineView" AutomationProperties.Name="音视频时间轴；拖动轨道左侧把手排序，可通过多选轨道保存绑定，按 S 同步分割绑定轨" />
         </ScrollViewer>
         <TextBlock x:Name="TimelineSummaryText" Grid.Row="2" Margin="24,0" Style="{StaticResource Caption}"

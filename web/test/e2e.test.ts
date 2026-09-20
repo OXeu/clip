@@ -286,6 +286,20 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(() => Boolean((window as unknown as { __clip?: unknown }).__clip));
     await page.locator('#recovery-dialog').waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'recovery-choose',
+      '恢复对话框默认应聚焦安全的继续恢复操作');
+
+    await page.click('#recovery-discard');
+    await page.locator('#recovery-discard-dialog').waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'recovery-discard-cancel',
+      '二次确认默认应聚焦继续恢复');
+    assert.notEqual(await page.evaluate(() => sessionStorage.getItem('clip.edit-session.v1')), null,
+      '打开放弃确认时不应清除恢复数据');
+    await page.click('#recovery-discard-cancel');
+    await page.waitForFunction(() => !document.getElementById('recovery-discard-dialog')?.hasAttribute('open'));
+    assert.equal(await page.locator('#recovery-dialog').getAttribute('open'), '', '取消放弃后应保留恢复对话框');
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'recovery-choose',
+      '取消放弃后焦点应回到继续恢复操作');
 
     await page.setInputFiles('#recovery-file-input', fixtures[1]!.path);
     const rejection = page.locator('#recovery-error:not([hidden])');
@@ -301,6 +315,32 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     assert.equal(restored.tracks.filter((track) => track.kind === 'video').flatMap((track) => track.clips).length, 2);
     assert.ok(Math.abs(restored.position - 1.5) < 0.01, `播放头应恢复到 1.5 秒，实际 ${restored.position}`);
     assert.equal(errors.length, 0, `恢复期间不应报错：${errors.join(' | ')}`);
+    await page.context().close();
+  });
+
+  it('放弃恢复需二次确认，确认后才清除存档', async () => {
+    const { page } = await openPage();
+    await importFixture(page, fixtures[0]!);
+    await page.waitForFunction(() => sessionStorage.getItem('clip.edit-session.v1') !== null);
+
+    page.once('dialog', (dialog) => void dialog.accept());
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => Boolean((window as unknown as { __clip?: unknown }).__clip));
+    await page.locator('#recovery-dialog').waitFor({ state: 'visible' });
+
+    await page.click('#recovery-discard');
+    await page.locator('#recovery-discard-dialog').waitFor({ state: 'visible' });
+    assert.notEqual(await page.evaluate(() => sessionStorage.getItem('clip.edit-session.v1')), null,
+      '首次点击放弃不能直接删除存档');
+
+    await page.click('#recovery-discard-confirm');
+    await page.waitForFunction(() => !document.getElementById('recovery-dialog')?.hasAttribute('open')
+      && !document.getElementById('recovery-discard-dialog')?.hasAttribute('open'));
+    assert.equal(await page.evaluate(() => sessionStorage.getItem('clip.edit-session.v1')), null,
+      '只有确认放弃后才应清除存档');
+    const state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.equal(state.sources.length, 0, '确认放弃后应留在空项目');
     await page.context().close();
   });
 
@@ -586,6 +626,39 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     // 只导出第一条轨道（4 秒横屏素材）。
     assert.ok(Math.abs(summary.duration - 4) < 0.5, `应只导出 4 秒素材，实际 ${summary.duration}`);
 
+    await page.context().close();
+  });
+
+  it('ffmpeg.wasm 分段导出三素材混剪且不同时驻留全部源', async () => {
+    const { page } = await openPage();
+    await importFixture(page, fixtures[0]!);
+    await importFixture(page, fixtures[1]!);
+    await importFixture(page, fixtures[2]!);
+
+    const result = await page.evaluate(async () => {
+      const api = (window as unknown as {
+        __clip: {
+          state: () => StateShape;
+          moveClip: (clipId: string, trackId: string, index: number) => boolean;
+          exportToBlob: (request?: Record<string, unknown>) => Promise<ExportResultShape>;
+        };
+      }).__clip;
+      const tracks = api.state().tracks.filter((track) => track.kind === 'video' && track.clips.length > 0);
+      const target = tracks[0]!;
+      if (!api.moveClip(tracks[1]!.clips[0]!.id, target.id, 1)) throw new Error('第二份素材移动失败');
+      if (!api.moveClip(tracks[2]!.clips[0]!.id, target.id, 2)) throw new Error('第三份素材移动失败');
+      return api.exportToBlob({ trackId: target.id, route: 'wasm', width: 320, height: 180 });
+    });
+
+    const path = await saveExport(page, result, 'export-wasm-three-sources.mp4');
+    const summary = probeFile(path);
+    assert.equal(result.route, 'wasm');
+    assert.equal(summary.videoCodec, 'h264');
+    assert.equal(summary.audioCodec, 'aac');
+    assert.equal(summary.width, 320);
+    assert.equal(summary.height, 180);
+    assert.ok(Math.abs(summary.duration - 9) < 0.5, `三素材总时长应约 9 秒，实际 ${summary.duration}`);
+    assert.ok(summary.frameCount >= 255, `应输出约 270 帧，实际 ${summary.frameCount}`);
     await page.context().close();
   });
 
@@ -1205,8 +1278,7 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
   it('分割后导出整条轨道（多片段、同一素材）', async () => {
     /**
      * 回归测试：同一素材被切成多段后，导出时必须为每个片段重置解码状态。
-     * 曾经因为 FrameQueue 的停止标记被复用，第二个片段直接得到 0 帧，
-     * 报「片段解码帧不足」。这是用户最常见的操作路径，必须覆盖。
+     * wasm 兜底路线必须逐段编码再拼接，避免大型 filtergraph 同时解码所有片段导致 OOM。
      */
     const { page } = await openPage();
     await importFixture(page, fixtures[0]!);
@@ -1230,13 +1302,14 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
       const api = (window as unknown as {
         __clip: { exportToBlob: (request?: Record<string, unknown>) => Promise<ExportResultShape> };
       }).__clip;
-      return api.exportToBlob({ route: 'webcodecs-video' });
+      return api.exportToBlob({ route: 'wasm' });
     });
 
     const path = await saveExport(page, result, 'export-multisegment.mp4');
     const summary = probeFile(path);
     writeArtifact('export-multisegment-probe.json', `${JSON.stringify(summary, null, 2)}\n`);
     assert.equal(summary.videoCodec, 'h264');
+    assert.equal(result.route, 'wasm');
     assert.equal(summary.width, 640);
     assert.equal(summary.height, 360);
     // 三段拼接后应恢复完整时长。

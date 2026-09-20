@@ -221,6 +221,16 @@ describe('音频半边 filter graph', () => {
     assert.doesNotMatch(graph, /\[\d+:\d+\]/);
     assert.match(graph, /anullsrc/);
   });
+
+  it('分段渲染可为无声片段强制补音轨并统一目标帧率', () => {
+    const graph = buildFilter([clip(silent, 0, 5)], opts(), {
+      outputFrameRate: 60,
+      forceAudio: true,
+    });
+    assert.match(graph, /anullsrc=r=48000:cl=stereo/);
+    assert.match(graph, /fps=60:/);
+    assert.match(graph, /concat=n=1:v=1:a=1\[video\]\[audio\]$/);
+  });
 });
 
 describe('参数校验', () => {

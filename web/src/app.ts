@@ -138,10 +138,13 @@ const timelineSummary = $('timeline-summary');
 const exportDialog = $<HTMLDialogElement>('export-dialog');
 const settingsDialog = $<HTMLDialogElement>('settings-dialog');
 const recoveryDialog = $<HTMLDialogElement>('recovery-dialog');
+const recoveryDiscardDialog = $<HTMLDialogElement>('recovery-discard-dialog');
 const recoveryInput = $<HTMLInputElement>('recovery-file-input');
 const recoveryChooseButton = $<HTMLButtonElement>('recovery-choose');
 const recoveryChooseLabel = $('recovery-choose-label');
 const recoveryDiscardButton = $<HTMLButtonElement>('recovery-discard');
+const recoveryDiscardCancelButton = $<HTMLButtonElement>('recovery-discard-cancel');
+const recoveryDiscardConfirmButton = $<HTMLButtonElement>('recovery-discard-confirm');
 const recoveryError = $('recovery-error');
 const recoveryFileList = $('recovery-file-list');
 
@@ -1320,6 +1323,7 @@ function offerRecovery(): void {
   $('recovery-saved-at').textContent = `保存于 ${new Date(pendingRecovery.savedAt).toLocaleString()}`;
   recoveryError.hidden = true;
   recoveryDialog.showModal();
+  queueMicrotask(() => recoveryChooseButton.focus({ preventScroll: true }));
 }
 
 // ---------- 设置 ----------
@@ -1353,13 +1357,32 @@ recoveryInput.addEventListener('change', () => {
   recoveryInput.value = '';
   if (list.length > 0) void acceptRecoveryFiles(list);
 });
+function closeDiscardConfirmation(): void {
+  if (recoveryDiscardDialog.open) recoveryDiscardDialog.close();
+  queueMicrotask(() => {
+    if (recoveryDialog.open) recoveryChooseButton.focus({ preventScroll: true });
+  });
+}
+
 recoveryDiscardButton.addEventListener('click', () => {
+  if (!pendingRecovery || recoveryDiscardDialog.open) return;
+  recoveryDiscardDialog.showModal();
+  queueMicrotask(() => recoveryDiscardCancelButton.focus({ preventScroll: true }));
+});
+recoveryDiscardCancelButton.addEventListener('click', closeDiscardConfirmation);
+recoveryDiscardConfirmButton.addEventListener('click', () => {
+  if (!pendingRecovery) return;
+  if (recoveryDiscardDialog.open) recoveryDiscardDialog.close();
   pendingRecovery = null;
   recoveryFiles.clear();
   sourceFingerprints.clear();
   clearStoredSession(sessionStorage);
   recoveryDialog.close();
   status('已放弃上次进度 · 导入视频开始新的剪辑');
+});
+recoveryDiscardDialog.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  closeDiscardConfirmation();
 });
 recoveryDialog.addEventListener('cancel', (event) => event.preventDefault());
 
@@ -1642,6 +1665,11 @@ void (async () => {
         const id = project.duplicate(clipId);
         refresh();
         return id !== undefined;
+      },
+      moveClip: (clipId, trackId, index) => {
+        const changed = project.move(clipId, trackId, index);
+        refresh();
+        return changed;
       },
       selectTrack: (trackId) => {
         selectedTrackId = trackId;

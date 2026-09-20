@@ -262,6 +262,18 @@ button:disabled {
   border-color: transparent;
 }
 
+.btn-danger {
+  border-color: color-mix(in srgb, var(--danger-foreground) 38%, transparent);
+  background: var(--danger-background);
+  color: var(--danger-foreground);
+  font-weight: 600;
+}
+
+.btn-danger:hover:not(:disabled) {
+  border-color: var(--danger-foreground);
+  background: color-mix(in srgb, var(--danger-foreground) 16%, var(--danger-background));
+}
+
 :focus-visible {
   outline: 2px solid var(--brand-stroke);
   outline-offset: 1px;
@@ -707,6 +719,10 @@ input[type='text'] {
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.danger-eyebrow {
+  color: var(--danger-foreground);
 }
 
 .recovery-copy {

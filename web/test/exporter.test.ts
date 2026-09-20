@@ -2,13 +2,17 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  buildWasmConcatArguments,
   FrameQueue,
+  mapWasmMedia,
   isNonMonotonicDtsError,
   muxerFrameRate,
   preferredWebCodecsAudioCodec,
   videoMuxerReadinessError,
+  wasmConcatManifest,
   webCodecsVideoConfig,
 } from '../src/exporter.ts';
+import type { MediaInfo, VideoClip } from '../src/model.ts';
 
 const fakeFrame = (): VideoFrame => ({ close() {} }) as VideoFrame;
 
@@ -97,5 +101,63 @@ describe('WebCodecs 音轨选择', () => {
       aacEncoder: false,
       opusEncoder: true,
     }), 'opus');
+  });
+});
+
+describe('ffmpeg.wasm 素材映射', () => {
+  it('清洗后 basename 相同的三份素材仍保留三个唯一输入', () => {
+    const media = (path: string, stream: number): MediaInfo => ({
+      path,
+      duration: 40,
+      width: 2560,
+      height: 1440,
+      frameRate: 60,
+      videoStreamIndex: 0,
+      audioStreamIndex: stream,
+      codec: 'h264',
+      videoTimestampOffset: 0,
+      isHdr: false,
+    });
+    const sources = [
+      media('camera-a/素材?.mp4', 1),
+      media('camera-b/素材*.mp4', 1),
+      media('camera-c/素材:.mp4', 1),
+    ];
+    const clip = (source: MediaInfo, index: number): VideoClip => ({
+      id: `clip-${index}`,
+      media: source,
+      start: index,
+      end: index + 1,
+      speed: 1,
+    });
+    const mapping = mapWasmMedia([
+      clip(sources[0]!, 0),
+      clip(sources[1]!, 1),
+      clip(sources[2]!, 2),
+      clip(sources[0]!, 3),
+      clip(sources[2]!, 4),
+      clip(sources[1]!, 5),
+    ]);
+
+    assert.equal(mapping.sources.length, 3);
+    assert.equal(new Set(mapping.sources.map((source) => source.name)).size, 3);
+    assert.equal(new Set(mapping.clips.map((item) => item.media.path)).size, 3);
+    assert.deepEqual(
+      mapping.clips.map((item) => item.media.path),
+      [0, 1, 2, 0, 2, 1].map((index) => mapping.sources[index]!.name),
+    );
+  });
+
+  it('分段清单按顺序拼接并保留音视频映射', () => {
+    const segments = ['clip-segment-0000.mp4', 'clip-segment-0001.mp4', 'clip-segment-0002.mp4'];
+    assert.equal(
+      wasmConcatManifest(segments),
+      "file 'clip-segment-0000.mp4'\nfile 'clip-segment-0001.mp4'\nfile 'clip-segment-0002.mp4'\n",
+    );
+    const args = buildWasmConcatArguments('clip-segments.txt', 'output.mp4', true);
+    assert.deepEqual(args.slice(args.indexOf('-map'), args.indexOf('-c')), [
+      '-map', '0:v:0', '-map', '0:a:0',
+    ]);
+    assert.ok(args.includes('copy'));
   });
 });

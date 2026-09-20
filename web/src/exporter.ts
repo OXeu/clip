@@ -654,27 +654,73 @@ function distinctMedia(clips: readonly VideoClip[]): MediaInfo[] {
   return result;
 }
 
-/**
- * wasm 虚拟文件系统里的输入文件名。
- * 用稳定且安全的文件名，避免中文与空格在 filter 脚本里需要额外转义。
- */
-export function ffmpegInputName(media: MediaInfo): string {
+/** wasm 虚拟文件系统里的唯一输入文件名。序号避免不同路径清洗后发生撞名。 */
+export function ffmpegInputName(media: MediaInfo, index: number): string {
   const base = media.path.split(/[/\\]/).pop() ?? 'input';
-  const safe = base.replace(/[^\w.-]/g, '_');
-  return `in_${safe}`;
+  const safe = base.replace(/[^\w.-]/g, '_').slice(-80) || 'input';
+  return `in_${index}_${safe}`;
 }
 
-/** 把 filter 脚本里的原始路径替换为 wasm 内的输入文件名。 */
-function rewritePaths(graph: string, clips: readonly VideoClip[]): string {
-  let result = graph;
-  for (const media of distinctMedia(clips)) {
-    result = result.split(media.path).join(ffmpegInputName(media));
+export interface WasmMediaMapping {
+  readonly clips: readonly VideoClip[];
+  readonly sources: readonly {
+    readonly original: MediaInfo;
+    readonly name: string;
+  }[];
+}
+
+/**
+ * filtergraph、-i 参数和 wasm 文件写入必须共享同一份源映射。
+ * 不能分别从清洗后的 basename 去重，否则不同素材可能折叠成同一个输入。
+ */
+export function mapWasmMedia(clips: readonly VideoClip[]): WasmMediaMapping {
+  const sources = distinctMedia(clips).map((original, index) => ({
+    original,
+    name: ffmpegInputName(original, index),
+  }));
+  const names = new Map(sources.map(({ original, name }) => [original.path.toLowerCase(), name]));
+  const mapped = clips.map((clip): VideoClip => {
+    const name = names.get(clip.media.path.toLowerCase());
+    if (!name) throw new Error(`无法映射导出素材：${clip.media.path}`);
+    return { ...clip, media: { ...clip.media, path: name } };
+  });
+  return { clips: mapped, sources };
+}
+
+async function wasmInputs(
+  mapping: WasmMediaMapping,
+  readSource: (path: string) => Promise<ArrayBuffer>,
+  audioOnly = false,
+): Promise<{ name: string; data: Uint8Array }[]> {
+  const inputs: { name: string; data: Uint8Array }[] = [];
+  for (const { original, name } of mapping.sources) {
+    if (audioOnly && !hasAudio(original)) continue;
+    inputs.push({ name, data: new Uint8Array(await readSource(original.path)) });
   }
-  return result;
+  return inputs;
 }
 
-function withMappedPath(clip: VideoClip): VideoClip {
-  return { ...clip, media: { ...clip.media, path: ffmpegInputName(clip.media) } };
+export function wasmConcatManifest(segmentNames: readonly string[]): string {
+  if (segmentNames.length === 0) throw new Error('没有可拼接的导出片段。');
+  for (const name of segmentNames) {
+    if (!/^[\w.-]+$/.test(name)) throw new Error(`无效的 wasm 片段文件名：${name}`);
+  }
+  return `${segmentNames.map((name) => `file '${name}'`).join('\n')}\n`;
+}
+
+export function buildWasmConcatArguments(manifest: string, output: string, anyAudio: boolean): string[] {
+  const args = [
+    '-hide_banner', '-nostdin', '-y', '-loglevel', 'warning',
+    '-f', 'concat', '-safe', '0', '-i', manifest,
+    '-map', '0:v:0',
+  ];
+  if (anyAudio) args.push('-map', '0:a:0');
+  else args.push('-an');
+  args.push(
+    '-c', 'copy', '-map_metadata', '-1', '-avoid_negative_ts', 'make_zero',
+    '-movflags', '+faststart', output,
+  );
+  return args;
 }
 
 /** 用 ffmpeg.wasm 完成整套导出（兜底路线）。 */
@@ -692,39 +738,102 @@ async function exportWithWasm(
     ? '多线程核心不可用，已改用单线程核心（速度较慢）。'
     : undefined;
 
-  const filterName = 'clip-export.ffgraph';
-  const filter = rewritePaths(buildFilter(clips, options), clips);
-  report({ fraction: 0.02, message: '正在准备导出素材…' });
-  await runner.writeFile(filterName, new TextEncoder().encode(filter));
+  const duration = clips.reduce((total, clip) => total + clipDuration(clip), 0);
+  const anyAudio = clips.some((clip) => hasAudio(clip.media));
+  let data: Uint8Array;
 
-  const inputs: { name: string; data: Uint8Array }[] = [];
-  for (const media of distinctMedia(clips)) {
-    inputs.push({ name: ffmpegInputName(media), data: new Uint8Array(await readSource(media.path)) });
+  if (clips.length === 1) {
+    const mapping = mapWasmMedia(clips);
+    const filterName = 'clip-export.ffgraph';
+    const filter = buildFilter(mapping.clips, options);
+    report({ fraction: 0.02, message: '正在准备导出素材…' });
+    await runner.writeFile(filterName, new TextEncoder().encode(filter));
+    try {
+      const result = await runner.run({
+        args: buildWasmExportArguments(mapping.clips, options, filterName, 'output.mp4'),
+        inputs: await wasmInputs(mapping, readSource),
+        output: 'output.mp4',
+        duration,
+        onProgress: (update) => report({
+          fraction: 0.02 + update.fraction * 0.98,
+          message: update.message,
+        }),
+        ...(signal ? { signal } : {}),
+      });
+      data = result.data;
+    } finally {
+      await runner.deleteFile(filterName);
+    }
+  } else {
+    // 大型多素材 filtergraph 会让所有输入和解码器同时驻留在 wasm 的 32 位内存中。
+    // 每次只写入并编码一个片段，最后 stream-copy 拼接；高开销的源文件与解码器不再同时驻留。
+    const outputFrameRate = clips[0]!.media.frameRate;
+    const segmentNames = clips.map((_, index) => `clip-segment-${String(index).padStart(4, '0')}.mp4`);
+    const manifestName = 'clip-segments.txt';
+    const temporaryFiles = [...segmentNames, manifestName];
+    let completedDuration = 0;
+    report({ fraction: 0.02, message: `正在分段渲染 ${clips.length} 个片段…` });
+    try {
+      for (let index = 0; index < clips.length; index++) {
+        checkAborted(signal);
+        const clip = clips[index]!;
+        const clipLength = clipDuration(clip);
+        const mapping = mapWasmMedia([clip]);
+        const filterName = `clip-segment-${String(index).padStart(4, '0')}.ffgraph`;
+        temporaryFiles.push(filterName);
+        const filter = buildFilter(mapping.clips, options, {
+          outputFrameRate,
+          forceAudio: anyAudio,
+        });
+        await runner.writeFile(filterName, new TextEncoder().encode(filter));
+        await runner.run({
+          args: buildWasmExportArguments(
+            mapping.clips,
+            options,
+            filterName,
+            segmentNames[index]!,
+            anyAudio,
+          ),
+          inputs: await wasmInputs(mapping, readSource),
+          output: segmentNames[index]!,
+          duration: clipLength,
+          onProgress: (update) => report({
+            fraction: 0.02 + ((completedDuration + clipLength * update.fraction) / duration) * 0.92,
+            message: `正在渲染片段 ${index + 1}/${clips.length}…`,
+          }),
+          ...(signal ? { signal } : {}),
+        });
+        await runner.deleteFile(filterName);
+        completedDuration += clipLength;
+      }
+
+      await runner.writeFile(manifestName, new TextEncoder().encode(wasmConcatManifest(segmentNames)));
+      const result = await runner.run({
+        args: buildWasmConcatArguments(manifestName, 'output.mp4', anyAudio),
+        inputs: [],
+        output: 'output.mp4',
+        duration,
+        onProgress: (update) => report({
+          fraction: 0.94 + update.fraction * 0.06,
+          message: '正在拼接导出片段…',
+        }),
+        ...(signal ? { signal } : {}),
+      });
+      data = result.data;
+    } finally {
+      for (const name of temporaryFiles) await runner.deleteFile(name);
+    }
   }
 
-  const duration = clips.reduce((total, clip) => total + clipDuration(clip), 0);
-  const result = await runner.run({
-    args: buildWasmExportArguments(clips.map(withMappedPath), options, filterName, 'output.mp4'),
-    inputs,
-    output: 'output.mp4',
-    duration,
-    onProgress: (update) => report({
-      fraction: 0.02 + update.fraction * 0.98,
-      message: update.message,
-    }),
-    ...(signal ? { signal } : {}),
-  });
-  await runner.deleteFile(filterName);
-
   return {
-    data: result.data,
+    data,
     route: EncoderRoute.Wasm,
     mimeType: 'video/mp4',
     width,
     height,
     codec: null,
-    audioRoute: clips.some((clip) => hasAudio(clip.media)) ? 'ffmpeg-wasm' : 'none',
-    audioCodec: clips.some((clip) => hasAudio(clip.media)) ? 'aac' : null,
+    audioRoute: anyAudio ? 'ffmpeg-wasm' : 'none',
+    audioCodec: anyAudio ? 'aac' : null,
     ...(threading ? { threading } : {}),
   };
 }
@@ -844,25 +953,19 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
           ? '多线程核心不可用，音频混流改用单线程核心。'
           : undefined;
         const audioFilterName = 'clip-audio.ffgraph';
-        const mapped = clips.map(withMappedPath);
-        const audioGraph = rewritePaths(buildAudioFilter(clips), clips);
+        const mapping = mapWasmMedia(clips);
+        const audioGraph = buildAudioFilter(mapping.clips);
         report({ fraction: 0.84, message: '正在准备音频素材…' });
         await runner.writeFile(audioFilterName, new TextEncoder().encode(audioGraph));
 
         const inputs: { name: string; data: Uint8Array }[] = [
           { name: 'video.mp4', data: encoded.data },
+          ...await wasmInputs(mapping, readSource, true),
         ];
-        for (const media of distinctMedia(clips)) {
-          if (!hasAudio(media)) continue;
-          inputs.push({
-            name: ffmpegInputName(media),
-            data: new Uint8Array(await readSource(media.path)),
-          });
-        }
 
         const duration = clips.reduce((total, clip) => total + clipDuration(clip), 0);
         const result = await runner.run({
-          args: buildAudioMuxArguments(mapped, 'video.mp4', audioFilterName, 'output.mp4'),
+          args: buildAudioMuxArguments(mapping.clips, 'video.mp4', audioFilterName, 'output.mp4'),
           inputs,
           output: 'output.mp4',
           duration,

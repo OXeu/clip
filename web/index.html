@@ -120,7 +120,7 @@
             </button>
           </div>
         </div>
-        <div class="timeline-scroll" id="timeline-scroll" title="拖动轨道左侧把手排序 · 滚轮或双指缩放 · Shift + 滚轮或双指横向移动">
+        <div class="timeline-scroll" id="timeline-scroll" title="拖动轨道左侧把手排序 · 滚轮上下滚动 · Shift + 滚轮横向滚动 · Ctrl + 滚轮缩放 · 双指缩放与移动">
           <canvas id="timeline" aria-label="音视频时间轴；拖动轨道左侧把手排序，进入多选模式后点击轨道并保存绑定"></canvas>
         </div>
         <div class="timeline-summary" id="timeline-summary"></div>
@@ -256,10 +256,32 @@
           <span class="hint" id="recovery-saved-at"></span>
           <span class="actions">
             <button class="btn btn-quiet" type="button" id="recovery-discard">放弃上次进度</button>
-            <button class="btn btn-primary" type="button" id="recovery-choose">
+            <button class="btn btn-primary" type="button" id="recovery-choose" autofocus>
               <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-upload-2-line"></use></svg>
               <span id="recovery-choose-label">重新选择原视频</span>
             </button>
+          </span>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="recovery-discard-dialog" aria-labelledby="recovery-discard-title">
+      <form method="dialog">
+        <div class="dialog-header">
+          <div>
+            <span class="eyebrow danger-eyebrow">不可撤销</span>
+            <h2 id="recovery-discard-title">确定放弃上次进度？</h2>
+          </div>
+        </div>
+        <div class="dialog-body">
+          <p class="recovery-copy">已保存的剪辑点、轨道顺序和工作位置都会被清除，之后无法恢复。</p>
+          <div class="callout warn">如果只是暂时找不到原视频，请选择“继续恢复”，保存的进度会继续保留。</div>
+        </div>
+        <div class="dialog-footer">
+          <span class="hint">建议保留进度</span>
+          <span class="actions">
+            <button class="btn btn-primary" type="button" id="recovery-discard-cancel" autofocus>继续恢复</button>
+            <button class="btn btn-danger" type="button" id="recovery-discard-confirm">确认放弃</button>
           </span>
         </div>
       </form>
