@@ -190,10 +190,60 @@
       </Setter.Value>
     </Setter>
   </Style>
+  <!-- Fluent 的叶子菜单模板将快捷键固定在底部；统一图标、标题和快捷键的垂直中心。 -->
+  <ControlTemplate x:Key="ClipSubmenuItemTemplate" TargetType="MenuItem">
+    <Border x:Name="Chrome" Margin="4,1" Background="{TemplateBinding Background}"
+            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4">
+      <Grid Margin="8,6">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" SharedSizeGroup="MenuItemCheckBoxIconColumnGroup" />
+          <ColumnDefinition Width="Auto" SharedSizeGroup="MenuItemIconColumnGroup" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" SharedSizeGroup="Shortcut" />
+        </Grid.ColumnDefinitions>
+        <Border x:Name="CheckBoxIconBorder" Grid.Column="0" Width="20" Height="20" Margin="0,0,6,0"
+                VerticalAlignment="Center" Background="{DynamicResource CheckBoxBackground}"
+                BorderBrush="{DynamicResource CheckBoxBorderBrush}" BorderThickness="1" CornerRadius="4" Visibility="Collapsed">
+          <TextBlock x:Name="CheckBoxIcon" HorizontalAlignment="Center" VerticalAlignment="Center"
+                     FontFamily="{DynamicResource SymbolThemeFontFamily}" FontSize="16" TextAlignment="Center" />
+        </Border>
+        <ContentPresenter x:Name="Icon" Grid.Column="1" Content="{TemplateBinding Icon}" Margin="0,0,6,0"
+                          VerticalAlignment="Center" SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+        <ContentPresenter Grid.Column="2" ContentSource="Header" RecognizesAccessKey="True" Margin="{TemplateBinding Padding}"
+                          VerticalAlignment="Center" SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"
+                          TextElement.Foreground="{TemplateBinding Foreground}" />
+        <TextBlock x:Name="InputGestureText" Grid.Column="3" Text="{TemplateBinding InputGestureText}" Margin="25,0,0,0"
+                   VerticalAlignment="Center" FontSize="11" Foreground="{DynamicResource TextFillColorDisabledBrush}" />
+      </Grid>
+    </Border>
+    <ControlTemplate.Triggers>
+      <Trigger Property="IsHighlighted" Value="True">
+        <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource MenuBarItemBackgroundSelected}" />
+      </Trigger>
+      <Trigger Property="Icon" Value="{x:Null}">
+        <Setter TargetName="Icon" Property="Visibility" Value="Collapsed" />
+      </Trigger>
+      <Trigger Property="IsCheckable" Value="True">
+        <Setter TargetName="CheckBoxIconBorder" Property="Visibility" Value="Visible" />
+      </Trigger>
+      <Trigger Property="IsChecked" Value="True">
+        <Setter TargetName="CheckBoxIcon" Property="Text" Value="&#xE73E;" />
+      </Trigger>
+      <Trigger Property="IsEnabled" Value="False">
+        <Setter Property="Foreground" Value="{DynamicResource ColorDisabledForeground}" />
+      </Trigger>
+      <Trigger Property="InputGestureText" Value="">
+        <Setter TargetName="InputGestureText" Property="Visibility" Value="Collapsed" />
+      </Trigger>
+    </ControlTemplate.Triggers>
+  </ControlTemplate>
   <Style TargetType="MenuItem" BasedOn="{StaticResource DefaultMenuItemStyle}">
     <Setter Property="Foreground" Value="{DynamicResource ColorNeutralForeground1}" />
     <Setter Property="Padding" Value="10,8" />
     <Style.Triggers>
+      <Trigger Property="Role" Value="SubmenuItem">
+        <Setter Property="Template" Value="{StaticResource ClipSubmenuItemTemplate}" />
+      </Trigger>
       <Trigger Property="IsHighlighted" Value="True">
         <Setter Property="Foreground" Value="{DynamicResource ColorSelectionForeground}" />
       </Trigger>

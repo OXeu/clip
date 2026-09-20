@@ -27,7 +27,7 @@
             <Button x:Name="ExportTracksButton" Style="{StaticResource SplitArrowButton}" Background="Transparent" BorderBrush="Transparent" BorderThickness="0"
                     Width="36" Padding="0" HorizontalAlignment="Right"
                     Click="ExportTracksClick" Visibility="Collapsed" ToolTip="选择要导出的轨道" AutomationProperties.Name="选择导出轨道">
-              <Border BorderBrush="{DynamicResource ColorOnBrand}" BorderThickness="1,0,0,0" Padding="10,0">
+              <Border Padding="10,0">
                 <Path Data="M 0,0 L 4,4 L 8,0" Stroke="{DynamicResource ColorOnBrand}" StrokeThickness="1.5" VerticalAlignment="Center" />
               </Border>
               <Button.ContextMenu><ContextMenu x:Name="ExportTracksMenu" Placement="Bottom" Opened="ExportTracksMenuOpened" /></Button.ContextMenu>
@@ -112,8 +112,12 @@
           <MenuItem x:Name="DeleteMenuItem" Header="删除选中片段" InputGestureText="Delete / X" Click="DeleteClick" IsEnabled="False">
             <MenuItem.Icon><local:RemixIcon Kind="Delete" Width="16" Height="16" /></MenuItem.Icon>
           </MenuItem>
-          <MenuItem x:Name="CopyMenuItem" Header="复制片段" Click="CopyClick" IsEnabled="False" />
-          <MenuItem x:Name="RenameMenuItem" Header="命名片段…" Click="RenameClick" IsEnabled="False" />
+          <MenuItem x:Name="CopyMenuItem" Header="复制片段" Click="CopyClick" IsEnabled="False">
+            <MenuItem.Icon><local:RemixIcon Kind="Copy" Width="16" Height="16" /></MenuItem.Icon>
+          </MenuItem>
+          <MenuItem x:Name="RenameMenuItem" Header="命名片段…" Click="RenameClick" IsEnabled="False">
+            <MenuItem.Icon><local:RemixIcon Kind="Rename" Width="16" Height="16" /></MenuItem.Icon>
+          </MenuItem>
           <Separator />
           <MenuItem x:Name="UndoMenuItem" Header="撤销" InputGestureText="Ctrl+Z" Click="UndoClick" IsEnabled="False">
             <MenuItem.Icon><local:RemixIcon Kind="Undo" Width="16" Height="16" /></MenuItem.Icon>

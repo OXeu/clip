@@ -101,6 +101,13 @@ jobs:
               $capture = "artifacts/Clip-win-x64/smoke-theme-$theme-$surface.png"
               if (-not (Test-Path $capture)) { throw "Missing themed UI screenshot: $capture" }
             }
+            Add-Type -AssemblyName System.Drawing
+            $image = [System.Drawing.Image]::FromFile((Join-Path $env:GITHUB_WORKSPACE "artifacts/Clip-win-x64/smoke-theme-$theme-editor.png"))
+            try {
+              if ($image.Width -lt 3000 -or $image.Height -lt 2000) {
+                throw "README screenshot resolution too low: $($image.Width) x $($image.Height)"
+              }
+            } finally { $image.Dispose() }
           }
 
       - name: Verify pre-WPF startup failure is logged

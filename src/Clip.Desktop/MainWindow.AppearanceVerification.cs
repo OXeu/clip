@@ -36,7 +36,10 @@ public partial class MainWindow
                     "An existing export field retained the previous theme.");
                 Require(Contrast(ExportButton.Foreground, ExportButton.Background) >= 4.5,
                     "The primary action does not have readable text.");
-                UiCapture.Save(WindowRoot, $"smoke-theme-{theme}-editor.png");
+                var desktopDpi = VisualTreeHelper.GetDpi(WindowRoot);
+                UiCapture.Save(WindowRoot, $"smoke-theme-{theme}-editor.png", minimumPixelsPerDip: 3);
+                Require(VisualTreeHelper.GetDpi(WindowRoot).Equals(desktopDpi),
+                    "High-resolution capture did not restore the editor DPI.");
                 UiCapture.Save(export.DialogRoot, $"smoke-theme-{theme}-export.png");
 
                 export.QualityBox.IsDropDownOpen = true;
