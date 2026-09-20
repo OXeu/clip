@@ -11,7 +11,11 @@
 
 ## 界面预览
 
-![Clip 多素材、多轨道剪辑界面](docs/images/screenshot.png)
+<!-- 实际窗口截图：Windows CI run 35489159014，提交 244cf8a。 -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dark.png" />
+  <img src="docs/images/screenshot.png" alt="Clip 多素材、多轨道剪辑界面" />
+</picture>
 
 ## 功能
 
