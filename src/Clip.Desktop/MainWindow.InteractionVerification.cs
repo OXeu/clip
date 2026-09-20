@@ -303,7 +303,7 @@ public partial class MainWindow
         finally { TimelineMenu.IsOpen = false; SetBusy(false); }
     }
 
-    private async Task VerifyCopyAndNamingAsync(bool realInput)
+    private async Task VerifyCopyAndNamingAsync()
     {
         var before = _project.Tracks.ToArray();
         foreach (var track in before.Skip(1))
@@ -314,8 +314,11 @@ public partial class MainWindow
             var original = track.Clips[0];
             var rect = TimelineView.ClipBounds(original.Id);
             var point = new Point(rect.X + rect.Width / 2, rect.Y + 24);
-            if (!realInput) SelectClip(original.Id, TimelineView.TimeAtX(point.X));
-            await OpenTimelineMenuAsync(TimelineView, point, realInput);
+            // VerifyTimelineMenuAsync already exercises native right-click targeting. These
+            // repeated copy actions test command semantics and must not depend on the Actions
+            // desktop accepting several synthetic popup clicks in quick succession.
+            SelectClip(original.Id, TimelineView.TimeAtX(point.X));
+            await OpenTimelineMenuAsync(TimelineView, point, false);
             InvokeTimelineMenuItem(CopyMenuItem);
             Require(_selected is { } id && id != original.Id, "Copy did not select a new clip.");
             var copyId = _selected!.Value;
@@ -338,8 +341,8 @@ public partial class MainWindow
         var clip = before[1].Clips[0];
         var bounds = TimelineView.ClipBounds(clip.Id);
         var target = new Point(bounds.X + bounds.Width * 0.4, bounds.Y + 24);
-        if (!realInput) SelectClip(clip.Id, TimelineView.TimeAtX(target.X));
-        await OpenTimelineMenuAsync(TimelineView, target, realInput);
+        SelectClip(clip.Id, TimelineView.TimeAtX(target.X));
+        await OpenTimelineMenuAsync(TimelineView, target, false);
         var inputCheck = Dispatcher.InvokeAsync(() =>
         {
             var dialog = OwnedWindows.OfType<ClipNameWindow>().Single();
@@ -513,7 +516,7 @@ public partial class MainWindow
         UiCapture.Save(WindowRoot, "smoke-imported.png");
         await VerifyWorkspaceResizeAsync(realMedia);
         await VerifyTimelineMenuAsync(realMedia);
-        await VerifyCopyAndNamingAsync(realMedia);
+        await VerifyCopyAndNamingAsync();
         await VerifyTrackExportAsync(realMedia);
         var candidate = videoTracks[0].Id;
         var secondCandidate = videoTracks[1].Id;
