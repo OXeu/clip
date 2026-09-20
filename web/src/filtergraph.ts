@@ -2,7 +2,7 @@
  * FFmpeg filter graph 生成，移植自 src/Clip.Core/ExportService.cs。
  *
  * 两条导出路线共用这里的音频半边：
- *   快速路线  WebCodecs 编码视频 → mp4-muxer 封成 video.mp4，再用 ffmpeg.wasm
+ *   快速路线  WebCodecs 编码视频 → Mediabunny 封成 video.mp4，再用 ffmpeg.wasm
  *             只为音频执行 buildAudioFilter，最后 -c:v copy 混流。
  *   兜底路线  用 buildFilter 生成与桌面端完全相同的完整 filter 脚本。
  * 这样「变速、补静音、拼接、补帧」的语义只有一份实现。

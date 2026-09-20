@@ -2,10 +2,8 @@
  * WebCodecs 音频导出管线。
  *
  * MP4Box AAC 样本 → AudioDecoder → 48 kHz 立体声 PCM → WSOLA 变速
- * → AudioEncoder AAC/Opus → mp4-muxer。按片段处理，避免展开整条时间轴的 PCM。
+ * → AudioEncoder AAC/Opus → MP4 封装器。按片段处理，避免展开整条时间轴的 PCM。
  */
-
-import type { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 
 import { waitForCodecCapacity } from './codec-queue.ts';
 import type { DemuxedFile } from './mp4demux.ts';
@@ -16,6 +14,10 @@ const WEB_AUDIO_CHANNELS = 2;
 const AUDIO_BITRATE = 192_000;
 
 export type WebCodecsAudioCodec = 'aac' | 'opus';
+
+export interface EncodedAudioChunkSink {
+  addAudioChunk(chunk: EncodedAudioChunk, metadata?: EncodedAudioChunkMetadata): void | Promise<void>;
+}
 
 export class WebCodecsAudioUnavailableError extends Error {}
 
@@ -374,11 +376,11 @@ async function feedPcm(
   }
 }
 
-/** 逐片段渲染并编码 AAC/Opus，直接加入已有的 MP4 muxer。 */
+/** 逐片段渲染并编码 AAC/Opus，直接加入已有的 MP4 封装器。 */
 export async function encodeWebCodecsAudio(
   clips: readonly VideoClip[],
   sourceFor: AudioSourceProvider,
-  muxer: Muxer<ArrayBufferTarget>,
+  sink: EncodedAudioChunkSink,
   outputCodec: WebCodecsAudioCodec,
   onProgress?: (fraction: number) => void,
   signal?: AbortSignal,
@@ -389,13 +391,16 @@ export async function encodeWebCodecsAudio(
     0,
   );
   let encoderError: Error | null = null;
+  let muxing = Promise.resolve();
   const encoder = new AudioEncoder({
     output: (chunk, metadata) => {
-      try {
-        muxer.addAudioChunk(chunk, metadata);
-      } catch (error) {
-        encoderError = error instanceof Error ? error : new Error(String(error));
-      }
+      muxing = muxing
+        .then(async () => {
+          if (!encoderError) await sink.addAudioChunk(chunk, metadata);
+        })
+        .catch((error: unknown) => {
+          encoderError = error instanceof Error ? error : new Error(String(error));
+        });
     },
     error: (error) => {
       encoderError = error instanceof Error ? error : new Error(String(error));
@@ -436,6 +441,7 @@ export async function encodeWebCodecsAudio(
       onProgress?.(Math.min(0.99, timelineFrame / totalFrames));
     }
     await encoder.flush();
+    await muxing;
     if (encoderError) throw encoderError;
     onProgress?.(1);
   } catch (error) {

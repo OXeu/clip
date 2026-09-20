@@ -3,7 +3,7 @@
  *
  * 覆盖单元测试无法触及的部分：
  *   - mp4box 解封装真实 H.264 素材
- *   - WebCodecs 解码 + 编码，mp4-muxer 封装
+ *   - WebCodecs 解码 + 编码，Mediabunny 封装
  *   - ffmpeg.wasm 渲染音频并混流
  *   - FFprobe 校验最终 MP4（时长、分辨率、帧数、音轨）
  *

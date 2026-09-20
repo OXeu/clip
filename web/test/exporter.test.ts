@@ -7,35 +7,17 @@ import {
   buildWasmConcatArguments,
   FrameQueue,
   mapWasmMedia,
-  isNonMonotonicDtsError,
-  muxerFrameRate,
   preferredWebCodecsAudioCodec,
   videoMuxerReadinessError,
   wasmConcatManifest,
   webCodecsVideoConfig,
+  webCodecsVideoPacketData,
 } from '../src/exporter.ts';
 import type { MediaInfo, VideoClip } from '../src/model.ts';
 
 const fakeFrame = (): VideoFrame => ({ close() {} }) as VideoFrame;
 
-describe('mp4-muxer 帧率配置', () => {
-  it('整数帧率可直接作为容器 timescale', () => {
-    assert.equal(muxerFrameRate(24), 24);
-    assert.equal(muxerFrameRate(60), 60);
-  });
-
-  it('非整数帧率省略配置并保留真实 chunk 时间戳', () => {
-    assert.equal(muxerFrameRate(32.10813374436803), undefined);
-    assert.equal(muxerFrameRate(30_000 / 1_001), undefined);
-  });
-
-  it('非法帧率不会传给 mp4-muxer', () => {
-    assert.equal(muxerFrameRate(0), undefined);
-    assert.equal(muxerFrameRate(Number.NaN), undefined);
-  });
-});
-
-describe('mp4-muxer 视频元数据', () => {
+describe('MP4 视频元数据', () => {
   it('编码器无输出时不进入 finalize', () => {
     assert.match(videoMuxerReadinessError(0, false) ?? '', /没有输出/);
   });
@@ -61,25 +43,29 @@ describe('WebCodecs 视频时间戳', () => {
     assert.equal(h264CodecCandidates(1920, 1080, 30, 'avc1.4d0028')[0], 'avc1.4d0028');
   });
 
-  it('请求 realtime 以减少硬件 B 帧，并允许重排时切换软件编码器', () => {
+  it('请求 realtime 以减少硬件 B 帧', () => {
     const config = webCodecsVideoConfig(
       'avc1.640028', 1920, 1080, 8_000_000, 60, 'prefer-hardware',
     );
     assert.equal(config.latencyMode, 'realtime');
     assert.equal(config.framerate, 60);
     assert.equal(config.hardwareAcceleration, 'prefer-hardware');
-    assert.equal(
-      webCodecsVideoConfig('avc1.640028', 1920, 1080, 8_000_000, 60, 'prefer-software')
-        .hardwareAcceleration,
-      'prefer-software',
-    );
   });
 
-  it('识别 mp4-muxer 的 DTS 回退错误以触发安全回退', () => {
-    assert.equal(isNonMonotonicDtsError(
-      new Error('Timestamps must be monotonically increasing (DTS went from 33361.999 to 16681).'),
-    ), true);
-    assert.equal(isNonMonotonicDtsError(new Error('decoderConfig is null')), false);
+  it('重排帧保留递增解码顺序与回退的展示时间戳', () => {
+    const chunk = (timestamp: number): Pick<EncodedVideoChunk,
+      'byteLength' | 'copyTo' | 'duration' | 'timestamp' | 'type'> => ({
+        byteLength: 1,
+        copyTo: (destination) => { new Uint8Array(destination as ArrayBuffer).set([1]); },
+        duration: 33_333,
+        timestamp,
+        type: 'delta',
+      });
+    const second = webCodecsVideoPacketData(chunk(66_667), 1, 30);
+    const third = webCodecsVideoPacketData(chunk(33_333), 2, 30);
+    assert.equal(second.sequenceNumber, 1);
+    assert.equal(third.sequenceNumber, 2);
+    assert.ok(third.timestamp < second.timestamp, 'B 帧的 PTS 应允许回退');
   });
 });
 

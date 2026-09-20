@@ -3,7 +3,7 @@
  *
  * 目标是在真实浏览器里跑通「导入 → 分割 → 导出」，并验证产出的 MP4 能被
  * FFprobe 解析、时长与分辨率符合预期。这是唯一能同时覆盖 WebCodecs、
- * mp4-muxer 与 ffmpeg.wasm 的验证方式。
+ * Mediabunny 与 ffmpeg.wasm 的验证方式。
  */
 
 import { execFileSync } from 'node:child_process';

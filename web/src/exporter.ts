@@ -6,7 +6,7 @@
  * 快速路线（WebCodecs 可用时）
  *   VideoDecoder 逐段解码 → OffscreenCanvas 缩放/补边 → VideoEncoder 硬件编码
  *   音频由 AudioDecoder 解码、WSOLA 保持音高变速，再由 AudioEncoder 编成 AAC/Opus
- *   → mp4-muxer 一次封装音视频。两种编码都不可用时仅回退音频到 ffmpeg.wasm。
+ *   → Mediabunny 一次封装音视频。两种编码都不可用时仅回退音频到 ffmpeg.wasm。
  *
  * 兜底路线（无 WebCodecs 时）
  *   完全交给 ffmpeg.wasm，使用与桌面端相同的 buildFilter 与参数。
@@ -14,8 +14,6 @@
  * 视频编码前会先用 isConfigSupported 复核实际输出尺寸；若不可用则自动
  * 降级到兜底路线，保证「导出成功」优先于「跑得快」。
  */
-
-import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 
 import { EncoderRoute, h264CodecCandidates, type Capabilities } from './capabilities.ts';
 import { waitForCodecCapacity } from './codec-queue.ts';
@@ -39,8 +37,8 @@ import { type DemuxedFile, demuxFile } from './mp4demux.ts';
 import {
   assertWebCodecsAudioSupported,
   encodeWebCodecsAudio,
-  WEB_AUDIO_SAMPLE_RATE,
   WebCodecsAudioUnavailableError,
+  type EncodedAudioChunkSink,
   type WebCodecsAudioCodec,
 } from './webcodecs-audio.ts';
 
@@ -98,18 +96,8 @@ export function bitrateFor(
 }
 
 /**
- * mp4-muxer 只接受正整数 frameRate。非整数帧率不能直接传入；省略后它会
- * 使用高精度 timescale，并继续按 EncodedVideoChunk 的真实时间戳封装。
- */
-export function muxerFrameRate(frameRate: number): number | undefined {
-  return Number.isInteger(frameRate) && frameRate > 0 ? frameRate : undefined;
-}
-
-/**
- * mp4-muxer 直接消费 VideoEncoder 的输出顺序，而 WebCodecs 不会额外提供 DTS。
- * quality 模式在部分硬件 H.264 编码器上会生成 B 帧，使回调里的 PTS 出现
- * 0 → 2 → 1 这样的回退。realtime 模式要求低延迟输出，通常能减少这类重排；
- * 若驱动仍忽略该要求，运行期会改用平台软件 WebCodecs。
+ * realtime 模式要求编码器优先低延迟，通常能减少 B 帧；即便浏览器仍输出
+ * 重排帧，Mediabunny 也会依据回调顺序和 PTS 自动生成正确的 DTS/CTTS。
  */
 export function webCodecsVideoConfig(
   codec: string,
@@ -130,14 +118,31 @@ export function webCodecsVideoConfig(
   };
 }
 
-/** 识别 mp4-muxer 对帧重排的拒绝，便于安全回退到 ffmpeg.wasm。 */
-export function isNonMonotonicDtsError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /Timestamps must be monotonically increasing|DTS went from/i.test(message);
+/** 提取 WebCodecs 帧的展示时间；sequenceNumber 另行保留回调给出的解码顺序。 */
+export function webCodecsVideoPacketData(
+  chunk: Pick<EncodedVideoChunk, 'byteLength' | 'copyTo' | 'duration' | 'timestamp' | 'type'>,
+  sequenceNumber: number,
+  frameRate: number,
+): {
+  readonly data: Uint8Array;
+  readonly type: EncodedVideoChunkType;
+  readonly timestamp: number;
+  readonly duration: number;
+  readonly sequenceNumber: number;
+} {
+  const data = new Uint8Array(chunk.byteLength);
+  chunk.copyTo(data);
+  return {
+    data,
+    type: chunk.type,
+    timestamp: chunk.timestamp / 1_000_000,
+    duration: (chunk.duration ?? Math.round(1_000_000 / frameRate)) / 1_000_000,
+    sequenceNumber,
+  };
 }
 
 /**
- * mp4-muxer 必须从 VideoEncoder 的输出元数据取得 avcC；部分浏览器虽然声称
+ * MP4 封装器必须从 VideoEncoder 的输出元数据取得 avcC；部分浏览器虽然声称
  * 支持 H.264 编码，却可能不输出 chunk，或省略 decoderConfig。继续 finalize()
  * 会在依赖内部以 `decoderConfig is null` 崩溃，因此应先回退到 wasm 路线。
  */
@@ -421,15 +426,10 @@ interface VideoTrackResult {
  * 若配置不受支持则抛出 WebCodecsUnavailableError，由调用方降级。
  */
 class WebCodecsUnavailableError extends Error {}
-class WebCodecsReorderedFramesError extends WebCodecsUnavailableError {}
-
-// 某些浏览器会忽略 realtime 并让硬件 H.264 编码器输出 B 帧。首次发现后，
-// 本次页面会话内直接使用平台软件 WebCodecs，避免每次导出都重复失败一次。
-let preferSoftwareVideoEncoder = false;
 
 interface WebCodecsAudioStage {
   readonly codec: WebCodecsAudioCodec;
-  readonly encode: (muxer: Muxer<ArrayBufferTarget>) => Promise<void>;
+  readonly encode: (sink: EncodedAudioChunkSink) => Promise<void>;
 }
 
 async function encodeVideoTrack(
@@ -440,7 +440,6 @@ async function encodeVideoTrack(
   report: (progress: ExportProgress) => void,
   signal?: AbortSignal,
   audioStage?: WebCodecsAudioStage,
-  hardwareAccelerations: readonly HardwareAcceleration[] = ['prefer-hardware', 'no-preference'],
 ): Promise<VideoTrackResult> {
   const first = clips[0]!;
   const { width, height } = getDimensions(options, first.media);
@@ -455,8 +454,8 @@ async function encodeVideoTrack(
   let codec: string | null = null;
   let encoderConfig: VideoEncoderConfig | null = null;
   const candidates = h264CodecCandidates(width, height, fps, capabilities.h264Codec);
-  // 按调用方指定的加速偏好穷举所有 profile；运行期可用它强制软件重试。
-  for (const acceleration of hardwareAccelerations) {
+  // 先穷举各 profile 的硬件实现，再允许浏览器回落到默认实现。
+  for (const acceleration of ['prefer-hardware', 'no-preference'] as const) {
     for (const candidate of candidates) {
       const config = webCodecsVideoConfig(candidate, width, height, bitrate, fps, acceleration);
       try {
@@ -482,40 +481,49 @@ async function encodeVideoTrack(
   const context = canvas.getContext('2d', { alpha: false });
   if (!context) throw new Error('无法创建 2D 画布用于缩放输出。');
 
-  const muxerFps = muxerFrameRate(fps);
-  const muxer = new Muxer({
-    target: new ArrayBufferTarget(),
-    video: {
-      codec: 'avc',
-      width,
-      height,
-      ...(muxerFps === undefined ? {} : { frameRate: muxerFps }),
-    },
-    ...(audioStage ? {
-      audio: {
-        codec: audioStage.codec,
-        numberOfChannels: 2,
-        sampleRate: WEB_AUDIO_SAMPLE_RATE,
-      },
-    } : {}),
-    fastStart: 'in-memory',
-    // 部分 WebCodecs 实现输出的首个编码块并非恰好从 DTS=0 开始（例如一帧后）。
-    // 逐轨归零，避免 mp4-muxer 的 strict 模式拒绝这类合法输出。
-    firstTimestampBehavior: 'offset',
+  // 与素材转换共用延迟加载的 Mediabunny 分块，避免首屏下载整个媒体工具包。
+  const {
+    BufferTarget,
+    EncodedAudioPacketSource,
+    EncodedPacket,
+    EncodedVideoPacketSource,
+    Mp4OutputFormat,
+    Output,
+  } = await import('mediabunny');
+  const target = new BufferTarget();
+  const mediaOutput = new Output({
+    format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
+    target,
   });
+  const videoSource = new EncodedVideoPacketSource('avc');
+  mediaOutput.addVideoTrack(videoSource, { frameRate: fps, averageBitrate: bitrate });
+  const audioSource = audioStage ? new EncodedAudioPacketSource(audioStage.codec) : null;
+  if (audioSource) mediaOutput.addAudioTrack(audioSource, { averageBitrate: 192_000 });
+  await mediaOutput.start();
 
   let encoderError: Error | null = null;
   let encodedChunkCount = 0;
   let receivedDecoderConfig = false;
+  let videoMuxing = Promise.resolve();
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
-      try {
-        muxer.addVideoChunk(chunk, meta);
-        encodedChunkCount++;
-        receivedDecoderConfig ||= Boolean(meta?.decoderConfig);
-      } catch (error) {
-        encoderError = error instanceof Error ? error : new Error(String(error));
-      }
+      const sequenceNumber = encodedChunkCount++;
+      receivedDecoderConfig ||= Boolean(meta?.decoderConfig);
+      const packetData = webCodecsVideoPacketData(chunk, sequenceNumber, fps);
+      const packet = new EncodedPacket(
+        packetData.data,
+        packetData.type,
+        packetData.timestamp,
+        packetData.duration,
+        packetData.sequenceNumber,
+      );
+      videoMuxing = videoMuxing
+        .then(async () => {
+          if (!encoderError) await videoSource.add(packet, meta);
+        })
+        .catch((error: unknown) => {
+          encoderError = error instanceof Error ? error : new Error(String(error));
+        });
     },
     error: (error) => {
       encoderError = error instanceof Error ? error : new Error(String(error));
@@ -526,11 +534,6 @@ async function encodeVideoTrack(
   const throwIfEncoderFailed = (): void => {
     const failure = encoderError;
     if (!failure) return;
-    if (isNonMonotonicDtsError(failure)) {
-      throw new WebCodecsReorderedFramesError(
-        '当前浏览器的视频编码器输出了重排帧。',
-      );
-    }
     throw failure;
   };
 
@@ -661,13 +664,30 @@ async function encodeVideoTrack(
     }
 
     await encoder.flush();
+    await videoMuxing;
     throwIfEncoderFailed();
     const readinessError = videoMuxerReadinessError(encodedChunkCount, receivedDecoderConfig);
     if (readinessError) throw new WebCodecsUnavailableError(readinessError);
     report({ fraction: 1, message: '画面编码完成' });
-    if (audioStage) await audioStage.encode(muxer);
-    muxer.finalize();
-    const buffer = muxer.target.buffer;
+    if (audioStage && audioSource) {
+      let audioSequence = 0;
+      await audioStage.encode({
+        addAudioChunk: (chunk, meta) => {
+          const data = new Uint8Array(chunk.byteLength);
+          chunk.copyTo(data);
+          const packet = new EncodedPacket(
+            data,
+            chunk.type,
+            chunk.timestamp / 1_000_000,
+            (chunk.duration ?? 0) / 1_000_000,
+            audioSequence++,
+          );
+          return audioSource.add(packet, meta);
+        },
+      });
+    }
+    await mediaOutput.finalize();
+    const buffer = target.buffer;
     if (!buffer || buffer.byteLength === 0) throw new Error('MP4 封装未产生数据。');
     return { data: new Uint8Array(buffer), codec };
   } catch (error) {
@@ -679,6 +699,10 @@ async function encodeVideoTrack(
       if (source.decoder.state !== 'closed') source.decoder.close();
     }
     if (encoder.state !== 'closed') encoder.close();
+    if (mediaOutput.state !== 'finalized' && mediaOutput.state !== 'canceled') {
+      try { await mediaOutput.cancel(); }
+      catch { /* 保留原始编码或封装错误。 */ }
+    }
   }
 }
 
@@ -928,7 +952,6 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
       let encoded: VideoTrackResult | null = null;
       const encodeWithWebCodecs = async (
         audioCodec: WebCodecsAudioCodec | null,
-        accelerations?: readonly HardwareAcceleration[],
       ): Promise<VideoTrackResult> => encodeVideoTrack(
         clips,
         options,
@@ -956,39 +979,10 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
             ),
           }
           : undefined,
-        accelerations,
       );
 
-      const encodeWithSoftwareRetry = async (
-        audioCodec: WebCodecsAudioCodec | null,
-      ): Promise<VideoTrackResult> => {
-        try {
-          return await encodeWithWebCodecs(
-            audioCodec,
-            preferSoftwareVideoEncoder ? ['prefer-software'] : undefined,
-          );
-        } catch (error) {
-          if (!(error instanceof WebCodecsReorderedFramesError) || preferSoftwareVideoEncoder) throw error;
-          preferSoftwareVideoEncoder = true;
-          report({
-            fraction: 0.02,
-            message: '硬件 WebCodecs 输出了重排帧，正在切换到软件 WebCodecs…',
-          });
-          try {
-            return await encodeWithWebCodecs(audioCodec, ['prefer-software']);
-          } catch (retryError) {
-            if (retryError instanceof WebCodecsAudioUnavailableError ||
-              (retryError instanceof DOMException && retryError.name === 'AbortError')) throw retryError;
-            const detail = retryError instanceof Error ? retryError.message : String(retryError);
-            throw new WebCodecsUnavailableError(
-              `${error.message} 软件 WebCodecs 重试仍不可用：${detail}`,
-            );
-          }
-        }
-      };
-
       try {
-        encoded = await encodeWithSoftwareRetry(webCodecsAudioCodec);
+        encoded = await encodeWithWebCodecs(webCodecsAudioCodec);
       } catch (error) {
         if (error instanceof WebCodecsAudioUnavailableError) {
           // 能力探测通过后仍可能因具体素材或平台编码器失败。丢弃未完成的
@@ -996,7 +990,7 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
           audioFallback = error.message;
           webCodecsAudioCodec = null;
           report({ fraction: 0.70, message: `WebCodecs 音频不可用，正在回退：${error.message}` });
-          encoded = await encodeWithSoftwareRetry(null);
+          encoded = await encodeWithWebCodecs(null);
         } else if (error instanceof WebCodecsUnavailableError) {
           fellBack = error.message;
         } else {

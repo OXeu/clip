@@ -21,7 +21,6 @@
     "@ffmpeg/ffmpeg": "0.12.15",
     "@ffmpeg/util": "0.12.2",
     "mediabunny": "1.58.1",
-    "mp4-muxer": "5.2.2",
     "mp4box": "2.4.1"
   },
   "devDependencies": {
