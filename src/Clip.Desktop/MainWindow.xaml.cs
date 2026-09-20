@@ -15,7 +15,7 @@ namespace Clip.Desktop;
 
 public partial class MainWindow : Window
 {
-    private readonly EditProject _project = new();
+    private EditProject _project = new();
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(25) };
     private readonly string[] _arguments;
     private readonly TaskCompletionSource _initialization = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -88,7 +88,7 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             StartupDiagnostics.Write("FFmpeg initialization unavailable", exception);
-            StatusText.Text = "FFmpeg 未就绪：请通过「设置」选择 FFmpeg 目录。";
+            StatusText.Text = "FFmpeg 未就绪：请通过「更多」→「设置」→「高级设置」选择 FFmpeg 目录。";
             HardwareText.ToolTip = exception.Message;
         }
         finally
@@ -98,7 +98,9 @@ public partial class MainWindow : Window
             StartupDiagnostics.Write("Main window initialization completed");
             _initialization.TrySetResult();
         }
-        if (!_closed && _arguments.Length > 0) await ImportFilesAsync(_arguments);
+        if (!_closed && _arguments.Length == 1 && string.Equals(Path.GetExtension(_arguments[0]), ProjectFile.FileExtension, StringComparison.OrdinalIgnoreCase))
+            await RestoreProjectAsync(_arguments[0]);
+        else if (!_closed && _arguments.Length > 0) await ImportFilesAsync(_arguments);
     }
 
     private async Task VerifyToolsAsync(CancellationToken token)
@@ -113,7 +115,7 @@ public partial class MainWindow : Window
     {
         _nvidiaProbe = probe;
         HardwareText.Text = probe?.IsAvailable == true ? "● NVIDIA NVENC 可用" : "● FFmpeg 就绪 · CPU 编码";
-        HardwareText.ToolTip = probe is null ? null : $"{probe.Summary}\n设置 → NVIDIA 检测详情…";
+        HardwareText.ToolTip = probe is null ? null : $"{probe.Summary}\n更多 → 设置 → 高级设置 → NVIDIA 检测详情…";
         if (probe is not null) StartupDiagnostics.Write(NvidiaDiagnostics());
     }
 
@@ -205,7 +207,9 @@ public partial class MainWindow : Window
             OperationProgress.IsIndeterminate = true;
         }
         else { _operation?.Dispose(); _operation = null; }
-        ImportButton.IsEnabled = SettingsButton.IsEnabled = EmptyImportButton.IsEnabled = !busy;
+        ImportButton.IsEnabled = MoreButton.IsEnabled = EmptyImportButton.IsEnabled = !busy;
+        RestoreProjectMenuItem.IsEnabled = !busy;
+        SaveProjectMenuItem.IsEnabled = !busy && _project.Sources.Count > 0;
         CancelButton.Visibility = OperationProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         if (message is not null) StatusText.Text = message;
         Refresh();
@@ -224,10 +228,10 @@ public partial class MainWindow : Window
     }
 
     private void CancelClick(object sender, RoutedEventArgs e) => _operation?.Cancel();
-    private void SettingsClick(object sender, RoutedEventArgs e)
+    private void MoreClick(object sender, RoutedEventArgs e)
     {
-        SettingsButton.ContextMenu.PlacementTarget = SettingsButton;
-        SettingsButton.ContextMenu.IsOpen = true;
+        MoreButton.ContextMenu.PlacementTarget = MoreButton;
+        MoreButton.ContextMenu.IsOpen = true;
     }
 
     private async void ChooseFfmpegClick(object sender, RoutedEventArgs e)
@@ -300,7 +304,9 @@ public partial class MainWindow : Window
         }
         if (_operation is not null) return;
         var control = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
-        if (control && e.Key == Key.O) ImportClick(sender, e);
+        if (control && Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) && e.Key == Key.O) RestoreProjectClick(sender, e);
+        else if (control && e.Key == Key.S) SaveProjectClick(sender, e);
+        else if (control && e.Key == Key.O) ImportClick(sender, e);
         else if (control && e.Key == Key.Z) Restore(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
         else if (control && e.Key == Key.Y) Restore(true);
         else if (Keyboard.Modifiers == ModifierKeys.None)
@@ -332,7 +338,10 @@ public partial class MainWindow : Window
     {
         if (_operation is not null || _initializing || !e.Data.GetDataPresent(DataFormats.FileDrop)) return;
         e.Handled = true;
-        if (e.Data.GetData(DataFormats.FileDrop) is string[] files) await ImportFilesAsync(files);
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] files) return;
+        if (files.Length == 1 && string.Equals(Path.GetExtension(files[0]), ProjectFile.FileExtension, StringComparison.OrdinalIgnoreCase))
+            await RestoreProjectAsync(files[0]);
+        else await ImportFilesAsync(files);
     }
 
     private void TimelineSizeChanged(object sender, SizeChangedEventArgs e) => UpdateTimelineWidth();
@@ -418,7 +427,7 @@ public partial class MainWindow : Window
             return;
         }
         if (_project.CanUndo && !_closed && !App.IsAutomatedRun &&
-            !NoticeWindow.Show(this, "关闭视频剪辑", "关闭后轨道编辑不会保存。请确认已导出需要的片段。",
+            !NoticeWindow.Show(this, "关闭视频剪辑", "尚未导出项目的剪辑内容将丢失。请确认已导出项目或需要的视频。",
                 "确认关闭", "继续剪辑")) { e.Cancel = true; return; }
         _closed = true;
         _timer.Stop();

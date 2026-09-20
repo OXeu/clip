@@ -17,7 +17,7 @@ internal sealed class UpdateController
     private UpdatePreferences _preferences = UpdatePreferences.Load();
     private int _generation;
 
-    private UpdateController(Window owner, ContextMenu menu)
+    private UpdateController(Window owner, ItemCollection settingsItems)
     {
         _owner = owner;
         _github = new(_http) { Token = Environment.GetEnvironmentVariable("CLIP_GITHUB_TOKEN") };
@@ -39,18 +39,19 @@ internal sealed class UpdateController
             }
         };
         _check.Click += (_, _) => OpenUpdateWindow();
-        menu.Items.Add(new Separator());
-        menu.Items.Add(_check);
-        menu.Items.Add(dev);
+        settingsItems.Add(new Separator());
+        settingsItems.Add(_check);
+        settingsItems.Add(dev);
         owner.Closed += (_, _) => { _lifetime.Cancel(); _http.Dispose(); };
         owner.Loaded += async (_, _) => await CheckInBackgroundAsync();
     }
 
     internal static void Attach(Window window)
     {
-        if (window.FindName("SettingsButton") is FrameworkElement { ContextMenu: { } menu })
-            _ = new UpdateController(window, menu);
-        else StartupDiagnostics.Write("Update menu unavailable: SettingsButton has no context menu.");
+        if (window.FindName("MoreButton") is FrameworkElement { ContextMenu: { } menu } &&
+            menu.Items.OfType<MenuItem>().FirstOrDefault(item => Equals(item.Header, "设置")) is { } settings)
+            _ = new UpdateController(window, settings.Items);
+        else StartupDiagnostics.Write("Update menu unavailable: MoreButton has no settings item.");
     }
 
     private async Task CheckInBackgroundAsync()

@@ -41,8 +41,10 @@ import {
   clearStoredSession,
   fingerprintFile,
   loadStoredSession,
+  parseProjectFile,
   sameVideo,
   saveStoredSession,
+  serializeProjectFile,
   type SourceFingerprint,
   type StoredEditSession,
 } from './session.ts';
@@ -63,21 +65,22 @@ const files = new Map<string, File>();
 const objectUrls = new Map<string, string>();
 const sourceFingerprints = new Map<string, SourceFingerprint>();
 
+function validateRecoveryCandidate(stored: StoredEditSession): StoredEditSession {
+  const restored = EditProject.fromSnapshot(stored.project);
+  if (restored.sources.length === 0) throw new Error('剪辑记录不包含素材。');
+  const paths = new Set(stored.sources.map((source) => source.path));
+  if (paths.size !== restored.sources.length
+    || !restored.sources.every((source) => paths.has(source.path))) {
+    throw new Error('素材指纹与项目不一致。');
+  }
+  return stored;
+}
+
 function loadRecoveryCandidate(): StoredEditSession | null {
   const stored = loadStoredSession(sessionStorage);
   if (!stored) return null;
   try {
-    const restored = EditProject.fromSnapshot(stored.project);
-    if (restored.sources.length === 0) {
-      clearStoredSession(sessionStorage);
-      return null;
-    }
-    const paths = new Set(stored.sources.map((source) => source.path));
-    if (paths.size !== restored.sources.length
-      || !restored.sources.every((source) => paths.has(source.path))) {
-      throw new Error('素材指纹与项目不一致。');
-    }
-    return stored;
+    return validateRecoveryCandidate(stored);
   } catch (error) {
     console.warn('已忽略无法恢复的剪辑会话。', error);
     clearStoredSession(sessionStorage);
@@ -86,7 +89,10 @@ function loadRecoveryCandidate(): StoredEditSession | null {
 }
 
 let pendingRecovery = loadRecoveryCandidate();
+let recoveryOrigin: 'session' | 'file' = 'session';
 const recoveryFiles = new Map<string, File>();
+const recoveryFingerprints = new Map<string, SourceFingerprint>();
+const recoveryWaveforms = new Map<string, Float32Array>();
 let sessionSaveHandle = 0;
 
 let capabilities: Capabilities | null = null;
@@ -118,6 +124,12 @@ const totalLabel = $('total-text');
 const playButton = $<HTMLButtonElement>('play-button');
 const playIcon = $<HTMLElement>('play-icon');
 const importButton = $<HTMLButtonElement>('import-button');
+const moreButton = $<HTMLButtonElement>('more-button');
+const moreMenuWrap = $('more-menu-wrap');
+const moreMenu = $('more-menu');
+const moreSettingsButton = $<HTMLButtonElement>('more-settings-button');
+const openProjectButton = $<HTMLButtonElement>('open-project-button');
+const saveProjectButton = $<HTMLButtonElement>('save-project-button');
 const emptyImportButton = $<HTMLButtonElement>('empty-import');
 const exportButton = $<HTMLButtonElement>('export-button');
 const cancelButton = $<HTMLButtonElement>('cancel-button');
@@ -133,6 +145,7 @@ const unbindTracksButton = $<HTMLButtonElement>('unbind-tracks-button');
 const stepBackButton = $<HTMLButtonElement>('step-back');
 const stepForwardButton = $<HTMLButtonElement>('step-forward');
 const fileInput = $<HTMLInputElement>('file-input');
+const projectFileInput = $<HTMLInputElement>('project-file-input');
 const dropOverlay = $('drop-overlay');
 const timelineSummary = $('timeline-summary');
 const exportDialog = $<HTMLDialogElement>('export-dialog');
@@ -147,6 +160,10 @@ const recoveryDiscardCancelButton = $<HTMLButtonElement>('recovery-discard-cance
 const recoveryDiscardConfirmButton = $<HTMLButtonElement>('recovery-discard-confirm');
 const recoveryError = $('recovery-error');
 const recoveryFileList = $('recovery-file-list');
+const recoveryEyebrow = $('recovery-eyebrow');
+const recoveryTitle = $('recovery-title');
+const recoveryBadge = $('recovery-badge');
+const recoveryCopy = $('recovery-copy');
 
 // 同时设置 DOM 属性与兼容属性，避免浏览器在 load/play 时重新启用原生视频层。
 video.playsInline = true;
@@ -196,7 +213,9 @@ function setBusy(busy: boolean, message?: string): void {
     progress.hidden = true;
     cancelButton.hidden = true;
   }
-  importButton.disabled = emptyImportButton.disabled = busy;
+  if (busy) setMoreMenuOpen(false);
+  importButton.disabled = moreButton.disabled = openProjectButton.disabled = emptyImportButton.disabled = busy;
+  saveProjectButton.disabled = busy || project.sources.length === 0;
   if (message !== undefined) status(message);
   refresh();
 }
@@ -223,6 +242,27 @@ function objectUrl(media: MediaInfo): string {
   return url;
 }
 
+function createSessionSnapshot(): StoredEditSession | null {
+  if (project.sources.length === 0) return null;
+  const fingerprints = project.sources.map((source) => sourceFingerprints.get(source.path));
+  if (fingerprints.some((fingerprint) => fingerprint === undefined)) return null;
+  return {
+    version: 1,
+    savedAt: Date.now(),
+    project: project.exportSnapshot(),
+    sources: fingerprints as SourceFingerprint[],
+    workspace: {
+      activeTrackId,
+      selectedTrackId,
+      selectedClipId,
+      position,
+      previewZoom,
+      timelineZoom: timeline.zoom,
+      timelineScrollLeft: timelineScroll.scrollLeft,
+    },
+  };
+}
+
 function saveSessionNow(): void {
   if (sessionSaveHandle) {
     window.clearTimeout(sessionSaveHandle);
@@ -234,24 +274,10 @@ function saveSessionNow(): void {
     clearStoredSession(sessionStorage);
     return;
   }
-  const fingerprints = project.sources.map((source) => sourceFingerprints.get(source.path));
-  if (fingerprints.some((fingerprint) => fingerprint === undefined)) return;
+  const snapshot = createSessionSnapshot();
+  if (!snapshot) return;
   try {
-    saveStoredSession(sessionStorage, {
-      version: 1,
-      savedAt: Date.now(),
-      project: project.exportSnapshot(),
-      sources: fingerprints as SourceFingerprint[],
-      workspace: {
-        activeTrackId,
-        selectedTrackId,
-        selectedClipId,
-        position,
-        previewZoom,
-        timelineZoom: timeline.zoom,
-        timelineScrollLeft: timelineScroll.scrollLeft,
-      },
-    });
+    saveStoredSession(sessionStorage, snapshot);
   } catch (error) {
     // 存储被禁用或达到配额时不影响当前剪辑。
     console.warn('无法自动保存本次剪辑会话。', error);
@@ -829,6 +855,9 @@ function refresh(): void {
   previewRegion.classList.toggle('is-empty', !hasMedia);
   exportButton.disabled = !ready || project.exportableTracks.length === 0;
   importButton.hidden = !hasMedia;
+  moreButton.disabled = !ready;
+  saveProjectButton.disabled = !ready || !hasMedia;
+  openProjectButton.disabled = !ready;
   emptyState.hidden = hasMedia;
 
   const track = activeTrack();
@@ -961,7 +990,7 @@ function openExportDialog(): Promise<void> {
     if (capabilities?.webCodecsVideo) {
       routes.push({
         value: EncoderRoute.WebCodecsVideo,
-        label: `WebCodecs H.264${capabilities.aacEncoder ? ' + AAC' : capabilities.opusEncoder ? ' + Opus' : ''}${capabilities.h264Hardware ? ' · 硬件编码' : ' · 平台软件编码'}`,
+        label: `WebCodecs H.264${capabilities.aacEncoder ? ' + AAC' : capabilities.opusEncoder ? ' + Opus' : ''}${capabilities.h264Hardware ? ' · 硬件优先' : ' · 平台软件编码'}`,
       });
     }
     routes.push({ value: EncoderRoute.Wasm, label: 'FFmpeg.wasm · 与桌面端一致的软件编码' });
@@ -1188,6 +1217,43 @@ function showAlert(title: string, message: string): Promise<void> {
   });
 }
 
+function exportProjectFile(): void {
+  if (operation) return;
+  const snapshot = createSessionSnapshot();
+  if (!snapshot) {
+    void showAlert('无法导出项目', '请先导入原视频；素材仍在处理中时，请稍后再试。');
+    return;
+  }
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+  const name = `Clip-${stamp}.clip`;
+  const blob = new Blob([serializeProjectFile(snapshot)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = name;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  status(`项目已导出 · ${name}（不包含原视频）`);
+}
+
+async function openProjectFile(file: File): Promise<void> {
+  if (operation) return;
+  try {
+    const stored = validateRecoveryCandidate(parseProjectFile(await file.text()));
+    pause();
+    pendingRecovery = stored;
+    recoveryOrigin = 'file';
+    recoveryFiles.clear();
+    recoveryFingerprints.clear();
+    recoveryWaveforms.clear();
+    offerRecovery();
+  } catch (error) {
+    await showAlert('无法导入项目', error instanceof Error ? error.message : String(error));
+  }
+}
+
 // ---------- 刷新恢复 ----------
 
 function missingRecoverySources(): readonly SourceFingerprint[] {
@@ -1225,9 +1291,20 @@ function finishRecovery(): void {
     for (const source of restored.sources) {
       const file = recoveryFiles.get(source.path);
       if (!file) throw new Error(`还没有选择 ${source.path}`);
-      files.set(source.path, file);
-      const expected = stored.sources.find((candidate) => candidate.path === source.path);
-      if (expected && !sourceFingerprints.has(source.path)) sourceFingerprints.set(source.path, expected);
+    }
+
+    pause();
+    for (const url of objectUrls.values()) URL.revokeObjectURL(url);
+    objectUrls.clear();
+    files.clear();
+    sourceFingerprints.clear();
+    timeline.clearWaveforms();
+    for (const source of restored.sources) {
+      files.set(source.path, recoveryFiles.get(source.path)!);
+      const expected = stored.sources.find((candidate) => candidate.path === source.path)!;
+      sourceFingerprints.set(source.path, recoveryFingerprints.get(source.path) ?? expected);
+      const waveform = recoveryWaveforms.get(source.path);
+      if (waveform) timeline.setWaveform(source.path, waveform);
     }
 
     project = restored;
@@ -1244,13 +1321,18 @@ function finishRecovery(): void {
     setPreviewZoom(workspace.previewZoom, false);
     timeline.setZoom(workspace.timelineZoom);
 
+    const origin = recoveryOrigin;
     pendingRecovery = null;
+    recoveryOrigin = 'session';
+    recoveryFiles.clear();
+    recoveryFingerprints.clear();
+    recoveryWaveforms.clear();
     recoveryDialog.close();
     const found = project.locate(activeTrackId, position);
     if (found) activatePreview(found, false, true);
     else refresh();
     timelineScroll.scrollLeft = Math.max(0, workspace.timelineScrollLeft);
-    status('已恢复上次剪辑，可以继续工作');
+    status(origin === 'file' ? '项目已导入，可以继续工作' : '已恢复上次剪辑，可以继续工作');
     saveSessionNow();
   } catch (error) {
     recoveryError.hidden = false;
@@ -1288,10 +1370,10 @@ async function acceptRecoveryFiles(selectedFiles: readonly File[]): Promise<void
       recoveryFiles.set(matched.path, prepared.file);
       const media = pendingRecovery.project.sources.find((source) => source.path === matched.path);
       if (media && media.audioStreamIndex !== null) {
-        try { timeline.setWaveform(matched.path, await extractWaveform(prepared.data)); }
+        try { recoveryWaveforms.set(matched.path, await extractWaveform(prepared.data)); }
         catch { /* 恢复项目不因浏览器缺少音频解码器而失败。 */ }
       }
-      sourceFingerprints.set(matched.path, { ...actual, path: matched.path });
+      recoveryFingerprints.set(matched.path, { ...actual, path: matched.path });
     }
     renderRecoverySources();
     const missing = missingRecoverySources();
@@ -1319,8 +1401,16 @@ async function acceptRecoveryFiles(selectedFiles: readonly File[]): Promise<void
 
 function offerRecovery(): void {
   if (!pendingRecovery) return;
+  const fromFile = recoveryOrigin === 'file';
+  recoveryEyebrow.textContent = fromFile ? '导入项目' : '未完成的剪辑';
+  recoveryTitle.textContent = fromFile ? '导入这份项目？' : '继续上次的工作？';
+  recoveryBadge.textContent = fromFile ? '.clip 文件' : '已自动保存';
+  recoveryCopy.textContent = fromFile
+    ? '轨道、片段和工作位置已读取。项目不包含视频本体，请重新选择原视频完成核对。'
+    : '剪辑点和工作位置已经找回。出于浏览器隐私限制，还需要重新选择原视频才能继续。';
+  recoveryDiscardButton.textContent = fromFile ? '取消导入' : '放弃上次进度';
   renderRecoverySources();
-  $('recovery-saved-at').textContent = `保存于 ${new Date(pendingRecovery.savedAt).toLocaleString()}`;
+  $('recovery-saved-at').textContent = `${fromFile ? '项目导出于' : '保存于'} ${new Date(pendingRecovery.savedAt).toLocaleString()}`;
   recoveryError.hidden = true;
   recoveryDialog.showModal();
   queueMicrotask(() => recoveryChooseButton.focus({ preventScroll: true }));
@@ -1342,14 +1432,74 @@ function openSettings(): void {
   settingsDialog.showModal();
 }
 
+function setMoreMenuOpen(open: boolean, moveFocus = false): void {
+  moreMenu.hidden = !open;
+  moreButton.setAttribute('aria-expanded', String(open));
+  if (open && moveFocus) {
+    queueMicrotask(() => moreMenu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus());
+  }
+}
+
+function moreMenuItems(): HTMLButtonElement[] {
+  return Array.from(moreMenu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+}
+
 // ---------- 事件绑定 ----------
 
 importButton.addEventListener('click', () => fileInput.click());
 emptyImportButton.addEventListener('click', () => fileInput.click());
+moreButton.addEventListener('click', () => setMoreMenuOpen(moreMenu.hidden, moreMenu.hidden));
+moreButton.addEventListener('keydown', (event) => {
+  if (event.key !== 'ArrowDown' && event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  setMoreMenuOpen(true, true);
+});
+moreMenu.addEventListener('keydown', (event) => {
+  const items = moreMenuItems();
+  const current = items.indexOf(document.activeElement as HTMLButtonElement);
+  let next = current;
+  if (event.key === 'ArrowDown') next = (current + 1) % items.length;
+  else if (event.key === 'ArrowUp') next = (current - 1 + items.length) % items.length;
+  else if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = items.length - 1;
+  else if (event.key === 'Escape') {
+    event.preventDefault();
+    setMoreMenuOpen(false);
+    moreButton.focus();
+    return;
+  } else if (event.key === 'Tab') {
+    setMoreMenuOpen(false);
+    return;
+  } else return;
+  event.preventDefault();
+  items[next]?.focus();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!moreMenu.hidden && !moreMenuWrap.contains(event.target as Node)) setMoreMenuOpen(false);
+});
+moreSettingsButton.addEventListener('click', () => {
+  setMoreMenuOpen(false);
+  openSettings();
+});
+openProjectButton.addEventListener('click', () => {
+  setMoreMenuOpen(false);
+  moreButton.focus({ preventScroll: true });
+  projectFileInput.click();
+});
+saveProjectButton.addEventListener('click', () => {
+  setMoreMenuOpen(false);
+  moreButton.focus({ preventScroll: true });
+  exportProjectFile();
+});
 fileInput.addEventListener('change', () => {
   const list = Array.from(fileInput.files ?? []);
   fileInput.value = '';
   if (list.length > 0) void importFiles(list);
+});
+projectFileInput.addEventListener('change', () => {
+  const file = projectFileInput.files?.[0];
+  projectFileInput.value = '';
+  if (file) void openProjectFile(file);
 });
 recoveryChooseButton.addEventListener('click', () => recoveryInput.click());
 recoveryInput.addEventListener('change', () => {
@@ -1364,8 +1514,27 @@ function closeDiscardConfirmation(): void {
   });
 }
 
+function discardPendingRecovery(): void {
+  const fromFile = recoveryOrigin === 'file';
+  pendingRecovery = null;
+  recoveryOrigin = 'session';
+  recoveryFiles.clear();
+  recoveryFingerprints.clear();
+  recoveryWaveforms.clear();
+  if (!fromFile) {
+    sourceFingerprints.clear();
+    clearStoredSession(sessionStorage);
+  }
+  recoveryDialog.close();
+  status(fromFile ? '已取消导入项目，当前剪辑未改变' : '已放弃上次进度 · 导入视频开始新的剪辑');
+}
+
 recoveryDiscardButton.addEventListener('click', () => {
   if (!pendingRecovery || recoveryDiscardDialog.open) return;
+  if (recoveryOrigin === 'file') {
+    discardPendingRecovery();
+    return;
+  }
   recoveryDiscardDialog.showModal();
   queueMicrotask(() => recoveryDiscardCancelButton.focus({ preventScroll: true }));
 });
@@ -1373,18 +1542,16 @@ recoveryDiscardCancelButton.addEventListener('click', closeDiscardConfirmation);
 recoveryDiscardConfirmButton.addEventListener('click', () => {
   if (!pendingRecovery) return;
   if (recoveryDiscardDialog.open) recoveryDiscardDialog.close();
-  pendingRecovery = null;
-  recoveryFiles.clear();
-  sourceFingerprints.clear();
-  clearStoredSession(sessionStorage);
-  recoveryDialog.close();
-  status('已放弃上次进度 · 导入视频开始新的剪辑');
+  discardPendingRecovery();
 });
 recoveryDiscardDialog.addEventListener('cancel', (event) => {
   event.preventDefault();
   closeDiscardConfirmation();
 });
-recoveryDialog.addEventListener('cancel', (event) => event.preventDefault());
+recoveryDialog.addEventListener('cancel', (event) => {
+  event.preventDefault();
+  if (recoveryOrigin === 'file') discardPendingRecovery();
+});
 
 exportButton.addEventListener('click', () => void openExportDialog());
 cancelButton.addEventListener('click', () => operation?.abort());
@@ -1400,7 +1567,6 @@ renameButton.addEventListener('click', () => renameSelected());
 multiSelectButton.addEventListener('click', () => toggleMultiSelectMode());
 bindTracksButton.addEventListener('click', () => saveTrackBinding());
 unbindTracksButton.addEventListener('click', () => unbindSelectedTracks());
-$('settings-button').addEventListener('click', () => openSettings());
 $('zoom-in').addEventListener('click', () => setZoom(timeline.zoom * 1.25));
 $('zoom-out').addEventListener('click', () => setZoom(timeline.zoom / 1.25));
 $('zoom-fit').addEventListener('click', () => setZoom(1));
@@ -1476,6 +1642,7 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (exportDialog.open || settingsDialog.open || recoveryDialog.open) return;
+  if (!event.ctrlKey && !event.metaKey && target && moreMenuWrap.contains(target)) return;
   if (event.key === ' ' && !event.ctrlKey && !event.metaKey) {
     event.preventDefault();
     if (!event.repeat) togglePlay();
@@ -1483,6 +1650,16 @@ window.addEventListener('keydown', (event) => {
   }
   if (operation) return;
   const modifier = event.ctrlKey || event.metaKey;
+  if (modifier && event.shiftKey && event.key.toLowerCase() === 'o') {
+    event.preventDefault();
+    projectFileInput.click();
+    return;
+  }
+  if (modifier && event.key.toLowerCase() === 's') {
+    event.preventDefault();
+    exportProjectFile();
+    return;
+  }
   if (modifier && event.key.toLowerCase() === 'o') {
     event.preventDefault();
     fileInput.click();
@@ -1554,8 +1731,10 @@ window.addEventListener('drop', (event) => {
   event.preventDefault();
   dragDepth = 0;
   dropOverlay.hidden = true;
-  if (recoveryDialog.open) void acceptRecoveryFiles(Array.from(event.dataTransfer.files));
-  else if (!operation) void importFiles(Array.from(event.dataTransfer.files));
+  const dropped = Array.from(event.dataTransfer.files);
+  if (recoveryDialog.open) void acceptRecoveryFiles(dropped);
+  else if (!operation && dropped.length === 1 && dropped[0]!.name.toLowerCase().endsWith('.clip')) void openProjectFile(dropped[0]!);
+  else if (!operation) void importFiles(dropped);
 });
 
 // 普通滚轮纵向浏览轨道；Shift 横向移动；Ctrl 以指针为锚缩放。

@@ -34,18 +34,28 @@
               <Button.ContextMenu><ContextMenu x:Name="ExportTracksMenu" Placement="Bottom" Opened="ExportTracksMenuOpened" Closed="ExportTracksMenuClosed" /></Button.ContextMenu>
             </Button>
           </Grid>
-          <Button x:Name="SettingsButton" Style="{StaticResource IconButton}" Click="SettingsClick" ToolTip="设置" AutomationProperties.Name="设置">
-            <local:RemixIcon Kind="Settings" />
-            <Button.ContextMenu><ContextMenu>
-              <MenuItem Header="资源管理器集成">
-                <MenuItem Header="添加“使用 Clip 剪辑”右键菜单" Click="RegisterShellClick" />
-                <MenuItem Header="移除右键菜单" Click="UnregisterShellClick" />
+          <Button x:Name="MoreButton" Style="{StaticResource IconButton}" Click="MoreClick" ToolTip="更多" AutomationProperties.Name="更多">
+            <local:RemixIcon Kind="More" />
+            <Button.ContextMenu><ContextMenu x:Name="MoreMenu" Placement="Bottom">
+              <MenuItem Header="设置">
+                <MenuItem.Icon><local:RemixIcon Kind="Settings" Width="16" Height="16" /></MenuItem.Icon>
+                <MenuItem Header="资源管理器集成">
+                  <MenuItem Header="添加“使用 Clip 剪辑”右键菜单" Click="RegisterShellClick" />
+                  <MenuItem Header="移除右键菜单" Click="UnregisterShellClick" />
+                </MenuItem>
+                <MenuItem Header="高级设置">
+                  <MenuItem Header="选择 FFmpeg 目录…" Click="ChooseFfmpegClick" />
+                  <Separator />
+                  <MenuItem Header="重新检测 NVIDIA" Click="RetryNvidiaClick" />
+                  <MenuItem Header="NVIDIA 检测详情…" Click="NvidiaDiagnosticsClick" />
+                </MenuItem>
               </MenuItem>
-              <MenuItem Header="高级设置">
-                <MenuItem Header="选择 FFmpeg 目录…" Click="ChooseFfmpegClick" />
-                <Separator />
-                <MenuItem Header="重新检测 NVIDIA" Click="RetryNvidiaClick" />
-                <MenuItem Header="NVIDIA 检测详情…" Click="NvidiaDiagnosticsClick" />
+              <Separator />
+              <MenuItem x:Name="RestoreProjectMenuItem" Header="导入项目" InputGestureText="Ctrl+Shift+O" Click="RestoreProjectClick">
+                <MenuItem.Icon><local:RemixIcon Kind="Upload" Width="16" Height="16" /></MenuItem.Icon>
+              </MenuItem>
+              <MenuItem x:Name="SaveProjectMenuItem" Header="导出项目" InputGestureText="Ctrl+S" Click="SaveProjectClick" IsEnabled="False">
+                <MenuItem.Icon><local:RemixIcon Kind="Copy" Width="16" Height="16" /></MenuItem.Icon>
               </MenuItem>
             </ContextMenu></Button.ContextMenu>
           </Button>

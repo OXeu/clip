@@ -23,9 +23,27 @@
             <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-export-line"></use></svg><span class="btn-label">导出视频</span>
           </button>
           <button id="cancel-button" class="btn btn-quiet" type="button" hidden>取消</button>
-          <button id="settings-button" class="btn btn-icon" type="button" title="设置" aria-label="设置">
-            <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-settings-3-line"></use></svg>
-          </button>
+          <div class="more-menu-wrap" id="more-menu-wrap">
+            <button id="more-button" class="btn btn-icon" type="button" title="更多" aria-label="更多"
+                    aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">
+              <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-more-2-fill"></use></svg>
+            </button>
+            <div id="more-menu" class="more-menu" role="menu" aria-label="更多操作" hidden>
+              <button id="more-settings-button" class="more-menu-item" type="button" role="menuitem">
+                <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-settings-3-line"></use></svg>
+                <span>设置</span>
+              </button>
+              <div class="more-menu-divider" role="separator"></div>
+              <button id="open-project-button" class="more-menu-item" type="button" role="menuitem">
+                <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-upload-2-line"></use></svg>
+                <span>导入项目</span><span class="menu-shortcut">Ctrl+Shift+O</span>
+              </button>
+              <button id="save-project-button" class="more-menu-item" type="button" role="menuitem" disabled>
+                <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-file-copy-line"></use></svg>
+                <span>导出项目</span><span class="menu-shortcut">Ctrl+S</span>
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -234,13 +252,13 @@
       <form method="dialog">
         <div class="dialog-header recovery-header">
           <div>
-            <span class="eyebrow">未完成的剪辑</span>
+            <span class="eyebrow" id="recovery-eyebrow">未完成的剪辑</span>
             <h2 id="recovery-title">继续上次的工作？</h2>
           </div>
-          <span class="badge">已自动保存</span>
+          <span class="badge" id="recovery-badge">已自动保存</span>
         </div>
         <div class="dialog-body">
-          <p class="recovery-copy">
+          <p class="recovery-copy" id="recovery-copy">
             剪辑点和工作位置已经找回。出于浏览器隐私限制，还需要重新选择原视频才能继续。
           </p>
           <div class="recovery-files" aria-live="polite">
@@ -289,6 +307,7 @@
 
     <input id="file-input" class="sr-only" type="file" accept="video/*,.mp4,.mov,.m4v,.mkv,.webm" multiple />
     <input id="recovery-file-input" class="sr-only" type="file" accept="video/*,.mp4,.mov,.m4v,.mkv,.webm" multiple />
+    <input id="project-file-input" class="sr-only" type="file" accept=".clip,application/json" />
     <script type="module" src="/src/app.ts"></script>
   </body>
 </html>

@@ -7,8 +7,10 @@ import {
   clearStoredSession,
   fingerprintFile,
   loadStoredSession,
+  parseProjectFile,
   sameVideo,
   saveStoredSession,
+  serializeProjectFile,
   type SessionStorageLike,
   type StoredEditSession,
 } from '../src/session.ts';
@@ -96,5 +98,14 @@ describe('sessionStorage 数据', () => {
     assert.equal(loadStoredSession(storage), null);
     storage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ ...session, version: 2 }));
     assert.equal(loadStoredSession(storage), null);
+  });
+
+  it('可导出并重新解析带格式标记的 .clip 文件', () => {
+    const serialized = serializeProjectFile(session);
+    const parsed = parseProjectFile(serialized);
+    assert.equal(parsed.format, 'clip-project');
+    assert.deepEqual({ ...parsed, format: undefined }, { ...session, format: undefined });
+    assert.throws(() => parseProjectFile(JSON.stringify(session)), /格式无效|版本/);
+    assert.throws(() => parseProjectFile('{bad json'), /JSON/);
   });
 });

@@ -63,10 +63,21 @@ export function h264CodecCandidates(
 ): string[] {
   const high = h264CodecFor(width, height, frameRate);
   const level = high.slice(-2);
+  const requiredLevel = Number.parseInt(level, 16);
   const candidates: string[] = [];
-  const match = preferred?.match(/^(avc1\.[0-9a-f]{4})[0-9a-f]{2}$/i);
-  if (match) candidates.push(`${match[1]}${level}`);
-  candidates.push(high, `avc1.4d00${level}`, `avc1.4200${level}`);
+  const match = preferred?.match(/^(avc1\.[0-9a-f]{4})([0-9a-f]{2})$/i);
+  if (match) {
+    // 不主动降低已经探测成功的 level；只在本次输出要求更高时提升。
+    const preferredLevel = Number.parseInt(match[2]!, 16);
+    const adjusted = Math.max(requiredLevel, preferredLevel).toString(16).padStart(2, '0');
+    candidates.push(`${match[1]}${adjusted}`);
+  }
+
+  // Chromium/显卡驱动的 H.264 能力声明并不完全一致：部分组合在 1080p30
+  // 会拒绝 Main Level 4.0，却接受旧探测一直使用的 Main Level 4.2。
+  // 4.2 是更宽松的上限，既兼容这些实现，也不会低报实际流所需的 level。
+  const mainLevel = Math.max(requiredLevel, 0x28).toString(16).padStart(2, '0');
+  candidates.push(high, `avc1.4d00${mainLevel}`, `avc1.4200${level}`);
   return [...new Set(candidates)];
 }
 
@@ -135,7 +146,8 @@ export async function detectCapabilities(
     );
   }
 
-  // 依次尝试：硬件优先 -> 默认 -> 软件。记录第一个可用的。
+  // 先穷举所有 profile 的硬件实现，再考虑默认/软件实现。否则可能出现
+  // High profile 的软件编码先被选中，而后面的 Main profile 明明可硬编却没机会测试。
   let h264Codec: string | null = null;
   let h264Hardware = false;
   const codecs = h264CodecCandidates(width, height, frameRate);
@@ -145,15 +157,16 @@ export async function detectCapabilities(
       h264Hardware = true;
       break;
     }
-    if (await videoSupported(codec, width, height, frameRate, bitrate)) {
-      h264Codec = codec;
-      h264Hardware = false;
-      break;
-    }
-    if (await videoSupported(codec, width, height, frameRate, bitrate, 'prefer-software')) {
-      h264Codec = codec;
-      h264Hardware = false;
-      break;
+  }
+  if (!h264Codec) {
+    for (const acceleration of [undefined, 'prefer-software'] as const) {
+      for (const codec of codecs) {
+        if (await videoSupported(codec, width, height, frameRate, bitrate, acceleration)) {
+          h264Codec = codec;
+          break;
+        }
+      }
+      if (h264Codec) break;
     }
   }
 
@@ -209,7 +222,7 @@ export function chooseRoute(
 /** 供界面展示的一行摘要。 */
 export function describeCapabilities(capabilities: Capabilities): string {
   const video = capabilities.webCodecsVideo
-    ? `WebCodecs H.264${capabilities.h264Hardware ? '（硬件）' : '（软件）'}`
+    ? `WebCodecs H.264${capabilities.h264Hardware ? '（硬件优先）' : '（软件）'}`
     : 'FFmpeg.wasm 软件编码';
   const audio = capabilities.aacEncoder
     ? 'WebCodecs AAC'

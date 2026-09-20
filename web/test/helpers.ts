@@ -132,6 +132,10 @@ export function prepareFixtures(): readonly FixtureFile[] {
         join(fixtureDir, 'landscape-4s-30fps.mkv'),
       ),
     },
+    {
+      file: { name: 'high-rate-1s-60fps.mp4', path: join(fixtureDir, 'high-rate-1s-60fps.mp4'), duration: 1, width: 320, height: 180, hasAudio: false },
+      args: silentArgs(join(fixtureDir, 'high-rate-1s-60fps.mp4'), 1, '320x180', 60),
+    },
   ];
 
   const refresh = process.env.CLIP_REFRESH_FIXTURES === '1';

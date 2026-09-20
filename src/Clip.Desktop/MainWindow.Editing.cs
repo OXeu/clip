@@ -175,6 +175,8 @@ public partial class MainWindow
         TimelineView.Duration = _project.Duration;
         var mediaVisibility = hasMedia ? Visibility.Visible : Visibility.Collapsed;
         TimelineRegion.Visibility = TimelineSplitter.Visibility = ImportButton.Visibility = ExportButtonGroup.Visibility = mediaVisibility;
+        SaveProjectMenuItem.IsEnabled = ready && hasMedia;
+        RestoreProjectMenuItem.IsEnabled = ready;
         PreviewFooter.Visibility = mediaVisibility;
         TimelineRow.MinHeight = hasMedia ? 180 : 0;
         // 两个星号行由原生 GridSplitter 调整比例；编辑、播放和窗口缩放不重置用户的布局。

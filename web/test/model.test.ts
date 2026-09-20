@@ -356,6 +356,12 @@ describe('项目快照恢复', () => {
     assert.equal(restored.findClip(right)?.clip.speed, 2);
     assert.equal(restored.canUndo, false);
     assert.equal(restored.canRedo, false);
+
+    const desktopJson = JSON.parse(JSON.stringify(original.exportSnapshot())) as {
+      tracks: Array<{ clips: Array<Record<string, unknown>> }>;
+    };
+    desktopJson.tracks.flatMap((lane) => lane.clips).forEach((clip) => { if (!('name' in clip)) clip.name = null; });
+    assert.deepEqual(EditProject.fromSnapshot(desktopJson).exportSnapshot(), original.exportSnapshot());
   });
 
   it('拒绝损坏、越界或重复 ID 的存档', () => {

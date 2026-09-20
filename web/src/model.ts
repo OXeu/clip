@@ -224,7 +224,7 @@ function parseProjectSnapshot(value: unknown): ProjectState {
         || typeof clipCandidate.end !== 'number'
         || typeof clipCandidate.speed !== 'number'
         || !(clipCandidate.kind === undefined || Object.values(ClipKind).includes(clipCandidate.kind as ClipKind))
-        || !(clipCandidate.name === undefined || typeof clipCandidate.name === 'string')
+        || !(clipCandidate.name === undefined || clipCandidate.name === null || typeof clipCandidate.name === 'string')
       ) throw new Error('保存的片段信息不完整。');
       const clip: VideoClip = {
         id: clipCandidate.id,

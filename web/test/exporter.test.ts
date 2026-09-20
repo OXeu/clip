@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { h264CodecCandidates } from '../src/capabilities.ts';
+import { waitForCodecCapacity } from '../src/codec-queue.ts';
 import {
   buildWasmConcatArguments,
   FrameQueue,
@@ -55,10 +56,18 @@ describe('WebCodecs 视频时间戳', () => {
     assert.equal(candidates.includes('avc1.640020'), false);
   });
 
+  it('保留 Chromium 兼容的 Main Level 4.2 探测候选且不降低已支持的 level', () => {
+    assert.ok(h264CodecCandidates(1920, 1080, 30).includes('avc1.4d0028'));
+    assert.equal(h264CodecCandidates(1920, 1080, 30, 'avc1.4d0028')[0], 'avc1.4d0028');
+  });
+
   it('使用 realtime 模式防止硬件编码器输出 B 帧重排', () => {
-    const config = webCodecsVideoConfig('avc1.640028', 1920, 1080, 8_000_000, 60);
+    const config = webCodecsVideoConfig(
+      'avc1.640028', 1920, 1080, 8_000_000, 60, 'prefer-hardware',
+    );
     assert.equal(config.latencyMode, 'realtime');
     assert.equal(config.framerate, 60);
+    assert.equal(config.hardwareAcceleration, 'prefer-hardware');
   });
 
   it('识别 mp4-muxer 的 DTS 回退错误以触发安全回退', () => {
@@ -88,6 +97,30 @@ describe('WebCodecs 解码背压', () => {
     await producer;
     assert.equal(released, true, '消费帧后生产方应立即恢复');
     queue.stop();
+  });
+});
+
+describe('WebCodecs 编码背压', () => {
+  it('由 dequeue 事件恢复，不依赖后台会被节流的页面计时器', async () => {
+    class FakeCodec extends EventTarget {
+      encodeQueueSize = 9;
+
+      dequeue(): void {
+        this.encodeQueueSize = 8;
+        this.dispatchEvent(new Event('dequeue'));
+      }
+    }
+
+    const codec = new FakeCodec();
+    let completed = false;
+    const waiting = waitForCodecCapacity(codec, 8).then(() => {
+      completed = true;
+    });
+    await Promise.resolve();
+    assert.equal(completed, false);
+    codec.dequeue();
+    await waiting;
+    assert.equal(completed, true);
   });
 });
 

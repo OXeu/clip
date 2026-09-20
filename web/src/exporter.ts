@@ -18,6 +18,7 @@
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 
 import { EncoderRoute, h264CodecCandidates, type Capabilities } from './capabilities.ts';
+import { waitForCodecCapacity } from './codec-queue.ts';
 import { FfmpegRunner, type ExportProgress } from './ffmpeg.ts';
 import {
   buildAudioFilter,
@@ -115,6 +116,7 @@ export function webCodecsVideoConfig(
   height: number,
   bitrate: number,
   frameRate: number,
+  hardwareAcceleration: HardwareAcceleration = 'no-preference',
 ): VideoEncoderConfig {
   return {
     codec,
@@ -122,6 +124,7 @@ export function webCodecsVideoConfig(
     height,
     bitrate,
     framerate: frameRate,
+    hardwareAcceleration,
     latencyMode: 'realtime',
   };
 }
@@ -356,6 +359,7 @@ async function feedClipSamples(
 async function createSourceDecoder(
   demuxed: DemuxedFile,
   queue: FrameQueue,
+  preferHardware: boolean,
 ): Promise<VideoDecoder> {
   const track = demuxed.video;
   if (!track) throw new Error('素材中没有视频轨。');
@@ -363,16 +367,30 @@ async function createSourceDecoder(
     output: (frame) => queue.push(frame),
     error: (error) => queue.fail(error instanceof Error ? error : new Error(String(error))),
   });
-  const config: VideoDecoderConfig = {
+  const baseConfig: VideoDecoderConfig = {
     codec: track.codec,
     codedWidth: track.width,
     codedHeight: track.height,
     optimizeForLatency: false,
   };
   // avcC/hvcC 配置盒；WebCodecs 用它确定 profile 与参数集。
-  if (track.description) config.description = track.description;
-  const support = await VideoDecoder.isConfigSupported(config);
-  if (!support.supported) {
+  if (track.description) baseConfig.description = track.description;
+  const candidates: VideoDecoderConfig[] = preferHardware
+    ? [{ ...baseConfig, hardwareAcceleration: 'prefer-hardware' }, baseConfig]
+    : [baseConfig];
+  let config: VideoDecoderConfig | null = null;
+  for (const candidate of candidates) {
+    try {
+      const support = await VideoDecoder.isConfigSupported(candidate);
+      if (support.supported) {
+        config = candidate;
+        break;
+      }
+    } catch {
+      // 硬件实现不接受该素材时继续尝试浏览器默认实现。
+    }
+  }
+  if (!config) {
     throw new Error(`浏览器无法解码 ${track.codec}，请改用 ffmpeg.wasm 路线。`);
   }
   decoder.configure(config);
@@ -430,18 +448,22 @@ async function encodeVideoTrack(
   let codec: string | null = null;
   let encoderConfig: VideoEncoderConfig | null = null;
   const candidates = h264CodecCandidates(width, height, fps, capabilities.h264Codec);
-  for (const candidate of candidates) {
-    const config = webCodecsVideoConfig(candidate, width, height, bitrate, fps);
-    try {
-      const supported = await VideoEncoder.isConfigSupported(config);
-      if (supported.supported) {
-        codec = candidate;
-        encoderConfig = config;
-        break;
+  // 先穷举各 profile 的硬件实现，再允许浏览器回落到默认实现。
+  for (const acceleration of ['prefer-hardware', 'no-preference'] as const) {
+    for (const candidate of candidates) {
+      const config = webCodecsVideoConfig(candidate, width, height, bitrate, fps, acceleration);
+      try {
+        const supported = await VideoEncoder.isConfigSupported(config);
+        if (supported.supported) {
+          codec = candidate;
+          encoderConfig = config;
+          break;
+        }
+      } catch {
+        // 某些平台会对不支持的 profile 或硬件偏好直接抛错。
       }
-    } catch {
-      // 某些平台会对不支持的 profile 直接抛错，继续尝试下一个候选。
     }
+    if (encoderConfig) break;
   }
   if (!codec || !encoderConfig) {
     throw new WebCodecsUnavailableError(
@@ -559,12 +581,9 @@ async function encodeVideoTrack(
         message: '正在用 WebCodecs 编码画面…',
       });
     }
-    // 编码队列有界，避免内存无限增长，同时让出主线程。
-    while (encoder.encodeQueueSize > 8) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      throwIfEncoderFailed();
-      checkAborted(signal);
-    }
+    // dequeue 是 WebCodecs 的原生背压信号；后台标签页会节流 setTimeout 轮询。
+    await waitForCodecCapacity(encoder, 8, signal);
+    throwIfEncoderFailed();
   };
 
   const openDecoders = new Map<string, SourceDecoder>();
@@ -577,7 +596,7 @@ async function encodeVideoTrack(
       if (!source) {
         const demuxed = await sources.get(clip.media.path);
         const queue = new FrameQueue();
-        const decoder = await createSourceDecoder(demuxed, queue);
+        const decoder = await createSourceDecoder(demuxed, queue, options.hardwareDecode);
         source = { decoder, demuxed, queue };
         openDecoders.set(key, source);
       }

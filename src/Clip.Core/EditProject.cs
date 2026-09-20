@@ -18,6 +18,64 @@ public sealed class EditProject
 
     public EditProject() => _tracks.Add(new(Guid.NewGuid(), "轨道 1", true, Array.AsReadOnly(Array.Empty<VideoClip>())));
 
+    /// <summary>Creates a JSON-friendly project snapshot without persisting undo/redo history.</summary>
+    public EditProjectSnapshot ExportSnapshot() => new(_tracks.ToArray(), _sources.ToArray());
+
+    /// <summary>Restores and validates an untrusted snapshot, optionally relinking source paths.</summary>
+    public static EditProject FromSnapshot(EditProjectSnapshot snapshot, IReadOnlyDictionary<string, string>? sourcePaths = null)
+    {
+        if (snapshot?.Tracks is null || snapshot.Sources is null || snapshot.Tracks.Length == 0)
+            throw new InvalidDataException("保存的剪辑项目格式无效。");
+        if (snapshot.Tracks.Count(track => track.IsMain) != 1)
+            throw new InvalidDataException("保存的项目缺少唯一主轨道。");
+
+        var sources = new Dictionary<string, MediaInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var source in snapshot.Sources)
+        {
+            if (source is null || string.IsNullOrWhiteSpace(source.Path) || sources.ContainsKey(source.Path) || source.IsHdr)
+                throw new InvalidDataException("保存的项目包含无效或重复素材。");
+            var path = sourcePaths is not null && sourcePaths.TryGetValue(source.Path, out var relinked) ? relinked : source.Path;
+            var normalized = source with { Path = path };
+            (VideoClip.Create(normalized) with { Id = Guid.Empty }).Validate();
+            sources.Add(source.Path, normalized);
+        }
+
+        var trackIds = new HashSet<Guid>();
+        var clipIds = new HashSet<Guid>();
+        var tracks = new List<VideoTrack>(snapshot.Tracks.Length);
+        foreach (var track in snapshot.Tracks)
+        {
+            if (track is null || track.Id == Guid.Empty || !trackIds.Add(track.Id) || string.IsNullOrWhiteSpace(track.Name) ||
+                track.Clips is null || !Enum.IsDefined(track.Kind) || track.BindingId == Guid.Empty || track.CompanionGroupId == Guid.Empty)
+                throw new InvalidDataException("保存的轨道信息无效。");
+            var clips = new List<VideoClip>(track.Clips.Count);
+            foreach (var clip in track.Clips)
+            {
+                if (clip is null || clip.Id == Guid.Empty || !clipIds.Add(clip.Id) || clip.Media is null || !Enum.IsDefined(clip.Kind) ||
+                    !sources.TryGetValue(clip.Media.Path, out var media))
+                    throw new InvalidDataException("保存的片段引用了无效素材或重复 ID。");
+                var normalized = clip with { Media = media };
+                normalized.Validate();
+                clips.Add(normalized);
+            }
+            tracks.Add(track with { Clips = clips.AsReadOnly() });
+        }
+
+        var companionGroups = tracks.Where(track => track.CompanionGroupId.HasValue)
+            .GroupBy(track => track.CompanionGroupId!.Value);
+        if (companionGroups.Any(group => group.Count() != 2 ||
+            group.Count(track => track.Kind == TrackKind.Video) != 1 || group.Count(track => track.Kind == TrackKind.Audio) != 1))
+            throw new InvalidDataException("保存的项目包含无效的伴生音视频轨道组。");
+        if (tracks.Where(track => track.BindingId.HasValue).GroupBy(track => track.BindingId!.Value).Any(group => group.Count() < 2))
+            throw new InvalidDataException("保存的项目包含无效的轨道绑定。");
+
+        var project = new EditProject();
+        project._tracks.Clear();
+        project._tracks.AddRange(tracks);
+        project._sources.AddRange(snapshot.Sources.Select(source => sources[source.Path]));
+        return project;
+    }
+
     public VideoTrack Import(MediaInfo media)
     {
         var clip = VideoClip.Create(media);

@@ -192,6 +192,65 @@ button:disabled {
   margin-right: 0;
 }
 
+.more-menu-wrap {
+  position: relative;
+}
+
+.more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 100;
+  width: max-content;
+  min-width: 224px;
+  padding: 4px;
+  border: 1px solid var(--neutral-stroke-2);
+  border-radius: var(--radius-control);
+  background: var(--neutral-background-1);
+  box-shadow: var(--shadow-surface);
+}
+
+.more-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--neutral-foreground-1);
+  text-align: left;
+}
+
+.more-menu-item:hover:not(:disabled),
+.more-menu-item:focus-visible {
+  background: var(--selection-background);
+  outline: none;
+}
+
+.more-menu-item:disabled {
+  color: var(--disabled-foreground);
+}
+
+.more-menu-divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--neutral-stroke-2);
+}
+
+.menu-shortcut {
+  margin-left: auto;
+  padding-left: 20px;
+  color: var(--neutral-foreground-3);
+  font-size: var(--text-caption);
+}
+
+.more-menu-item:disabled .menu-shortcut {
+  color: var(--disabled-foreground);
+}
+
 /* ---------- 按钮 ---------- */
 
 .btn {

@@ -7,6 +7,7 @@
 
 import type { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 
+import { waitForCodecCapacity } from './codec-queue.ts';
 import type { DemuxedFile } from './mp4demux.ts';
 import { clipDuration, hasAudio, type MediaInfo, type VideoClip } from './model.ts';
 
@@ -340,10 +341,7 @@ export function timeStretchPcm(input: StereoPcm, speed: number, outputLength: nu
 }
 
 async function waitForEncoderCapacity(encoder: AudioEncoder, signal?: AbortSignal): Promise<void> {
-  while (encoder.encodeQueueSize > 12) {
-    checkAborted(signal);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  }
+  await waitForCodecCapacity(encoder, 12, signal);
 }
 
 async function feedPcm(

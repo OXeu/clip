@@ -29,6 +29,7 @@ export interface WorkspaceSnapshot {
 }
 
 export interface StoredEditSession {
+  readonly format?: 'clip-project';
   readonly version: 1;
   readonly savedAt: number;
   readonly project: EditProjectSnapshot;
@@ -62,7 +63,7 @@ const validFingerprint = (value: unknown): value is SourceFingerprint =>
   && typeof value.sampleHash === 'string'
   && /^[0-9a-f]{64}$/.test(value.sampleHash);
 
-function parseStoredSession(value: unknown): StoredEditSession | null {
+export function parseStoredSession(value: unknown): StoredEditSession | null {
   if (!isRecord(value) || value.version !== 1 || !Number.isFinite(value.savedAt)) return null;
   if (!isRecord(value.project) || !Array.isArray(value.sources) || !isRecord(value.workspace)) return null;
   if (!value.sources.every(validFingerprint)) return null;
@@ -77,6 +78,25 @@ function parseStoredSession(value: unknown): StoredEditSession | null {
     || !Number.isFinite(workspace.timelineScrollLeft)
   ) return null;
   return value as unknown as StoredEditSession;
+}
+
+/** Parses a user-selected project file. Unlike sessionStorage, portable files require a format marker. */
+export function parseProjectFile(json: string): StoredEditSession {
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    throw new Error('剪辑记录文件不是有效的 JSON。');
+  }
+  const parsed = parseStoredSession(value);
+  if (!parsed || parsed.format !== 'clip-project') {
+    throw new Error('剪辑记录文件格式无效或版本不受支持。');
+  }
+  return parsed;
+}
+
+export function serializeProjectFile(session: StoredEditSession): string {
+  return JSON.stringify({ ...session, format: 'clip-project' }, null, 2);
 }
 
 export function loadStoredSession(storage: SessionStorageLike): StoredEditSession | null {

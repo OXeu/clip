@@ -455,6 +455,56 @@ Test("random multi-track edits preserve nonoverlap, speed mappings, and unique I
     }
 });
 
+Test("portable project files round-trip edits and safely relink source paths", () =>
+{
+    var project = new EditProject();
+    var imported = project.ImportSeparated(media);
+    var right = project.Split(imported.VideoTrack.Id, 4)!.Value;
+    project.SetSpeed(right, 2);
+    project.Rename(right, "结尾镜头");
+    var workspace = new WorkspaceSnapshot(imported.VideoTrack.Id, null, right, 4.5, 1.25, 2, 120);
+    var document = new ClipProjectFile(ProjectFile.FormatName, ProjectFile.CurrentVersion, 123,
+        project.ExportSnapshot(), [new(media.Path, media.FileName, 10, 1, "video/mp4", new string('0', 64))], workspace);
+
+    var json = ProjectFile.Serialize(document);
+    Check(json.Contains("\"format\": \"clip-project\"") && json.Contains("\"kind\": \"video\"") &&
+        json.Contains("\"type\": \"video/mp4\""),
+        "Project JSON is not portable camel-case data");
+    var parsed = ProjectFile.Deserialize(json);
+    var restored = EditProject.FromSnapshot(parsed.Project,
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [media.Path] = "moved/source.mp4" });
+    var clip = restored.FindClip(right)!.Value.Clip;
+    Check(clip.DisplayName == "结尾镜头" && clip.Speed == 2 && clip.Media.Path == "moved/source.mp4",
+        "Project edit data or source relinking was lost");
+    Check(!restored.CanUndo && !restored.CanRedo, "Restored project unexpectedly persisted undo history");
+    try
+    {
+        ProjectFile.Deserialize(json.Replace("\"version\": 1", "\"version\": 2"));
+        throw new Exception("Unsupported project version was accepted");
+    }
+    catch (InvalidDataException) { }
+});
+
+await TestAsync("source fingerprints sample content and ignore file timestamps", async () =>
+{
+    var path = Path.Combine(Path.GetTempPath(), $"clip-fingerprint-{Guid.NewGuid():N}.bin");
+    try
+    {
+        var bytes = new byte[ProjectFile.FingerprintSampleBytes * 5];
+        for (var i = 0; i < bytes.Length; i++) bytes[i] = (byte)(i % 251);
+        await File.WriteAllBytesAsync(path, bytes);
+        var first = await ProjectFile.FingerprintAsync(path, "source.mp4");
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddDays(-3));
+        var timestampChanged = await ProjectFile.FingerprintAsync(path, "source.mp4");
+        Check(ProjectFile.SameVideo(first, timestampChanged), "Timestamp change altered source identity");
+        bytes[bytes.Length / 2] ^= 0xff;
+        await File.WriteAllBytesAsync(path, bytes);
+        var changed = await ProjectFile.FingerprintAsync(path, "source.mp4");
+        Check(!ProjectFile.SameVideo(first, changed), "Sampled content change was not detected");
+    }
+    finally { if (File.Exists(path)) File.Delete(path); }
+});
+
 Test("probe ignores cover art and handles portrait rotation, rational FPS and silent sources", () =>
 {
     const string json = """

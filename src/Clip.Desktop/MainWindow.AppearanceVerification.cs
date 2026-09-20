@@ -71,7 +71,7 @@ public partial class MainWindow
 
                 var naming = new ClipNameWindow("开场镜头") { Owner = this };
                 CaptureWindow(naming, $"smoke-theme-{theme}-name.png");
-                var notice = new NoticeWindow("关闭视频剪辑", "关闭后轨道编辑不会保存。请确认已导出需要的片段。", "确认关闭", "继续剪辑") { Owner = this };
+                var notice = new NoticeWindow("关闭视频剪辑", "尚未导出项目的剪辑内容将丢失。请确认已导出项目或需要的视频。", "确认关闭", "继续剪辑") { Owner = this };
                 CaptureWindow(notice, $"smoke-theme-{theme}-notice.png");
                 using var http = new HttpClient(new AppearanceUpdateHandler());
                 var update = new UpdateWindow(new(http), AppBuild.FromAssembly(typeof(App).Assembly), UpdateChannel.Release) { Owner = this };

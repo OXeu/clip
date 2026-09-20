@@ -152,6 +152,11 @@ export class TimelineView {
     this.draw();
   }
 
+  clearWaveforms(): void {
+    this.waveforms.clear();
+    this.draw();
+  }
+
   private get duration(): number {
     return this.project ? this.project.duration : 0;
   }

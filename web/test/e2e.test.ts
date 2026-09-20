@@ -318,6 +318,59 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     await page.context().close();
   });
 
+  it('导出 .clip 文件后可恢复，取消恢复不会覆盖当前项目', async () => {
+    const { page, errors } = await openPage();
+    await importFixture(page, fixtures[0]!);
+    await page.evaluate(() => {
+      const api = (window as unknown as { __clip: { seek: (time: number) => void; split: () => boolean } }).__clip;
+      api.seek(1.5);
+      api.split();
+    });
+
+    await page.click('#more-button');
+    assert.equal(await page.locator('#more-menu').getAttribute('role'), 'menu');
+    assert.deepEqual(
+      await page.locator('.more-menu-item > span:first-of-type').allTextContents(),
+      ['设置', '导入项目', '导出项目'],
+    );
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.click('#save-project-button'),
+    ]);
+    const projectPath = await download.path();
+    assert.ok(projectPath, '浏览器没有生成 .clip 下载文件');
+    const projectDocument = JSON.parse(readFileSync(projectPath, 'utf8')) as {
+      format?: string;
+      project?: { sources?: unknown[] };
+    };
+    assert.equal(projectDocument.format, 'clip-project');
+    assert.equal(projectDocument.project?.sources?.length, 1);
+    assert.match(download.suggestedFilename(), /^Clip-\d{12}\.clip$/);
+
+    await importFixture(page, fixtures[1]!);
+    await page.setInputFiles('#project-file-input', projectPath);
+    await page.locator('#recovery-dialog').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#recovery-title').textContent(), '导入这份项目？');
+    await page.click('#recovery-discard');
+    await page.waitForFunction(() => !document.getElementById('recovery-dialog')?.hasAttribute('open'));
+    let state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.equal(state.sources.length, 2, '取消文件恢复覆盖了当前项目');
+
+    await page.setInputFiles('#project-file-input', projectPath);
+    await page.locator('#recovery-dialog').waitFor({ state: 'visible' });
+    await page.setInputFiles('#recovery-file-input', fixtures[0]!.path);
+    await page.waitForFunction(() => !document.getElementById('recovery-dialog')?.hasAttribute('open'));
+    state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.equal(state.sources.length, 1);
+    assert.equal(state.tracks.filter((track) => track.kind === 'video').flatMap((track) => track.clips).length, 2);
+    assert.ok(Math.abs(state.position - 1.5) < 0.01);
+    assert.equal(errors.length, 0, `剪辑记录往返期间不应报错：${errors.join(' | ')}`);
+    await page.context().close();
+  });
+
   it('放弃恢复需二次确认，确认后才清除存档', async () => {
     const { page } = await openPage();
     await importFixture(page, fixtures[0]!);
@@ -404,6 +457,47 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     assert.equal(summary.hasAudio, true, '导出后应包含音轨');
     assert.equal(summary.audioCodec, result.audioCodec, `音频编码应为 ${result.audioCodec}，实际 ${summary.audioCodec}`);
     assert.ok(summary.frameCount >= 40, `应至少有 40 帧，实际 ${summary.frameCount}`);
+    assert.equal(errors.length, 0, `导出期间不应报错：${errors.join(' | ')}`);
+
+    await page.context().close();
+  });
+
+  it('WebCodecs 按实际 1440p60 输出提升 H.264 level 而不回退 wasm', async (t) => {
+    const { page, errors } = await openPage();
+    const supportsH264 = await page.evaluate(() => Boolean((window as unknown as {
+      __clip: { capabilities: () => { webCodecsVideo?: boolean } | null };
+    }).__clip.capabilities()?.webCodecsVideo));
+    if (!supportsH264) {
+      await page.context().close();
+      t.skip('当前 Chromium 构建未提供 H.264 WebCodecs 编码器');
+      return;
+    }
+    const fixture = fixtures.find((item) => item.name === 'high-rate-1s-60fps.mp4');
+    assert.ok(fixture, '应准备 60fps 回归素材');
+    await importFixture(page, fixture);
+
+    const result = await page.evaluate(async () => {
+      const api = (window as unknown as {
+        __clip: { exportToBlob: (request?: Record<string, unknown>) => Promise<ExportResultShape> };
+      }).__clip;
+      return api.exportToBlob({
+        route: 'webcodecs-video',
+        width: 2560,
+        height: 1440,
+      });
+    });
+    assert.equal(
+      result.route,
+      'webcodecs-video',
+      `1440p60 应继续使用 WebCodecs，实际 ${result.route}${result.fellBack ? `（${result.fellBack}）` : ''}`,
+    );
+    assert.match(result.codec ?? '', /^avc1\.[0-9a-f]{4}32$/i,
+      `1440p60 应使用 H.264 Level 5.1，实际 ${result.codec}`);
+    const path = await saveExport(page, result, 'export-webcodecs-1440p60.mp4');
+    const summary = probeFile(path);
+    assert.equal(summary.width, 2560);
+    assert.equal(summary.height, 1440);
+    assert.ok(summary.frameCount >= 55, `应输出约 60 帧，实际 ${summary.frameCount}`);
     assert.equal(errors.length, 0, `导出期间不应报错：${errors.join(' | ')}`);
 
     await page.context().close();

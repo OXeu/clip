@@ -167,7 +167,7 @@ public partial class MainWindow
             "Context-menu delete did not return focus to the timeline.");
         if (realMedia) await WaitForPreviewAsync(() => _mediaReady && _operation is null, "Preview failed after delete.");
         var remaining = _project.MainTrack.Clips.ToArray();
-        UIElement[] targets = [TimelineView, PlayButton, BackButton, ForwardButton, SettingsButton, ExportButton, ExportTracksButton];
+        UIElement[] targets = [TimelineView, PlayButton, BackButton, ForwardButton, MoreButton, ExportButton, ExportTracksButton];
         foreach (var target in targets.Where(t => t.IsEnabled && t.IsVisible))
         {
             RaiseEditorKey(Key.Space, target);
@@ -185,6 +185,19 @@ public partial class MainWindow
         finally { SetBusy(false); }
         Restore(false);
         Require(_project.MainTrack.Clips.SequenceEqual(before), "Space changed project history.");
+    }
+
+    private async Task VerifyMoreMenuAsync(bool hasProject)
+    {
+        MoreClick(this, new RoutedEventArgs());
+        await WaitForPreviewAsync(() => MoreMenu.IsOpen, "The More button did not open its dropdown menu.");
+        var items = MoreMenu.Items.OfType<MenuItem>().ToArray();
+        Require(items.Select(item => item.Header?.ToString()).SequenceEqual(new[] { "设置", "导入项目", "导出项目" }),
+            "The More dropdown did not contain the expected commands in order.");
+        Require(RestoreProjectMenuItem.IsEnabled && SaveProjectMenuItem.IsEnabled == hasProject,
+            "The project commands in the More dropdown used the wrong enabled state.");
+        UiCapture.Save(MoreMenu, hasProject ? "smoke-more-menu.png" : "smoke-more-menu-empty.png");
+        MoreMenu.IsOpen = false;
     }
 
     private async Task OpenTimelineMenuAsync(FrameworkElement target, Point point, bool realInput)
@@ -414,6 +427,7 @@ public partial class MainWindow
         Refresh();
         VerifyBrandHeader();
         Require(TimelineRegion.Visibility == Visibility.Collapsed && ExportButtonGroup.Visibility == Visibility.Collapsed, "Editing controls leaked into empty state.");
+        await VerifyMoreMenuAsync(false);
         VerifyBrandButtons(this);
         VerifyWorkspaceLayout();
         UiCapture.Save(WindowRoot, "smoke-empty.png");
@@ -441,6 +455,7 @@ public partial class MainWindow
         Require(videoTracks.Length == 2 && audioTracks.Length == videoTracks.Length &&
             _project.MainTrack.Clips.Count == 0 && ExportButton.IsEnabled && ExportTracksButton.IsVisible &&
             _activeTrackId == videoTracks[1].Id, "Imports must create video tracks with companion audio slots and preview the last video track.");
+        await VerifyMoreMenuAsync(true);
         var firstVideoRow = _project.Tracks.ToList().FindIndex(track => track.Id == videoTracks[0].Id);
         var firstAudioRow = _project.Tracks.ToList().FindIndex(track => track.Id == audioTracks[0].Id);
         var videoHeight = TimelineView.TrackTop(firstVideoRow + 1) - TimelineView.TrackTop(firstVideoRow);
