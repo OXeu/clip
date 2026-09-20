@@ -12,9 +12,11 @@ import {
   type MediaInfo,
   ClipKind,
   EditProject,
+  SubtitleVerticalAlignment,
   TrackKind,
   clipDuration,
   createClip,
+  subtitleCues,
   trackDuration,
   validateClip,
 } from '../src/model.ts';
@@ -238,6 +240,47 @@ describe('音视频分轨与对齐绑定', () => {
     assert.ok(project.delete(right));
     assert.equal(project.findTrack(first.id)!.clips.length, 1);
     assert.equal(project.findTrack(second.id)!.clips.length, 2, '删除不应传播到绑定轨道');
+  });
+});
+
+describe('字幕伴生轨', () => {
+  it('字幕轨跟随视频组排序，并编辑绝对时间范围', () => {
+    const project = new EditProject();
+    const imported = project.importSeparated(media);
+    const subtitle = project.addSubtitleTrack(imported.videoTrack.id)!;
+    assert.equal(subtitle.kind, TrackKind.Subtitle);
+    assert.equal(subtitle.companionGroupId, imported.videoTrack.companionGroupId);
+    assert.deepEqual(project.companionTracks(imported.videoTrack.id).map((track) => track.kind),
+      [TrackKind.Video, TrackKind.Audio, TrackKind.Subtitle]);
+
+    const cueId = project.addSubtitle(subtitle.id, 1, 3, '第一句')!;
+    assert.ok(project.updateSubtitle(cueId, { start: 1.5, end: 4, text: '更新后的字幕' }));
+    assert.deepEqual(project.findSubtitle(cueId)?.cue,
+      { id: cueId, start: 1.5, end: 4, text: '更新后的字幕' });
+    assert.throws(() => project.addSubtitle(subtitle.id, 3, 5, '重叠'), /重叠/);
+
+    assert.ok(project.setSubtitleAlignment(subtitle.id, SubtitleVerticalAlignment.Center));
+    assert.equal(project.findTrack(subtitle.id)?.subtitleRegion?.alignment, SubtitleVerticalAlignment.Center);
+    assert.ok(project.undo());
+    assert.equal(project.findTrack(subtitle.id)?.subtitleRegion?.alignment, SubtitleVerticalAlignment.Bottom);
+  });
+
+  it('字幕随项目文件往返，且不会成为视频导出目标', () => {
+    const project = new EditProject();
+    const video = project.importSeparated(media).videoTrack;
+    const subtitle = project.addSubtitleTrack(video.id)!;
+    project.addSubtitle(subtitle.id, 0.5, 2.5, '保存在项目里的字幕');
+    const restored = EditProject.fromSnapshot(JSON.parse(JSON.stringify(project.exportSnapshot())));
+    const restoredSubtitle = restored.subtitleTracks(video.id)[0]!;
+    assert.equal(subtitleCues(restoredSubtitle)[0]?.text, '保存在项目里的字幕');
+    assert.equal(restored.exportableTracks.length, 1);
+    assert.equal(restored.exportableTracks[0]?.id, video.id);
+    assert.throws(() => EditProject.fromSnapshot({
+      ...project.exportSnapshot(),
+      tracks: project.exportSnapshot().tracks.map((track) => track.id === subtitle.id
+        ? { ...track, cues: [{ id: 'bad', start: 9, end: 11, text: '越界' }] }
+        : track),
+    }), /字幕/);
   });
 });
 

@@ -1,7 +1,39 @@
+using System.Text.Json.Serialization;
+
 namespace Clip.Core;
 
 public enum ClipKind { Combined, Video, Audio }
-public enum TrackKind { Video, Audio }
+public enum TrackKind { Video, Audio, Subtitle }
+public enum SubtitleVerticalAlignment { Top, Center, Bottom }
+
+public sealed record SubtitleCue(Guid Id, double Start, double End, string Text)
+{
+    public const double MinimumDuration = 0.1;
+    public double Duration => End - Start;
+
+    public void Validate(double trackDuration)
+    {
+        if (Id == Guid.Empty || !double.IsFinite(Start) || !double.IsFinite(End) || Start < 0 ||
+            End - Start < MinimumDuration || End > trackDuration + 0.001 || string.IsNullOrWhiteSpace(Text))
+            throw new ArgumentException("字幕片段的时间或文本无效。");
+    }
+}
+
+/// <summary>Normalized subtitle guide rectangle inside the rendered video frame.</summary>
+public sealed record SubtitleRegion(
+    double X = 0.1, double Y = 0.72, double Width = 0.8, double Height = 0.16,
+    SubtitleVerticalAlignment Alignment = SubtitleVerticalAlignment.Bottom)
+{
+    public static SubtitleRegion Default { get; } = new();
+
+    public void Validate()
+    {
+        if (!double.IsFinite(X) || !double.IsFinite(Y) || !double.IsFinite(Width) || !double.IsFinite(Height) ||
+            X < 0 || Y < 0 || Width < 0.05 || Height < 0.05 || X + Width > 1.000001 || Y + Height > 1.000001 ||
+            !Enum.IsDefined(Alignment))
+            throw new ArgumentException("字幕矩形框超出视频画面。");
+    }
+}
 
 public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double End, double Speed = 1, ClipKind Kind = ClipKind.Combined)
 {
@@ -30,9 +62,15 @@ public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double En
 }
 
 public sealed record VideoTrack(Guid Id, string Name, bool IsMain, IReadOnlyList<VideoClip> Clips,
-    TrackKind Kind = TrackKind.Video, Guid? BindingId = null, Guid? CompanionGroupId = null)
+    TrackKind Kind = TrackKind.Video, Guid? BindingId = null, Guid? CompanionGroupId = null,
+    IReadOnlyList<SubtitleCue>? Cues = null, SubtitleRegion? SubtitleRegion = null)
 {
-    public double Duration => Clips.Sum(c => c.Duration);
+    [JsonIgnore]
+    public IReadOnlyList<SubtitleCue> SubtitleCues => Cues ?? Array.Empty<SubtitleCue>();
+    [JsonIgnore]
+    public double Duration => Kind == TrackKind.Subtitle
+        ? (SubtitleCues.Count == 0 ? 0 : SubtitleCues.Max(cue => cue.End))
+        : Clips.Sum(c => c.Duration);
 }
 
 public readonly record struct SeparatedImport(VideoTrack VideoTrack, VideoTrack AudioTrack);
@@ -43,3 +81,5 @@ public readonly record struct ClipPosition(Guid TrackId, int Index, VideoClip Cl
 }
 
 public readonly record struct ClipPlayback(ClipPosition Position, bool RequiresSeek, bool ReachedEnd);
+
+public readonly record struct SubtitlePosition(Guid TrackId, int Index, SubtitleCue Cue);

@@ -113,6 +113,56 @@ Test("nonempty companion tracks still require coverage at the split point", () =
         "A nonempty companion track missing the split point was ignored");
 });
 
+Test("subtitle tracks stay inside their video group and edit absolute cue ranges", () =>
+{
+    var project = new EditProject();
+    var imported = project.ImportSeparated(media);
+    var first = project.AddSubtitleTrack(imported.VideoTrack.Id) ?? throw new Exception("Subtitle track was not created");
+    var second = project.AddSubtitleTrack(imported.VideoTrack.Id) ?? throw new Exception("Second subtitle track was not created");
+    Check(project.CompanionTracks(imported.VideoTrack.Id).Select(track => track.Kind)
+        .SequenceEqual(new[] { TrackKind.Video, TrackKind.Audio, TrackKind.Subtitle, TrackKind.Subtitle }),
+        "Subtitle tracks were detached from the video group");
+    var opening = project.AddSubtitle(first.Id, 1, 2, "开场字幕") ?? throw new Exception("Subtitle cue was not created");
+    Check(project.AddSubtitle(first.Id, 2, 2, "重叠") is null, "Overlapping subtitle cue was accepted");
+    Check(project.UpdateSubtitle(opening, 1.5, 4.5, "新的内容"), "Subtitle cue could not be moved or resized");
+    var cue = project.FindSubtitle(opening)!.Value.Cue;
+    Check(cue.Text == "新的内容" && cue.Start == 1.5 && cue.End == 4.5, "Subtitle cue edit was not preserved");
+    var region = new SubtitleRegion(0.2, 0.1, 0.6, 0.25, SubtitleVerticalAlignment.Center);
+    Check(project.SetSubtitleRegion(first.Id, region) && project.FindTrack(first.Id)!.SubtitleRegion == region,
+        "Subtitle guide rectangle was not updated");
+    Check(project.SetSubtitleAlignment(first.Id, SubtitleVerticalAlignment.Top) &&
+        project.FindTrack(first.Id)!.SubtitleRegion!.Alignment == SubtitleVerticalAlignment.Top,
+        "Subtitle alignment was not updated");
+    project.ImportSeparated(media with { Path = "other.mp4" });
+    Check(project.MoveTrack(second.Id, project.Tracks.Count) && project.CompanionTracks(imported.VideoTrack.Id).Count == 4,
+        "Moving a subtitle track detached the companion group");
+    Check(project.Undo(), "Subtitle group move could not be undone");
+});
+
+Test("subtitle project snapshots validate text, bounds, ordering and layout", () =>
+{
+    var project = new EditProject();
+    var video = project.ImportSeparated(media).VideoTrack;
+    var subtitle = project.AddSubtitleTrack(video.Id)!;
+    project.AddSubtitle(subtitle.Id, 0.5, 2.5, "第一行\n第二行");
+    project.SetSubtitleRegion(subtitle.Id, new(0.1, 0.7, 0.8, 0.2, SubtitleVerticalAlignment.Bottom));
+    var restored = EditProject.FromSnapshot(project.ExportSnapshot());
+    Check(restored.SubtitleTracks(video.Id).Single().SubtitleCues.Single().Text == "第一行\n第二行",
+        "Subtitle snapshot lost cue text");
+
+    var track = subtitle with
+    {
+        Cues = Array.AsReadOnly(new[] { new SubtitleCue(Guid.NewGuid(), 9, 11, "越界") }),
+        SubtitleRegion = SubtitleRegion.Default
+    };
+    var broken = project.ExportSnapshot() with
+    {
+        Tracks = project.Tracks.Select(candidate => candidate.Id == subtitle.Id ? track : candidate).ToArray()
+    };
+    try { EditProject.FromSnapshot(broken); throw new Exception("Out-of-range subtitle snapshot was accepted"); }
+    catch (InvalidDataException) { }
+});
+
 Test("boundary splits do not create empty segments", () =>
 {
     var timeline = new Timeline();
