@@ -1,10 +1,13 @@
-<img src="src/Clip.Desktop/Assets/Clip.png" alt="Clip logo" width="128" height="128" />
-
-# Clip
-
-轻量的 Windows 视频剪辑工具。拖入素材，剪出需要的片段，按轨道导出。
-
-[下载 Windows 版](https://github.com/OXeu/clip/actions/workflows/windows.yml) · [使用指南](https://github.com/OXeu/clip/blob/master/docs/usage.md) · [反馈问题](https://github.com/OXeu/clip/issues)
+<div align="center">
+  <img src="src/Clip.Desktop/Assets/Clip.png" alt="Clip logo" width="128" height="128" />
+  <h1>Clip</h1>
+  <p>轻量的 Windows 视频剪辑工具。拖入素材，剪出需要的片段，按轨道导出。</p>
+  <p>
+    <a href="https://github.com/OXeu/clip/actions/workflows/windows.yml">下载 Windows 版</a> ·
+    <a href="https://github.com/OXeu/clip/blob/master/docs/usage.md">使用指南</a> ·
+    <a href="https://github.com/OXeu/clip/issues">反馈问题</a>
+  </p>
+</div>
 
 ## 界面预览
 
