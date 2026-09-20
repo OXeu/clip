@@ -125,6 +125,9 @@ jobs:
             throw 'Startup failure was not recorded.'
           }
 
+      - name: Verify README screenshot refresh and publishing guards
+        run: ./scripts/Test-ReadmeScreenshots.ps1 -CaptureDirectory artifacts/Clip-win-x64
+
       - name: Print startup and UI diagnostics on failure
         if: failure()
         run: |
@@ -190,3 +193,39 @@ jobs:
           archive: false
           if-no-files-found: error
           retention-days: 14
+
+  update-readme:
+    name: Refresh README screenshots
+    needs: build
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download this build's UI smoke screenshots
+        uses: actions/download-artifact@v8
+        with:
+          name: Windows-UI-smoke-${{ github.run_number }}
+          path: ${{ runner.temp }}/readme-ui
+
+      - name: Publish changed screenshots to the tested branch
+        shell: pwsh
+        env:
+          CAPTURE_ROOT: ${{ runner.temp }}/readme-ui
+          SOURCE_COMMIT: ${{ github.sha }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          TARGET_BRANCH: ${{ github.event.repository.default_branch }}
+        run: >-
+          ./scripts/Update-ReadmeScreenshots.ps1
+          -CaptureDirectory (Join-Path $env:CAPTURE_ROOT 'Clip-win-x64')
+          -SourceCommit $env:SOURCE_COMMIT
+          -RunId $env:WORKFLOW_RUN_ID
+          -Branch $env:TARGET_BRANCH
+          -Publish

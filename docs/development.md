@@ -32,6 +32,16 @@ dotnet run --project tests/Clip.Tests -c Release -- --integration
 
 测试入口是控制台程序，失败时返回非零退出码。[Windows CI](../.github/workflows/windows.yml) 还会验证应用启动、桌面交互、更新进程和压缩包完整性。界面截图与启动日志在 `Windows-UI-smoke-*` 产物中，更新诊断在 `Windows-update-smoke-*` 中。
 
+默认分支的推送或手动构建全部通过后，独立的 `Refresh README screenshots` 任务下载本次 smoke test 的浅色、深色主界面截图，自动更新 `docs/images/screenshot.png`、`docs/images/screenshot-dark.png` 和 README 的来源记录。截图至少为 3000 × 2000，直接使用 WPF 的高 DPI 渲染结果。
+
+回写任务使用仓库的 `GITHUB_TOKEN`，单独授予 `contents: write`；它产生的提交不会再次触发 push 流水线。PR、标签和其他分支不回写；图片字节相同则不提交。默认分支已前进时跳过旧构建，不重放、不强制推送。分支保护如禁止机器人直接提交，任务会报告失败，不修改仓库规则。
+
+回写脚本的验证复用本次真实 smoke 截图，并在临时 Git 仓库中测试更新、无变化、失败产物、低分辨率、缺失主题、过期构建和脏工作区。也可本地运行：
+
+```powershell
+./scripts/Test-ReadmeScreenshots.ps1 -CaptureDirectory artifacts/Clip-win-x64
+```
+
 ## 打包发布
 
 在 Windows 上运行：
