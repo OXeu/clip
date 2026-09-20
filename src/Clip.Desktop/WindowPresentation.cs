@@ -11,6 +11,16 @@ internal static class WindowPresentation
     private const int DialogModalFrame = 0x00000001;
     private const uint SetIcon = 0x0080;
 
+    internal static void FitInitialBounds(Window window)
+    {
+        var workArea = SystemParameters.WorkArea;
+        window.MinWidth = Math.Min(window.MinWidth, workArea.Width);
+        window.MinHeight = Math.Min(window.MinHeight, workArea.Height);
+        if (!double.IsNaN(window.Width)) window.Width = Math.Min(window.Width, workArea.Width);
+        if (!double.IsNaN(window.Height)) window.Height = Math.Min(window.Height, workArea.Height);
+        if (window.SizeToContent != SizeToContent.Manual) window.MaxHeight = workArea.Height;
+    }
+
     internal static void HideCaptionIcon(Window window)
     {
         // Keep native resizing, caption buttons, taskbar presence and Alt+Space.

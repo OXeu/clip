@@ -78,22 +78,25 @@ public sealed class TimelineControl : FrameworkElement
             var top = RulerHeight + row * RowHeight;
             if (track.Id == SelectedTrackId)
             {
-                dc.DrawRectangle(Brush("ColorBrandBackground2"), null, new Rect(0, top, ActualWidth, RowHeight));
-                dc.DrawRectangle(Brush("ColorBrandBackground"), null, new Rect(HorizontalOffset, top, 3, RowHeight));
+                dc.DrawRectangle(Brush("ColorSelectionBackground"), null, new Rect(0, top, ActualWidth, RowHeight));
             }
             else if (track.Id == ActiveTrackId)
                 dc.DrawRectangle(Brush("ColorNeutralBackground2"), null, new Rect(0, top, ActualWidth, RowHeight));
-            dc.DrawLine(new Pen(Brush("ColorNeutralStroke2"), 1), new Point(0, top + RowHeight), new Point(ActualWidth, top + RowHeight));
+            dc.DrawLine(new Pen(Brush("ColorSubtleStroke"), 1), new Point(0, top + RowHeight), new Point(ActualWidth, top + RowHeight));
+            if (track.Clips.Count == 0)
+                Text(dc, track.Name + " · 拖拽片段到这里", HorizontalOffset + ContentInset, top + 25, 12,
+                    track.Id == SelectedTrackId ? "ColorSelectionForeground" : "ColorNeutralForeground3");
             double offset = 0;
             foreach (var clip in track.Clips)
             {
                 var rect = new Rect(XAtTime(offset), top + 10, Math.Max(2, clip.Duration * Scale - 3), ClipHeight);
                 offset += clip.Duration;
                 var selected = clip.Id == SelectedId;
-                var foreground = selected ? "ColorOnBrand" : "ColorBrandForeground";
+                var foreground = selected ? "ColorSelectionForeground" : "ColorNeutralForeground1";
+                var radius = (double)FindResource("TimelineClipRadius");
                 if (_draggedClip == clip.Id) dc.PushOpacity(0.45);
-                dc.DrawRoundedRectangle(Brush(selected ? "ColorBrandBackground" : "ColorTimelineClipBackground"),
-                    new Pen(Brush(selected ? "ColorBrandBackgroundPressed" : "ColorTimelineClipBorder"), selected ? 2 : 1), rect, 4, 4);
+                dc.DrawRoundedRectangle(Brush(selected ? "ColorTimelineClipSelected" : "ColorTimelineClipBackground"),
+                    new Pen(Brush(selected ? "ColorTimelineClipSelectedBorder" : "ColorTimelineClipBorder"), 1), rect, radius, radius);
                 dc.PushClip(new RectangleGeometry(rect));
                 if (rect.Width > 44)
                 {
@@ -105,16 +108,11 @@ public sealed class TimelineControl : FrameworkElement
                         dc.Pop(); dc.Pop();
                     }
                     Text(dc, clip.DisplayName, rect.X + 28, rect.Y + 6, 12, foreground, rect.Width - 36);
-                    Text(dc, $"{clip.Speed:0.##}× · {clip.Duration:0.##} 秒", rect.X + 8, rect.Y + 28, 11, foreground, rect.Width - 16);
+                    Text(dc, $"{clip.Speed:0.##}× · {clip.Duration:0.##} 秒", rect.X + 8, rect.Y + 28, 11,
+                        selected ? "ColorSelectionForeground" : "ColorNeutralForeground3", rect.Width - 16);
                 }
                 dc.Pop();
                 if (_draggedClip == clip.Id) dc.Pop();
-            }
-            if (track.Id == ActiveTrackId && track.Clips.Count > 0)
-            {
-                var x = XAtTime(Math.Min(Position, track.Duration));
-                dc.DrawLine(new Pen(Brush("ColorNeutralForeground1"), 2), new Point(x, top + 3), new Point(x, top + RowHeight - 2));
-                dc.DrawEllipse(Brush("ColorNeutralForeground1"), null, new Point(x, top + 4), 3, 3);
             }
             if (_drop is { } drop && drop.Track == track.Id)
             {
@@ -124,7 +122,7 @@ public sealed class TimelineControl : FrameworkElement
             }
         }
         // Frozen shared ruler.
-        dc.DrawRectangle(Brush("ColorNeutralBackground1"), null, new Rect(HorizontalOffset, VerticalOffset, ActualWidth, RulerHeight));
+        dc.DrawRectangle(Brush("ColorNeutralBackground2"), null, new Rect(HorizontalOffset, VerticalOffset, ActualWidth, RulerHeight));
         var intervals = new[] { 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200, 21600, 86400 };
         var interval = intervals.FirstOrDefault(v => v * Scale >= 88, Math.Max(Duration / 8, 1));
         var first = Math.Max(0, Math.Floor(TimeAtX(HorizontalOffset) / interval) * interval);
@@ -136,6 +134,12 @@ public sealed class TimelineControl : FrameworkElement
             var label = time >= 3600 ? $"{(int)t.TotalHours:00}:{t.Minutes:00}:{t.Seconds:00}" : $"{(int)t.TotalMinutes:00}:{t.Seconds:00}" + (interval < 1 ? $".{t.Milliseconds / 100}" : "");
             if (x + label.Length * 7 < ActualWidth - 12) Text(dc, label, x + 3, VerticalOffset + 3, 11, "ColorNeutralForeground3");
             dc.DrawLine(new Pen(Brush("ColorNeutralStroke2"), 1), new Point(x, VerticalOffset + 22), new Point(x, VerticalOffset + 28));
+        }
+        if (Project.FindTrack(ActiveTrackId) is { Clips.Count: > 0 } active)
+        {
+            var x = XAtTime(Math.Min(Position, active.Duration));
+            dc.DrawLine(new Pen(Brush("ColorPlayhead"), 1.5), new Point(x, VerticalOffset + 16), new Point(x, ContentHeight));
+            dc.DrawRoundedRectangle(Brush("ColorPlayhead"), null, new Rect(x - 4, VerticalOffset + 8, 8, 12), 2, 2);
         }
     }
 
@@ -236,12 +240,6 @@ public sealed class TimelineControl : FrameworkElement
 
     private Brush Brush(string key)
     {
-        if (SystemParameters.HighContrast)
-        {
-            if (key == "ColorOnBrand") return SystemColors.HighlightTextBrush;
-            if (key is "ColorBrandBackground" or "ColorBrandBackgroundPressed") return SystemColors.HighlightBrush;
-            return key.Contains("Background", StringComparison.Ordinal) ? SystemColors.WindowBrush : SystemColors.WindowTextBrush;
-        }
         return (Brush?)TryFindResource(key) ?? SystemColors.WindowTextBrush;
     }
 

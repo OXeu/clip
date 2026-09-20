@@ -55,7 +55,7 @@ dotnet run --project tests/Clip.Tests -c Release -- --integration
 | [tests/Clip.UpdateTests](../tests/Clip.UpdateTests) | 更新检测、安装、回滚与 Windows 进程测试 |
 | [scripts](../scripts) | FFmpeg 下载、Windows 发布、打包和启动诊断 |
 
-界面使用 WPF 自带的 Fluent 浅色主题。修改样式时复用 [FluentTokens.xaml](../src/Clip.Desktop/Design/FluentTokens.xaml) 和 [FluentStyles.xaml](../src/Clip.Desktop/Design/FluentStyles.xaml)；图标使用 [RemixGeometry.xaml](../src/Clip.Desktop/Design/RemixGeometry.xaml) 与 [RemixIcon.cs](../src/Clip.Desktop/RemixIcon.cs)，第三方许可保留在 [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md)。
+界面基于 WPF Fluent，采用 Peace 的工作区布局和 Clip 标志的玫瑰色，跟随系统明暗主题。颜色集中在 [UiTheme.cs](../src/Clip.Desktop/Design/UiTheme.cs)，尺度与样式复用 [FluentTokens.xaml](../src/Clip.Desktop/Design/FluentTokens.xaml) 和 [FluentStyles.xaml](../src/Clip.Desktop/Design/FluentStyles.xaml)，见[界面设计](design.md)。图标使用 [RemixGeometry.xaml](../src/Clip.Desktop/Design/RemixGeometry.xaml) 与 [RemixIcon.cs](../src/Clip.Desktop/RemixIcon.cs)，第三方许可保留在 [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md)。
 
 ## 发布前手动检查
 

@@ -5,87 +5,105 @@
         Title="视频剪辑" Style="{StaticResource ClipWindow}" Width="1360" Height="900"
         MinWidth="1000" MinHeight="740" WindowStartupLocation="CenterScreen"
         AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver" PreviewKeyDown="OnKeyDown" Closing="OnClosing">
-  <Grid x:Name="WindowRoot" Background="{StaticResource ColorNeutralBackground3}">
+  <Grid x:Name="WindowRoot" Background="{DynamicResource ColorNeutralBackground3}">
     <Grid.RowDefinitions>
-      <RowDefinition Height="64" /><RowDefinition Height="*" />
-      <RowDefinition x:Name="TimelineRow" Height="0" /><RowDefinition Height="32" />
+      <RowDefinition Height="56" /><RowDefinition Height="*" />
+      <RowDefinition x:Name="TimelineRow" Height="0" /><RowDefinition Height="36" />
     </Grid.RowDefinitions>
 
-    <Grid x:Name="CommandHeader" Margin="24,0">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-      <TextBlock x:Name="DocumentTitle" Text="新建剪辑" Foreground="{StaticResource ColorNeutralForeground3}"
-                 VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,24,0" />
-      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-        <Button x:Name="ImportButton" Style="{StaticResource QuietButton}" Click="ImportClick" Visibility="Collapsed" Margin="0,0,8,0" ToolTip="导入素材 (Ctrl+O)">
-          <StackPanel Orientation="Horizontal"><local:RemixIcon Kind="Import" Margin="0,0,8,0" /><TextBlock Text="导入素材" /></StackPanel>
-        </Button>
-        <Grid x:Name="ExportButtonGroup" Visibility="Collapsed" Margin="0,0,12,0">
-          <Button x:Name="ExportButton" Style="{StaticResource PrimaryButton}" Click="ExportClick" IsEnabled="False">
-            <StackPanel Orientation="Horizontal"><local:RemixIcon Kind="Export" Margin="0,0,8,0" /><TextBlock Text="导出视频" /></StackPanel>
+    <Border BorderBrush="{DynamicResource ColorNeutralStroke2}" BorderThickness="0,0,0,1">
+      <Grid x:Name="CommandHeader" Margin="24,0">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+        <TextBlock x:Name="DocumentTitle" Text="新建剪辑" FontWeight="Medium" Foreground="{DynamicResource ColorNeutralForeground2}"
+                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,24,0" />
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="ImportButton" Style="{StaticResource QuietButton}" Click="ImportClick" Visibility="Collapsed" Margin="0,0,8,0" ToolTip="导入素材 (Ctrl+O)">
+            <StackPanel Orientation="Horizontal"><local:RemixIcon Kind="Import" Margin="0,0,8,0" /><TextBlock Text="导入素材" /></StackPanel>
           </Button>
-          <Button x:Name="ExportTracksButton" Style="{StaticResource PrimaryButton}" Background="Transparent" BorderBrush="Transparent" BorderThickness="0" Width="36" Padding="0" HorizontalAlignment="Right"
-                  Click="ExportTracksClick" Visibility="Collapsed" ToolTip="选择要导出的轨道" AutomationProperties.Name="选择导出轨道">
-            <Border BorderBrush="{StaticResource ColorOnBrand}" BorderThickness="1,0,0,0" Padding="10,0">
-              <Path Data="M 0,0 L 4,4 L 8,0" Stroke="{StaticResource ColorOnBrand}" StrokeThickness="1.5" VerticalAlignment="Center" />
-            </Border>
-            <Button.ContextMenu><ContextMenu x:Name="ExportTracksMenu" Placement="Bottom" Opened="ExportTracksMenuOpened" /></Button.ContextMenu>
+          <Grid x:Name="ExportButtonGroup" Visibility="Collapsed" Margin="0,0,12,0">
+            <Button x:Name="ExportButton" Style="{StaticResource PrimaryButton}" Click="ExportClick" IsEnabled="False">
+              <StackPanel Orientation="Horizontal"><local:RemixIcon Kind="Export" Margin="0,0,8,0" /><TextBlock Text="导出视频" /></StackPanel>
+            </Button>
+            <Button x:Name="ExportTracksButton" Style="{StaticResource SplitArrowButton}" Background="Transparent" BorderBrush="Transparent" BorderThickness="0"
+                    Width="36" Padding="0" HorizontalAlignment="Right"
+                    Click="ExportTracksClick" Visibility="Collapsed" ToolTip="选择要导出的轨道" AutomationProperties.Name="选择导出轨道">
+              <Border BorderBrush="{DynamicResource ColorOnBrand}" BorderThickness="1,0,0,0" Padding="10,0">
+                <Path Data="M 0,0 L 4,4 L 8,0" Stroke="{DynamicResource ColorOnBrand}" StrokeThickness="1.5" VerticalAlignment="Center" />
+              </Border>
+              <Button.ContextMenu><ContextMenu x:Name="ExportTracksMenu" Placement="Bottom" Opened="ExportTracksMenuOpened" /></Button.ContextMenu>
+            </Button>
+          </Grid>
+          <Button x:Name="SettingsButton" Style="{StaticResource IconButton}" Click="SettingsClick" ToolTip="设置" AutomationProperties.Name="设置">
+            <local:RemixIcon Kind="Settings" />
+            <Button.ContextMenu><ContextMenu>
+              <MenuItem Header="资源管理器集成">
+                <MenuItem Header="添加“使用 Clip 剪辑”右键菜单" Click="RegisterShellClick" />
+                <MenuItem Header="移除右键菜单" Click="UnregisterShellClick" />
+              </MenuItem>
+              <MenuItem Header="高级设置">
+                <MenuItem Header="选择 FFmpeg 目录…" Click="ChooseFfmpegClick" />
+                <Separator />
+                <MenuItem Header="重新检测 NVIDIA" Click="RetryNvidiaClick" />
+                <MenuItem Header="NVIDIA 检测详情…" Click="NvidiaDiagnosticsClick" />
+              </MenuItem>
+            </ContextMenu></Button.ContextMenu>
           </Button>
-        </Grid>
-        <Button x:Name="SettingsButton" Style="{StaticResource IconButton}" Click="SettingsClick" ToolTip="设置" AutomationProperties.Name="设置">
-          <local:RemixIcon Kind="Settings" />
-          <Button.ContextMenu><ContextMenu>
-            <MenuItem Header="资源管理器集成">
-              <MenuItem Header="添加“使用 Clip 剪辑”右键菜单" Click="RegisterShellClick" />
-              <MenuItem Header="移除右键菜单" Click="UnregisterShellClick" />
-            </MenuItem>
-            <MenuItem Header="高级设置">
-              <MenuItem Header="选择 FFmpeg 目录…" Click="ChooseFfmpegClick" />
-              <Separator />
-              <MenuItem Header="重新检测 NVIDIA" Click="RetryNvidiaClick" />
-              <MenuItem Header="NVIDIA 检测详情…" Click="NvidiaDiagnosticsClick" />
-            </MenuItem>
-          </ContextMenu></Button.ContextMenu>
-        </Button>
-      </StackPanel>
-    </Grid>
+        </StackPanel>
+      </Grid>
+    </Border>
 
-    <Grid Grid.Row="1" Margin="24,0,24,16">
+    <Grid Grid.Row="1" Margin="24,16,24,16">
       <Border Style="{StaticResource Surface}" ClipToBounds="True">
         <Grid>
           <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition x:Name="PreviewFooterRow" Height="0" /></Grid.RowDefinitions>
-          <Grid x:Name="PreviewCanvas" Background="{StaticResource ColorNeutralBackground1}">
+          <Grid x:Name="PreviewCanvas" Margin="8,8,8,0" Background="{DynamicResource ColorNeutralBackground1}">
             <MediaElement x:Name="Preview" LoadedBehavior="Manual" UnloadedBehavior="Close" Stretch="Uniform" ScrubbingEnabled="True"
                           MediaOpened="PreviewOpened" MediaEnded="PreviewEnded" MediaFailed="PreviewFailed" Visibility="Hidden" />
             <Image x:Name="PreviewPoster" Stretch="Uniform" Visibility="Collapsed" />
-            <StackPanel x:Name="EmptyPreview" HorizontalAlignment="Center" VerticalAlignment="Center" Width="420" Margin="24">
-              <Border Width="72" Height="72" CornerRadius="{StaticResource RadiusHero}" Background="{StaticResource ColorBrandBackground2}" HorizontalAlignment="Center">
-                <local:RemixIcon Kind="Film" Width="32" Height="32" Foreground="{StaticResource ColorBrandForeground}" HorizontalAlignment="Center" />
+            <StackPanel x:Name="EmptyPreview" HorizontalAlignment="Center" VerticalAlignment="Center" Width="440" Margin="24">
+              <Border Width="64" Height="64" CornerRadius="{StaticResource RadiusHero}" Background="{DynamicResource ColorBrandBackground2}" HorizontalAlignment="Center">
+                <local:RemixIcon Kind="Film" Width="28" Height="28" Foreground="{DynamicResource ColorBrandForeground}" HorizontalAlignment="Center" />
               </Border>
-              <TextBlock Text="开始剪辑视频" FontSize="{StaticResource FontSizeHero}" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,24,0,8" />
-              <TextBlock Text="导入多个素材，拖拽整理片段，按轨道导出视频。" Style="{StaticResource SecondaryText}" TextAlignment="Center" />
-              <Button x:Name="EmptyImportButton" Content="导入视频" Click="ImportClick" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Center" Padding="24,8" Margin="0,24,0,12" />
-              <TextBlock Text="也可以将多个视频拖到这里 · Ctrl+O" Style="{StaticResource Caption}" HorizontalAlignment="Center" />
+              <TextBlock Text="留下精彩的片段" FontSize="{StaticResource FontSizeHero}" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,24,0,10" />
+              <TextBlock Text="拖入视频，从这里开始剪辑。" Style="{StaticResource SecondaryText}" TextAlignment="Center" />
+              <Button x:Name="EmptyImportButton" Click="ImportClick" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Center" Padding="20,9" Margin="0,24,0,20">
+                <StackPanel Orientation="Horizontal"><local:RemixIcon Kind="Import" Margin="0,0,8,0" /><TextBlock Text="导入视频" /></StackPanel>
+              </Button>
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <Border Style="{StaticResource KeyCap}"><TextBlock Text="Ctrl + O" Style="{StaticResource TimeValue}" /></Border>
+                <TextBlock Text="  支持一次导入多个素材" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+              </StackPanel>
             </StackPanel>
             <StackPanel x:Name="NoSegmentsOverlay" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed">
-              <TextBlock Text="当前轨道为空" Foreground="{StaticResource ColorPreviewForeground}" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" />
+              <local:RemixIcon Kind="Film" Width="28" Height="28" Foreground="{DynamicResource ColorPreviewForeground}" HorizontalAlignment="Center" Margin="0,0,0,16" />
+              <TextBlock Text="当前轨道为空" Foreground="{DynamicResource ColorPreviewForeground}" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center" />
               <Button Content="撤销上一步" Click="UndoClick" Style="{StaticResource CommandButton}" Margin="0,16,0,0" HorizontalAlignment="Center" />
             </StackPanel>
           </Grid>
-          <Grid x:Name="PreviewFooter" Grid.Row="1" Margin="20,0" Visibility="Collapsed">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-            <TextBlock x:Name="PositionText" Text="00:00:00.000" FontFamily="{StaticResource FontFamilyMono}" VerticalAlignment="Center" />
-            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-              <Button x:Name="BackButton" Style="{StaticResource IconButton}" Click="StepBackClick" ToolTip="上一帧 (←)" AutomationProperties.Name="上一帧" IsEnabled="False" Margin="0,0,8,0"><local:RemixIcon Kind="Previous" /></Button>
-              <Button x:Name="PlayButton" Style="{StaticResource CommandButton}" Click="PlayClick" ToolTip="播放 / 暂停 (Space)" AutomationProperties.Name="播放或暂停" Width="48" IsEnabled="False"><local:RemixIcon x:Name="PlayGlyph" Kind="Play" /></Button>
-              <Button x:Name="ForwardButton" Style="{StaticResource IconButton}" Click="StepForwardClick" ToolTip="下一帧 (→)" AutomationProperties.Name="下一帧" IsEnabled="False" Margin="8,0,0,0"><local:RemixIcon Kind="Next" /></Button>
-            </StackPanel>
-            <TextBlock x:Name="TotalText" Grid.Column="2" Text="/ 00:00:00.000" Style="{StaticResource Caption}" FontFamily="{StaticResource FontFamilyMono}" HorizontalAlignment="Right" VerticalAlignment="Center" />
-          </Grid>
+          <Border Grid.Row="1" BorderBrush="{DynamicResource ColorNeutralStroke2}" BorderThickness="0,1,0,0">
+            <Grid x:Name="PreviewFooter" Margin="20,0" Visibility="Collapsed">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock x:Name="PositionText" Text="00:00:00.000" Style="{StaticResource TimeValue}" Foreground="{DynamicResource ColorBrandForeground}" />
+                <TextBlock x:Name="TotalText" Text="/ 00:00:00.000" Style="{StaticResource TimeValue}" Margin="8,0,0,0" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="BackButton" Style="{StaticResource IconButton}" Click="StepBackClick" ToolTip="上一帧 (←)" AutomationProperties.Name="上一帧" IsEnabled="False" Margin="0,0,12,0"><local:RemixIcon Kind="Previous" /></Button>
+                <Button x:Name="PlayButton" Style="{StaticResource PlaybackButton}" Click="PlayClick" ToolTip="播放 / 暂停 (Space)" AutomationProperties.Name="播放或暂停" IsEnabled="False"><local:RemixIcon x:Name="PlayGlyph" Kind="Play" /></Button>
+                <Button x:Name="ForwardButton" Style="{StaticResource IconButton}" Click="StepForwardClick" ToolTip="下一帧 (→)" AutomationProperties.Name="下一帧" IsEnabled="False" Margin="12,0,0,0"><local:RemixIcon Kind="Next" /></Button>
+              </StackPanel>
+              <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <TextBlock Text="播放 / 暂停" Style="{StaticResource Caption}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                <Border Style="{StaticResource KeyCap}"><TextBlock Text="Space" Style="{StaticResource TimeValue}" /></Border>
+              </StackPanel>
+            </Grid>
+          </Border>
         </Grid>
       </Border>
     </Grid>
 
-    <Border x:Name="TimelineRegion" Grid.Row="2" Style="{StaticResource Surface}" Margin="24,0,24,8" Visibility="Collapsed" ClipToBounds="True">
+    <Border x:Name="TimelineRegion" Grid.Row="2" BorderBrush="{DynamicResource ColorNeutralStroke2}" BorderThickness="0,1,0,1"
+            Background="{DynamicResource ColorNeutralBackground1}" Visibility="Collapsed" ClipToBounds="True">
       <Border.ContextMenu>
         <ContextMenu x:Name="TimelineMenu" Opened="TimelineMenuOpened">
           <MenuItem x:Name="SplitMenuItem" Header="在播放头处分割" InputGestureText="S" Click="SplitClick" IsEnabled="False">
@@ -106,24 +124,45 @@
         </ContextMenu>
       </Border.ContextMenu>
       <Grid>
-        <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="32" /></Grid.RowDefinitions>
-        <ScrollViewer x:Name="TimelineScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" SizeChanged="TimelineSizeChanged" ScrollChanged="TimelineScrolled" PreviewMouseWheel="TimelineMouseWheel"
-                      ToolTip="点击轨道空白处：选中整轨导出 · 拖拽：跨轨移动或轨内重排 · 右键：编辑片段 · 滚轮：横向滚动 · Shift / Ctrl + 滚轮：缩放 · Alt + 滚轮：上下滚动">
+        <Grid.RowDefinitions><RowDefinition Height="48" /><RowDefinition Height="*" /><RowDefinition Height="30" /></Grid.RowDefinitions>
+        <Border BorderBrush="{DynamicResource ColorNeutralStroke2}" BorderThickness="0,0,0,1">
+          <Grid Margin="24,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock Text="时间轴" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" Margin="0,0,20,0" />
+              <Button x:Name="SplitButton" Style="{StaticResource QuietButton}" Click="SplitClick" ToolTip="在播放头处分割 (S)" IsEnabled="False">
+                <StackPanel Orientation="Horizontal"><local:RemixIcon Kind="Split" Width="16" Height="16" Margin="0,0,6,0" /><TextBlock Text="分割" /></StackPanel>
+              </Button>
+              <Button x:Name="DeleteButton" Style="{StaticResource IconButton}" Click="DeleteClick" ToolTip="删除片段 (Delete)" AutomationProperties.Name="删除片段" IsEnabled="False"><local:RemixIcon Kind="Delete" Width="16" Height="16" /></Button>
+              <Border Width="1" Height="16" Background="{DynamicResource ColorNeutralStroke2}" Margin="10,0" />
+              <Button x:Name="UndoButton" Style="{StaticResource IconButton}" Click="UndoClick" ToolTip="撤销 (Ctrl+Z)" AutomationProperties.Name="撤销" IsEnabled="False"><local:RemixIcon Kind="Undo" Width="16" Height="16" /></Button>
+              <Button x:Name="RedoButton" Style="{StaticResource IconButton}" Click="RedoClick" ToolTip="重做 (Ctrl+Y)" AutomationProperties.Name="重做" IsEnabled="False"><local:RemixIcon Kind="Redo" Width="16" Height="16" /></Button>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+              <Button Style="{StaticResource IconButton}" Content="−" FontSize="18" Click="ZoomOutClick" ToolTip="缩小时间轴" AutomationProperties.Name="缩小时间轴" />
+              <Button Style="{StaticResource QuietButton}" Content="适应" Click="FitTimelineClick" ToolTip="显示完整时间轴" />
+              <Button Style="{StaticResource IconButton}" Content="+" FontSize="18" Click="ZoomInClick" ToolTip="放大时间轴" AutomationProperties.Name="放大时间轴" />
+            </StackPanel>
+          </Grid>
+        </Border>
+        <ScrollViewer x:Name="TimelineScroll" Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" SizeChanged="TimelineSizeChanged" ScrollChanged="TimelineScrolled" PreviewMouseWheel="TimelineMouseWheel"
+                      ToolTip="点击轨道空白处选中整轨 · 拖拽跨轨移动或排序 · 右键编辑 · 滚轮横向滚动 · Shift / Ctrl + 滚轮缩放 · Alt + 滚轮上下滚动">
           <local:TimelineControl x:Name="TimelineView" AutomationProperties.Name="视频时间轴，右键打开编辑菜单，按 S 分割，Delete 或 X 删除选中片段；滚轮滚动，Shift 加滚轮缩放" />
         </ScrollViewer>
-        <Grid Grid.Row="1" Margin="20,0">
-          <TextBlock x:Name="TimelineSummaryText" Style="{StaticResource Caption}" VerticalAlignment="Center" />
-          <TextBlock Text="点击空白选轨 · 拖拽排序 / 跨轨 · 右键编辑 · Shift 滚轮缩放" Style="{StaticResource Caption}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+        <Grid Grid.Row="2" Margin="24,0">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+          <TextBlock x:Name="TimelineSummaryText" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,16,0" />
+          <TextBlock Grid.Column="1" Text="拖拽排序 / 跨轨 · 右键编辑 · Shift 滚轮缩放" Style="{StaticResource Caption}" VerticalAlignment="Center" />
         </Grid>
       </Grid>
     </Border>
 
-    <Grid Grid.Row="3" Margin="24,0,24,8">
+    <Grid Grid.Row="3" Margin="24,0" Background="{DynamicResource ColorNeutralBackground3}">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
       <TextBlock x:Name="StatusText" Text="就绪" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
       <TextBlock x:Name="HardwareText" Visibility="Collapsed" />
       <ProgressBar x:Name="OperationProgress" Grid.Column="1" Width="160" Height="4" Maximum="1" Margin="16,0" Visibility="Collapsed" />
-      <Button x:Name="CancelButton" Grid.Column="2" Content="取消" Style="{StaticResource QuietButton}" MinHeight="24" Padding="8,0" Click="CancelClick" Visibility="Collapsed" />
+      <Button x:Name="CancelButton" Grid.Column="2" Content="取消" Style="{StaticResource QuietButton}" MinHeight="26" Padding="8,0" Click="CancelClick" Visibility="Collapsed" />
     </Grid>
   </Grid>
 </Window>

@@ -16,6 +16,10 @@ public partial class MainWindow
         CopyMenuItem.IsEnabled = RenameMenuItem.IsEnabled = DeleteMenuItem.IsEnabled;
         UndoMenuItem.IsEnabled = ready && _project.CanUndo;
         RedoMenuItem.IsEnabled = ready && _project.CanRedo;
+        SplitButton.IsEnabled = SplitMenuItem.IsEnabled;
+        DeleteButton.IsEnabled = DeleteMenuItem.IsEnabled;
+        UndoButton.IsEnabled = UndoMenuItem.IsEnabled;
+        RedoButton.IsEnabled = RedoMenuItem.IsEnabled;
     }
 
     private void SplitClick(object sender, RoutedEventArgs e) => Split();
@@ -107,12 +111,12 @@ public partial class MainWindow
         var mediaVisibility = hasMedia ? Visibility.Visible : Visibility.Collapsed;
         TimelineRegion.Visibility = ImportButton.Visibility = ExportButtonGroup.Visibility = mediaVisibility;
         PreviewFooter.Visibility = mediaVisibility;
-        TimelineRow.Height = new GridLength(hasMedia ? Math.Clamp(TimelineView.ContentHeight + 40, 212, 284) : 0);
+        TimelineRow.Height = new GridLength(hasMedia ? Math.Clamp(TimelineView.ContentHeight + 88, 260, 332) : 0);
         TimelineView.Height = TimelineView.ContentHeight;
         PreviewFooterRow.Height = new GridLength(hasMedia ? 64 : 0);
         EmptyPreview.Visibility = hasMedia ? Visibility.Collapsed : Visibility.Visible;
         NoSegmentsOverlay.Visibility = hasMedia && !any ? Visibility.Visible : Visibility.Collapsed;
-        PreviewCanvas.Background = (Brush)FindResource(hasMedia ? "ColorPreviewBackground" : "ColorNeutralBackground1");
+        PreviewCanvas.SetResourceReference(System.Windows.Controls.Panel.BackgroundProperty, hasMedia ? "ColorPreviewBackground" : "ColorNeutralBackground1");
         PreviewPoster.Source = preview is { } chosen ? AssetFor(chosen.Clip.Media).Thumbnail : null;
         PreviewPoster.Visibility = hasMedia && any && !_mediaReady ? Visibility.Visible : Visibility.Collapsed;
         Preview.Visibility = any && _mediaReady ? Visibility.Visible : Visibility.Hidden;

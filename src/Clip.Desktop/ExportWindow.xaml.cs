@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using Clip.Core;
 
 namespace Clip.Desktop;
@@ -14,6 +15,7 @@ public partial class ExportWindow : Window
     {
         _media = media;
         InitializeComponent();
+        WindowPresentation.FitInitialBounds(this);
         WindowPresentation.HideCaptionIcon(this);
         NvidiaItem.IsEnabled = hasNvidia;
         EncoderBox.SelectedIndex = hasNvidia ? 0 : 1;
@@ -25,6 +27,16 @@ public partial class ExportWindow : Window
     }
 
     private void QualitySelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateQuality();
+
+    private void QualityHelpClick(object sender, RoutedEventArgs e) => QualityHelp.IsOpen = !QualityHelp.IsOpen;
+
+    private void ExportPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || !QualityHelp.IsOpen) return;
+        QualityHelp.IsOpen = false;
+        QualityHelpButton.Focus();
+        e.Handled = true;
+    }
     private void SizeSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         UpdateDimensions();

@@ -9,6 +9,7 @@ public partial class ClipNameWindow : Window
     public ClipNameWindow(string name)
     {
         InitializeComponent();
+        WindowPresentation.FitInitialBounds(this);
         WindowPresentation.HideCaptionIcon(this);
         NameInput.Text = name;
         Loaded += (_, _) => { NameInput.Focus(); NameInput.SelectAll(); };

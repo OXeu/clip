@@ -32,12 +32,22 @@ internal static class UpdateProcess
         if (!string.Equals(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory), runner, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("必须从独立暂存目录运行更新程序。");
         var status = new TextBlock { Text = "正在等待 Clip 退出…", TextWrapping = TextWrapping.Wrap, Margin = new(0, 0, 0, 16) };
-        var bar = new ProgressBar { Height = 10, Maximum = 100, IsIndeterminate = true };
+        status.SetResourceReference(FrameworkElement.StyleProperty, "SecondaryText");
+        System.Windows.Automation.AutomationProperties.SetLiveSetting(status, System.Windows.Automation.AutomationLiveSetting.Polite);
+        var bar = new ProgressBar { Height = 4, Maximum = 100, IsIndeterminate = true };
         var panel = new StackPanel { Margin = new(24) };
+        var heading = new TextBlock { Text = "正在安装更新", Margin = new(0, 0, 0, 24) };
+        heading.SetResourceReference(FrameworkElement.StyleProperty, "DialogTitle");
+        panel.Children.Add(heading);
         panel.Children.Add(status);
         panel.Children.Add(bar);
+        var hint = new TextBlock { Text = "完成后将自动重新打开。", Margin = new(0, 16, 0, 0) };
+        hint.SetResourceReference(FrameworkElement.StyleProperty, "Caption");
+        panel.Children.Add(hint);
         var window = new Window { Title = "正在更新", Width = 480, SizeToContent = SizeToContent.Height,
             ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterScreen, Content = panel };
+        window.SetResourceReference(FrameworkElement.StyleProperty, "ClipWindow");
+        WindowPresentation.FitInitialBounds(window);
         WindowPresentation.HideCaptionIcon(window);
         var applying = true;
         var started = false;
@@ -81,7 +91,7 @@ internal static class UpdateProcess
                 bar.IsIndeterminate = false;
                 status.Text = "更新未完成。\n" + error.Message + "\n更新目录：" + prepared.Workspace;
                 StartupDiagnostics.Write("Update installation failed", error);
-                MessageBox.Show(window, status.Text, "更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                NoticeWindow.Show(window, "更新失败", status.Text);
             }
         };
         return window;

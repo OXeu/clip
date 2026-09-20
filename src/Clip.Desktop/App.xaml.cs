@@ -11,6 +11,7 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        Design.UiTheme.Initialize();
         var smoke = IsAutomatedRun;
         DispatcherUnhandledException += (_, args) =>
         {
@@ -41,6 +42,7 @@ public partial class App : Application
                     if (e.Args.Contains("--startup-test") && !window.ToolsReady)
                         throw new InvalidOperationException("Packaged FFmpeg could not be initialized.");
                     await window.VerifyUiAsync();
+                    await window.VerifyAppearanceAsync();
                     var dialog = new ExportWindow(window.CurrentMedia!, true) { Owner = window };
                     dialog.Show();
                     dialog.UpdateLayout();

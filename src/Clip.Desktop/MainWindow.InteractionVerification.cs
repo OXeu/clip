@@ -467,10 +467,10 @@ public partial class MainWindow
         Width = MinWidth; Height = MinHeight;
         UpdateLayout();
         Require(PreviewCanvas.ActualHeight >= 100, "Compact multitrack layout collapsed the preview.");
-        Require(PreviewCanvas.ActualWidth > WindowRoot.ActualWidth - 60, "The removed property panel still occupies preview width.");
+        Require(PreviewCanvas.ActualWidth > WindowRoot.ActualWidth - 80, "The preview lost its full-width workspace layout.");
         UiCapture.Save(WindowRoot, "smoke-compact.png");
         Width = width; Height = height;
-        StartupDiagnostics.Write("Multi-track verification passed: two candidate imports; timeline context menu and busy guards; clip copy / naming and history; explicit track export selection; native cross-track and same-track drag; live S / X / Delete; candidate continuation and cross-source main playback; Space focus and wheel navigation without a zoom toolbar.");
+        StartupDiagnostics.Write("Multi-track verification passed: two candidate imports; timeline context menu and busy guards; clip copy / naming and history; explicit track export selection; native cross-track and same-track drag; live S / X / Delete; candidate continuation and cross-source main playback; Space focus and wheel navigation.");
     }
 
     private static class NativeMouse

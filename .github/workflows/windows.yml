@@ -96,6 +96,12 @@ jobs:
           foreach ($state in @('empty', 'imported', 'multitrack', 'compact', 'export-basic', 'export-advanced')) {
             if (-not (Test-Path "artifacts/Clip-win-x64/smoke-$state.png")) { throw "Missing UI state screenshot: $state" }
           }
+          foreach ($theme in @('light', 'dark')) {
+            foreach ($surface in @('editor', 'export', 'name', 'notice', 'update')) {
+              $capture = "artifacts/Clip-win-x64/smoke-theme-$theme-$surface.png"
+              if (-not (Test-Path $capture)) { throw "Missing themed UI screenshot: $capture" }
+            }
+          }
 
       - name: Verify pre-WPF startup failure is logged
         run: |

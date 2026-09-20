@@ -47,11 +47,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         WindowPresentation.HideCaptionIcon(this);
         // Center the size that actually fits the desktop, not an oversized requested window.
-        var workArea = SystemParameters.WorkArea;
-        MinWidth = Math.Min(MinWidth, workArea.Width);
-        MinHeight = Math.Min(MinHeight, workArea.Height);
-        Width = Math.Min(Width, workArea.Width);
-        Height = Math.Min(Height, workArea.Height);
+        WindowPresentation.FitInitialBounds(this);
         TimelineView.Project = _project;
         TimelineView.SelectionChanged += SelectClip;
         TimelineView.TrackSelectionChanged += SelectTrack;
@@ -59,8 +55,16 @@ public partial class MainWindow : Window
         TimelineView.MoveRequested += MoveClip;
         TimelineView.AutoScrollRequested += AutoScrollTimeline;
         _timer.Tick += Tick;
+        Design.UiTheme.Changed += ThemeChanged;
+        Closed += (_, _) => Design.UiTheme.Changed -= ThemeChanged;
         Loaded += OnLoaded;
     }
+
+    private void ThemeChanged() => TimelineView.InvalidateVisual();
+
+    private void ZoomInClick(object sender, RoutedEventArgs e) => SetTimelineZoom(_timelineZoom * 1.25);
+    private void ZoomOutClick(object sender, RoutedEventArgs e) => SetTimelineZoom(_timelineZoom / 1.25);
+    private void FitTimelineClick(object sender, RoutedEventArgs e) => ResetTimelineZoom();
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -205,7 +209,7 @@ public partial class MainWindow : Window
     {
         StatusText.Text = exception.Message.Split('\n')[0];
         if (App.IsAutomatedRun) throw new InvalidOperationException("Automated UI operation failed.", exception);
-        if (!_closed) MessageBox.Show(this, exception.Message, "操作未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
+        if (!_closed) NoticeWindow.Show(this, "操作未完成", exception.Message);
     }
 
     private void CancelClick(object sender, RoutedEventArgs e) => _operation?.Cancel();
@@ -258,8 +262,7 @@ public partial class MainWindow : Window
     }
 
     private void NvidiaDiagnosticsClick(object sender, RoutedEventArgs e) =>
-        MessageBox.Show(this, NvidiaDiagnostics() + $"\n\n诊断日志：{StartupDiagnostics.LogPath ?? "日志目录不可写"}",
-            "NVIDIA NVENC 检测详情", MessageBoxButton.OK, MessageBoxImage.Information);
+        NoticeWindow.Show(this, "NVIDIA NVENC 检测详情", NvidiaDiagnostics() + $"\n\n诊断日志：{StartupDiagnostics.LogPath ?? "日志目录不可写"}");
 
     private void RegisterShellClick(object sender, RoutedEventArgs e)
     {
@@ -400,8 +403,8 @@ public partial class MainWindow : Window
             return;
         }
         if (_project.CanUndo && !_closed && !App.IsAutomatedRun &&
-            MessageBox.Show(this, "关闭后轨道编辑不会保存。确认已导出需要的片段？", "关闭视频剪辑",
-                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) { e.Cancel = true; return; }
+            !NoticeWindow.Show(this, "关闭视频剪辑", "关闭后轨道编辑不会保存。请确认已导出需要的片段。",
+                "确认关闭", "继续剪辑")) { e.Cancel = true; return; }
         _closed = true;
         _timer.Stop();
         Preview.Close();

@@ -35,7 +35,7 @@ internal sealed class UpdateController
             catch (Exception error)
             {
                 dev.IsChecked = _preferences.DevMode;
-                MessageBox.Show(_owner, error.Message, "无法保存更新设置", MessageBoxButton.OK, MessageBoxImage.Warning);
+                NoticeWindow.Show(_owner, "无法保存更新设置", error.Message);
             }
         };
         _check.Click += (_, _) => OpenUpdateWindow();
@@ -81,7 +81,7 @@ internal sealed class UpdateController
             catch (Exception error)
             {
                 StartupDiagnostics.Write("Unable to launch update installer", error);
-                MessageBox.Show("无法启动更新程序，原版本未修改。\n" + error.Message, "更新失败", MessageBoxButton.OK, MessageBoxImage.Error);
+                NoticeWindow.Show(null, "更新失败", "无法启动更新程序，原版本未修改。\n" + error.Message);
             }
         }
         _owner.Closed += Launch;

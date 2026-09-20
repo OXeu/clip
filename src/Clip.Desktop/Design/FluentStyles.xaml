@@ -1,27 +1,46 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <!-- Preserve Microsoft's Fluent focus, hover, disabled, keyboard and popup templates. -->
+  <!-- 保留原生 Fluent 输入、弹出菜单和辅助功能；统一表面与状态。 -->
   <Style x:Key="ClipWindow" TargetType="Window">
-    <Setter Property="Background" Value="{StaticResource ColorNeutralBackground3}" />
-    <Setter Property="Foreground" Value="{StaticResource ColorNeutralForeground1}" />
+    <Setter Property="Background" Value="{DynamicResource ColorNeutralBackground3}" />
+    <Setter Property="Foreground" Value="{DynamicResource ColorNeutralForeground1}" />
     <Setter Property="FontFamily" Value="{StaticResource FontFamilyBase}" />
     <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
     <Setter Property="UseLayoutRounding" Value="True" />
     <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
   </Style>
+  <Style x:Key="DialogWindow" TargetType="Window" BasedOn="{StaticResource ClipWindow}">
+    <Setter Property="ShowInTaskbar" Value="False" />
+  </Style>
   <Style x:Key="Surface" TargetType="Border">
-    <Setter Property="Background" Value="{StaticResource ColorNeutralBackground1}" />
-    <Setter Property="BorderBrush" Value="{StaticResource ColorNeutralStroke2}" />
+    <Setter Property="Background" Value="{DynamicResource ColorNeutralBackground1}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource ColorNeutralStroke2}" />
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="{StaticResource RadiusSurface}" />
+  </Style>
+  <Style x:Key="SubtleSurface" TargetType="Border" BasedOn="{StaticResource Surface}">
+    <Setter Property="Background" Value="{DynamicResource ColorNeutralBackground2}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="16" />
+  </Style>
+  <Style x:Key="DialogFooter" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource ColorNeutralBackground2}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource ColorNeutralStroke2}" />
+    <Setter Property="BorderThickness" Value="0,1,0,0" />
+    <Setter Property="Padding" Value="24,16" />
+  </Style>
+  <Style x:Key="DialogTitle" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="{StaticResource FontSizeTitle}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{DynamicResource ColorNeutralForeground1}" />
   </Style>
   <Style x:Key="SectionTitle" TargetType="TextBlock">
     <Setter Property="FontSize" Value="{StaticResource FontSizeSubtitle}" />
     <Setter Property="FontWeight" Value="SemiBold" />
-    <Setter Property="Foreground" Value="{StaticResource ColorNeutralForeground1}" />
+    <Setter Property="Foreground" Value="{DynamicResource ColorNeutralForeground1}" />
   </Style>
   <Style x:Key="SecondaryText" TargetType="TextBlock">
-    <Setter Property="Foreground" Value="{StaticResource ColorNeutralForeground3}" />
+    <Setter Property="Foreground" Value="{DynamicResource ColorNeutralForeground3}" />
     <Setter Property="TextWrapping" Value="Wrap" />
     <Setter Property="LineHeight" Value="20" />
   </Style>
@@ -29,35 +48,175 @@
     <Setter Property="FontSize" Value="{StaticResource FontSizeCaption}" />
     <Setter Property="LineHeight" Value="18" />
   </Style>
+  <Style x:Key="KeyboardFocus" TargetType="Control">
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate>
+          <Border BorderBrush="{DynamicResource ColorBrandStroke}" BorderThickness="2" CornerRadius="10" Margin="-3" />
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
   <Style x:Key="CommandButton" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
     <Setter Property="MinHeight" Value="{StaticResource ControlHeight}" />
     <Setter Property="Padding" Value="{StaticResource ControlPadding}" />
     <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+    <Setter Property="FontWeight" Value="Medium" />
     <Setter Property="HorizontalAlignment" Value="Stretch" />
     <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocus}" />
   </Style>
+  <Style TargetType="Button" BasedOn="{StaticResource CommandButton}" />
   <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
     <Setter Property="MinHeight" Value="{StaticResource ControlHeight}" />
-    <Setter Property="Padding" Value="16,8" />
+    <Setter Property="Padding" Value="16,7" />
     <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
     <Setter Property="HorizontalAlignment" Value="Stretch" />
     <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocus}" />
   </Style>
   <Style x:Key="QuietButton" TargetType="Button" BasedOn="{StaticResource CommandButton}">
     <Setter Property="Background" Value="Transparent" />
-    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Foreground" Value="{DynamicResource ColorNeutralForeground2}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="Chrome" Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding Border.CornerRadius}" Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource ColorSelectionBackground}" />
+              <Setter Property="Foreground" Value="{DynamicResource ColorSelectionForeground}" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource ColorNeutralStroke2}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Foreground" Value="{DynamicResource ColorDisabledForeground}" />
+              <Setter TargetName="Chrome" Property="Background" Value="Transparent" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style x:Key="SplitArrowButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+    <Setter Property="Border.CornerRadius" Value="0,8,8,0" />
   </Style>
   <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource QuietButton}">
     <Setter Property="Width" Value="{StaticResource ControlHeight}" />
     <Setter Property="Padding" Value="8" />
   </Style>
+  <Style x:Key="PlaybackButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+    <Setter Property="Width" Value="40" />
+    <Setter Property="Height" Value="40" />
+    <Setter Property="Padding" Value="10" />
+    <Setter Property="Border.CornerRadius" Value="20" />
+  </Style>
   <Style x:Key="FieldLabel" TargetType="TextBlock">
-    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="FontWeight" Value="Medium" />
+    <Setter Property="Foreground" Value="{DynamicResource ColorNeutralForeground1}" />
     <Setter Property="Margin" Value="0,0,0,8" />
   </Style>
   <Style x:Key="TimeValue" TargetType="TextBlock">
     <Setter Property="FontFamily" Value="{StaticResource FontFamilyMono}" />
     <Setter Property="FontSize" Value="{StaticResource FontSizeCaption}" />
-    <Setter Property="Foreground" Value="{StaticResource ColorNeutralForeground2}" />
+    <Setter Property="Foreground" Value="{DynamicResource ColorNeutralForeground2}" />
+  </Style>
+  <Style x:Key="KeyCap" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource ColorNeutralBackground2}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource ColorNeutralStroke2}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="4" />
+    <Setter Property="Padding" Value="5,1" />
+  </Style>
+  <Style TargetType="TextBox" BasedOn="{StaticResource DefaultTextBoxStyle}">
+    <Setter Property="MinHeight" Value="36" />
+    <Setter Property="Padding" Value="12,8" />
+    <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+  <Style TargetType="PasswordBox" BasedOn="{StaticResource DefaultPasswordBoxStyle}">
+    <Setter Property="MinHeight" Value="36" />
+    <Setter Property="Padding" Value="12,8" />
+  </Style>
+  <Style x:Key="ChoiceItem" TargetType="ComboBoxItem" BasedOn="{StaticResource DefaultComboBoxItemStyle}">
+    <Setter Property="Foreground" Value="{DynamicResource ColorNeutralForeground1}" />
+    <Setter Property="Padding" Value="10,8" />
+    <Setter Property="Margin" Value="4,2" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ComboBoxItem">
+          <Border x:Name="Choice" Background="Transparent" CornerRadius="{StaticResource RadiusControl}" Padding="{TemplateBinding Padding}">
+            <ContentPresenter />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsHighlighted" Value="True">
+              <Setter TargetName="Choice" Property="Background" Value="{DynamicResource ColorNeutralBackground2}" />
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter TargetName="Choice" Property="Background" Value="{DynamicResource ColorSelectionBackground}" />
+              <Setter Property="Foreground" Value="{DynamicResource ColorSelectionForeground}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Foreground" Value="{DynamicResource ColorDisabledForeground}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style TargetType="ComboBox" BasedOn="{StaticResource DefaultComboBoxStyle}">
+    <Setter Property="MinHeight" Value="38" />
+    <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+    <Setter Property="ItemContainerStyle" Value="{StaticResource ChoiceItem}" />
+  </Style>
+  <Style TargetType="ContextMenu" BasedOn="{StaticResource DefaultContextMenuStyle}">
+    <Setter Property="FontFamily" Value="{StaticResource FontFamilyBase}" />
+    <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ContextMenu">
+          <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="1" CornerRadius="{StaticResource RadiusSurface}" Padding="4">
+            <ScrollViewer CanContentScroll="True" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+              <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" />
+            </ScrollViewer>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style TargetType="MenuItem" BasedOn="{StaticResource DefaultMenuItemStyle}">
+    <Setter Property="Foreground" Value="{DynamicResource ColorNeutralForeground1}" />
+    <Setter Property="Padding" Value="10,8" />
+    <Style.Triggers>
+      <Trigger Property="IsHighlighted" Value="True">
+        <Setter Property="Foreground" Value="{DynamicResource ColorSelectionForeground}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+  <Style TargetType="ToolTip">
+    <Setter Property="Foreground" Value="{DynamicResource ColorNeutralForeground1}" />
+    <Setter Property="FontFamily" Value="{StaticResource FontFamilyBase}" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="MaxWidth" Value="420" />
+    <Setter Property="Padding" Value="12,8" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ToolTip">
+          <Border Style="{StaticResource Surface}" Padding="{TemplateBinding Padding}">
+            <ContentPresenter>
+              <ContentPresenter.Resources>
+                <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap" /></Style>
+              </ContentPresenter.Resources>
+            </ContentPresenter>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
 </ResourceDictionary>

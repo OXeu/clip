@@ -5,17 +5,11 @@ using Clip.Core.Updates;
 
 namespace Clip.Desktop.Updates;
 
-internal sealed class UpdateWindow : Window
+internal sealed partial class UpdateWindow : Window
 {
     private readonly GitHubUpdateClient _github;
     private readonly AppBuild _build;
     private readonly UpdateChannel _channel;
-    private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap, Margin = new(0, 12, 0, 12) };
-    private readonly ProgressBar _progress = new() { Height = 8, Minimum = 0, Maximum = 100, Margin = new(0, 0, 0, 16) };
-    private readonly PasswordBox _token = new() { Margin = new(0, 4, 0, 16) };
-    private readonly Button _check = new() { Content = "检查更新", Margin = new(0, 0, 8, 0), Padding = new(12, 6, 12, 6) };
-    private readonly Button _install = new() { Content = "更新并重启", IsEnabled = false, Margin = new(0, 0, 8, 0), Padding = new(12, 6, 12, 6) };
-    private readonly Button _cancel = new() { Content = "关闭", Padding = new(12, 6, 12, 6) };
     private CancellationTokenSource? _operation;
     private UpdatePackage? _package;
     internal PreparedUpdate? Prepared { get; private set; }
@@ -25,26 +19,12 @@ internal sealed class UpdateWindow : Window
         _github = github;
         _build = build;
         _channel = channel;
-        Title = "检查更新";
+        InitializeComponent();
+        WindowPresentation.FitInitialBounds(this);
         WindowPresentation.HideCaptionIcon(this);
-        Width = 540;
-        SizeToContent = SizeToContent.Height;
-        ResizeMode = ResizeMode.NoResize;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        var panel = new StackPanel { Margin = new(24) };
-        panel.Children.Add(new TextBlock { Text = $"当前版本：{build.Version}\n更新通道：{(channel == UpdateChannel.Dev ? "Dev · GitHub Actions" : "正式版 · GitHub Release")}", TextWrapping = TextWrapping.Wrap });
-        panel.Children.Add(new TextBlock { Text = "GitHub 令牌（可选，仅当前会话；留空沿用已配置令牌）", Margin = new(0, 16, 0, 0), TextWrapping = TextWrapping.Wrap });
-        _token.ToolTip = "私有仓库需要 Contents 和 Actions 只读权限。也可设置 CLIP_GITHUB_TOKEN 环境变量。";
-        panel.Children.Add(_token);
-        panel.Children.Add(new TextBlock { Text = "更新文件保存在程序目录：\n" + AppContext.BaseDirectory + "\n更新完成后自动重启，请先导出需要保留的编辑。", TextWrapping = TextWrapping.Wrap });
-        panel.Children.Add(_status);
-        panel.Children.Add(_progress);
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        buttons.Children.Add(_check);
-        buttons.Children.Add(_install);
-        buttons.Children.Add(_cancel);
-        panel.Children.Add(buttons);
-        Content = panel;
+        VersionText.Text = $"当前版本 {build.Version}";
+        ChannelText.Text = channel == UpdateChannel.Dev ? "开发版 · GitHub Actions" : "正式版 · GitHub Release";
+        LocationText.Text = AppContext.BaseDirectory;
         _check.Click += async (_, _) => await CheckAsync();
         _install.Click += async (_, _) => await InstallAsync();
         _cancel.Click += (_, _) => { if (_operation is not null) _operation.Cancel(); else Close(); };

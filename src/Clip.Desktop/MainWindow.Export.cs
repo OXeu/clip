@@ -82,8 +82,8 @@ public partial class MainWindow
             var progress = new Progress<ExportProgress>(p => { OperationProgress.Value = p.Fraction; StatusText.Text = $"{track.Name} · {p.Message} {p.Fraction:P0}"; });
             await new ExportService(_tools).ExportAsync(clips, options.Options!, save.FileName, progress, _operation!.Token);
             StatusText.Text = $"{track.Name} 导出完成 · " + save.FileName;
-            if (!_closed && MessageBox.Show(this, $"已导出 {track.Name}，时长 {TimelineControl.FormatTime(track.Duration)}。\n\n在资源管理器中查看？",
-                "导出完成", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
+            if (!_closed && NoticeWindow.Show(this, "导出完成", $"已导出 {track.Name}，时长 {TimelineControl.FormatTime(track.Duration)}。",
+                "打开文件位置", "完成"))
                 Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true, Arguments = $"/select,{(char)34}{save.FileName}{(char)34}" });
         }
         catch (OperationCanceledException) { StatusText.Text = "已取消导出，临时文件已清理"; }
