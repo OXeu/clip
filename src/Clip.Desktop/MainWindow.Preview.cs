@@ -70,6 +70,14 @@ public partial class MainWindow
         ActivatePreview(p with { SourceTime = source }, _playing);
     }
 
+    private void SelectClipForContextMenu(Guid id)
+    {
+        if (_operation is not null || _multiSelectMode || _project.FindClip(id) is null) return;
+        _selectedTrackId = null;
+        _selected = id;
+        Refresh();
+    }
+
     private void SelectTrack(Guid id, double time)
     {
         if (_operation is not null || _project.FindTrack(id) is null) return;

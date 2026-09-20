@@ -138,6 +138,20 @@
           <MenuItem x:Name="RenameMenuItem" Header="命名片段…" Click="RenameClick" IsEnabled="False">
             <MenuItem.Icon><local:RemixIcon Kind="Rename" Width="16" Height="16" /></MenuItem.Icon>
           </MenuItem>
+          <MenuItem x:Name="SpeedMenuItem" Header="片段倍速" IsEnabled="False">
+            <MenuItem.Icon><local:RemixIcon Kind="Play" Width="16" Height="16" /></MenuItem.Icon>
+            <MenuItem x:Name="Speed025MenuItem" Header="0.25×" Tag="0.25" IsCheckable="True" Click="SpeedPresetClick" />
+            <MenuItem Header="0.5×" Tag="0.5" IsCheckable="True" Click="SpeedPresetClick" />
+            <MenuItem Header="0.75×" Tag="0.75" IsCheckable="True" Click="SpeedPresetClick" />
+            <MenuItem x:Name="Speed1MenuItem" Header="1×" Tag="1" IsCheckable="True" Click="SpeedPresetClick" />
+            <MenuItem Header="1.25×" Tag="1.25" IsCheckable="True" Click="SpeedPresetClick" />
+            <MenuItem Header="1.5×" Tag="1.5" IsCheckable="True" Click="SpeedPresetClick" />
+            <MenuItem x:Name="Speed2MenuItem" Header="2×" Tag="2" IsCheckable="True" Click="SpeedPresetClick" />
+            <MenuItem Header="4×" Tag="4" IsCheckable="True" Click="SpeedPresetClick" />
+            <MenuItem Header="8×" Tag="8" IsCheckable="True" Click="SpeedPresetClick" />
+            <Separator />
+            <MenuItem Header="自定义…" Click="CustomSpeedClick" />
+          </MenuItem>
           <Separator />
           <MenuItem x:Name="UndoMenuItem" Header="撤销" InputGestureText="Ctrl+Z" Click="UndoClick" IsEnabled="False">
             <MenuItem.Icon><local:RemixIcon Kind="Undo" Width="16" Height="16" /></MenuItem.Icon>

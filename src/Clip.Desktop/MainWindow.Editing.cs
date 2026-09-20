@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using Clip.Core;
 
@@ -13,7 +15,13 @@ public partial class MainWindow
         var ready = _operation is null;
         SplitMenuItem.IsEnabled = ready && !_multiSelectMode && ActiveTrack.Clips.Count > 0;
         DeleteMenuItem.IsEnabled = ready && !_multiSelectMode && _selected is { } id && _project.FindClip(id) is not null;
-        CopyMenuItem.IsEnabled = RenameMenuItem.IsEnabled = DeleteMenuItem.IsEnabled;
+        CopyMenuItem.IsEnabled = RenameMenuItem.IsEnabled = SpeedMenuItem.IsEnabled = DeleteMenuItem.IsEnabled;
+        var selectedSpeed = _selected is { } selectedId ? _project.FindClip(selectedId)?.Clip.Speed : null;
+        SpeedMenuItem.Header = selectedSpeed is { } speed ? $"片段倍速 · {speed:0.###}×" : "片段倍速";
+        foreach (var item in SpeedMenuItem.Items.OfType<MenuItem>().Where(item => item.Tag is string))
+            item.IsChecked = selectedSpeed is { } current &&
+                double.TryParse((string)item.Tag, NumberStyles.Float, CultureInfo.InvariantCulture, out var preset) &&
+                Math.Abs(current - preset) < 0.000001;
         UndoMenuItem.IsEnabled = ready && _project.CanUndo;
         RedoMenuItem.IsEnabled = ready && _project.CanRedo;
         SplitButton.IsEnabled = SplitMenuItem.IsEnabled;
@@ -113,6 +121,39 @@ public partial class MainWindow
             StatusText.Text = $"片段已命名为“{dialog.ClipName}”";
             Refresh();
         }
+    }
+
+    private void SpeedPresetClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem { Tag: string value } &&
+            double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var speed))
+            SetSelectedSpeed(speed);
+    }
+
+    private void CustomSpeedClick(object sender, RoutedEventArgs e)
+    {
+        if (_operation is not null || _selected is not { } id || _project.FindClip(id) is not { } clip) return;
+        var dialog = new ClipSpeedWindow(clip.Clip.Speed) { Owner = this };
+        if (dialog.ShowDialog() == true) SetSelectedSpeed(dialog.Speed);
+    }
+
+    private void SetSelectedSpeed(double speed)
+    {
+        if (_operation is not null || _multiSelectMode || _selected is not { } id) return;
+        VideoClip.ValidateSpeed(speed);
+        if (_playing) Tick(this, EventArgs.Empty);
+        var cursor = _project.Locate(_activeTrackId, _position);
+        if (!_project.SetSpeed(id, speed)) return;
+        if (cursor is { } previous && _project.FindClip(previous.Clip.Id) is { } current)
+        {
+            _position = (current with
+            {
+                SourceTime = Math.Clamp(previous.SourceTime, current.Clip.Start, current.Clip.End)
+            }).TimelineTime;
+            if (_mediaReady && _playbackClip == current.Clip.Id) Preview.SpeedRatio = current.Clip.Speed;
+        }
+        StatusText.Text = $"片段倍速已设为 {speed:0.###}× · 可撤销";
+        Refresh();
     }
 
     private void MultiSelectClick(object sender, RoutedEventArgs e)

@@ -37,6 +37,7 @@ public sealed class TimelineControl : FrameworkElement
     public double VerticalOffset { get; set; }
     public event Action<Guid, double>? SeekRequested;
     public event Action<Guid, double>? SelectionChanged;
+    public event Action<Guid>? ContextSelectionRequested;
     public event Action<Guid, double>? TrackSelectionChanged;
     public event Action<Guid>? TrackToggled;
     public event Action<Guid, Guid, int>? MoveRequested;
@@ -271,8 +272,14 @@ public sealed class TimelineControl : FrameworkElement
             var clip = track.Clips.FirstOrDefault(c => ClipBounds(c.Id).Contains(point));
             if (clip is not null)
             {
-                SelectionChanged?.Invoke(clip.Id, TimeAtX(point.X));
-                if (e.ChangedButton == MouseButton.Left) { _pressedClip = clip.Id; _mouseDown = point; CaptureMouse(); }
+                if (e.ChangedButton == MouseButton.Right) ContextSelectionRequested?.Invoke(clip.Id);
+                else
+                {
+                    SelectionChanged?.Invoke(clip.Id, TimeAtX(point.X));
+                    _pressedClip = clip.Id;
+                    _mouseDown = point;
+                    CaptureMouse();
+                }
             }
             else if (e.ChangedButton == MouseButton.Left) TrackSelectionChanged?.Invoke(track.Id, TimeAtX(point.X));
         }

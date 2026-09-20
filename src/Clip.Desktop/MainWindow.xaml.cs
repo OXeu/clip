@@ -53,6 +53,7 @@ public partial class MainWindow : Window
         WindowPresentation.FitInitialBounds(this);
         TimelineView.Project = _project;
         TimelineView.SelectionChanged += SelectClip;
+        TimelineView.ContextSelectionRequested += SelectClipForContextMenu;
         TimelineView.TrackSelectionChanged += SelectTrack;
         TimelineView.TrackToggled += ToggleMultiSelectedTrack;
         TimelineView.SeekRequested += (track, time) => Seek(track, time);

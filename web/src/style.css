@@ -251,6 +251,74 @@ button:disabled {
   color: var(--disabled-foreground);
 }
 
+.clip-context-menu {
+  position: fixed;
+  z-index: 300;
+  width: 232px;
+  padding: 6px;
+  border: 1px solid var(--neutral-stroke-2);
+  border-radius: var(--radius-control);
+  background: var(--neutral-background-1);
+  box-shadow: var(--shadow-surface);
+}
+
+.clip-context-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 8px 9px;
+  color: var(--neutral-foreground-2);
+  font-size: var(--text-caption);
+  font-weight: 600;
+}
+
+.clip-context-value {
+  color: var(--brand-foreground);
+  font-family: var(--font-mono);
+}
+
+.speed-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.speed-preset {
+  min-height: 34px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--neutral-foreground-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+.speed-preset:hover,
+.speed-preset:focus-visible {
+  background: var(--selection-background);
+  outline: none;
+}
+
+.speed-preset[aria-checked='true'] {
+  border-color: var(--brand-stroke);
+  background: var(--brand-background-2);
+  color: var(--brand-foreground);
+  font-weight: 700;
+}
+
+.speed-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.speed-input-row span {
+  color: var(--neutral-foreground-2);
+  font: 16px var(--font-mono);
+}
+
 /* ---------- 按钮 ---------- */
 
 .btn {

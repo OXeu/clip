@@ -153,6 +153,54 @@
 
     <div class="drop-overlay" id="drop-overlay" hidden>松开以导入素材</div>
 
+    <div id="clip-context-menu" class="clip-context-menu" role="menu" aria-label="片段倍速" hidden>
+      <div class="clip-context-heading">
+        <span>片段倍速</span>
+        <span id="clip-speed-current" class="clip-context-value">1×</span>
+      </div>
+      <div class="speed-preset-grid" role="group" aria-label="常用倍速">
+        <button class="speed-preset" type="button" role="menuitemradio" data-speed="0.25">0.25×</button>
+        <button class="speed-preset" type="button" role="menuitemradio" data-speed="0.5">0.5×</button>
+        <button class="speed-preset" type="button" role="menuitemradio" data-speed="0.75">0.75×</button>
+        <button class="speed-preset" type="button" role="menuitemradio" data-speed="1">1×</button>
+        <button class="speed-preset" type="button" role="menuitemradio" data-speed="1.25">1.25×</button>
+        <button class="speed-preset" type="button" role="menuitemradio" data-speed="1.5">1.5×</button>
+        <button class="speed-preset" type="button" role="menuitemradio" data-speed="2">2×</button>
+        <button class="speed-preset" type="button" role="menuitemradio" data-speed="4">4×</button>
+        <button class="speed-preset" type="button" role="menuitemradio" data-speed="8">8×</button>
+      </div>
+      <div class="more-menu-divider" role="separator"></div>
+      <button id="custom-speed-button" class="more-menu-item" type="button" role="menuitem">
+        <span>自定义…</span><span class="menu-shortcut">0.1–8×</span>
+      </button>
+    </div>
+
+    <dialog id="speed-dialog" aria-labelledby="speed-dialog-title">
+      <form id="speed-form">
+        <div class="dialog-header">
+          <h2 id="speed-dialog-title">自定义片段倍速</h2>
+        </div>
+        <div class="dialog-body">
+          <div class="field">
+            <label for="speed-input">倍速</label>
+            <div class="speed-input-row">
+              <input id="speed-input" type="number" min="0.1" max="8" step="0.01" inputmode="decimal" />
+              <span>×</span>
+            </div>
+            <span class="hint">支持 0.1×–8×；只改变当前选中的片段。</span>
+          </div>
+          <div class="callout warn" id="speed-validation" role="alert" hidden>请输入 0.1–8 之间的倍速。</div>
+        </div>
+        <div class="dialog-footer">
+          <span class="hint">音频会同步变速并保持音调</span>
+          <span class="actions">
+            <button class="btn btn-quiet" type="button" id="speed-cancel">取消</button>
+            <button class="btn btn-primary" type="submit" id="speed-confirm">应用倍速</button>
+          </span>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="export-dialog">
       <form method="dialog">
         <div class="dialog-header">

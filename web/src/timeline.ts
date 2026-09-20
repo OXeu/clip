@@ -31,6 +31,7 @@ export const TRACK_HANDLE_WIDTH = 24;
 export interface TimelineCallbacks {
   onSeek: (trackId: string, time: number) => void;
   onSelectClip: (clipId: string, time: number) => void;
+  onContextClip: (clipId: string | null, clientX: number, clientY: number) => void;
   onSelectTrack: (trackId: string, time: number) => void;
   onMoveClip: (clipId: string, trackId: string, index: number) => void;
   onMoveTrack: (trackId: string, index: number) => void;
@@ -583,12 +584,28 @@ export class TimelineView {
     this.canvas.addEventListener('pointermove', (event) => this.onPointerMove(event));
     this.canvas.addEventListener('pointerup', (event) => this.onPointerUp(event));
     this.canvas.addEventListener('pointercancel', (event) => this.onPointerCancel(event));
-    this.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+    this.canvas.addEventListener('contextmenu', (event) => this.onContextMenu(event));
   }
 
-  private localPoint(event: PointerEvent): { x: number; y: number } {
+  private localPoint(event: MouseEvent | PointerEvent): { x: number; y: number } {
     const rect = this.canvas.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
+  private onContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    const project = this.project;
+    if (!project || this.multiSelectMode) {
+      this.callbacks.onContextClip(null, event.clientX, event.clientY);
+      return;
+    }
+    const point = this.localPoint(event);
+    const row = this.trackAtY(point.y);
+    const hit = row?.track.clips.find((clip) => {
+      const bounds = this.clipBounds(clip.id);
+      return bounds ? point.x >= bounds.x && point.x <= bounds.x + bounds.width : false;
+    });
+    this.callbacks.onContextClip(hit?.id ?? null, event.clientX, event.clientY);
   }
 
   private touchPair(): readonly [{ x: number; y: number }, { x: number; y: number }] | null {
