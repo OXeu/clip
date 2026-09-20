@@ -431,6 +431,9 @@ async function encodeVideoTrack(
       },
     } : {}),
     fastStart: 'in-memory',
+    // 部分 WebCodecs 实现输出的首个编码块并非恰好从 DTS=0 开始（例如一帧后）。
+    // 逐轨归零，避免 mp4-muxer 的 strict 模式拒绝这类合法输出。
+    firstTimestampBehavior: 'offset',
   });
 
   let encoderError: Error | null = null;

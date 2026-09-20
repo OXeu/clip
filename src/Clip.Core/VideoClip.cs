@@ -30,12 +30,12 @@ public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double En
 }
 
 public sealed record VideoTrack(Guid Id, string Name, bool IsMain, IReadOnlyList<VideoClip> Clips,
-    TrackKind Kind = TrackKind.Video, Guid? BindingId = null)
+    TrackKind Kind = TrackKind.Video, Guid? BindingId = null, Guid? CompanionGroupId = null)
 {
     public double Duration => Clips.Sum(c => c.Duration);
 }
 
-public readonly record struct SeparatedImport(VideoTrack VideoTrack, VideoTrack? AudioTrack);
+public readonly record struct SeparatedImport(VideoTrack VideoTrack, VideoTrack AudioTrack);
 
 public readonly record struct ClipPosition(Guid TrackId, int Index, VideoClip Clip, double SourceTime, double TimelineStart)
 {

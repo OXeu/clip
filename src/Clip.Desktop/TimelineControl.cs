@@ -9,14 +9,19 @@ namespace Clip.Desktop;
 public sealed class TimelineControl : FrameworkElement
 {
     public const string ClipDataFormat = "Clip.VideoClip";
-    public const double ContentInset = 16;
+    public const string TrackDataFormat = "Clip.VideoTrack";
+    public const double ContentInset = 32;
     public const double RulerHeight = 28;
     public const double RowHeight = 68;
+    public const double TrackHandleWidth = 24;
     private const double ClipHeight = 48;
     private Point _mouseDown;
     private Guid? _pressedClip;
     private Guid? _draggedClip;
+    private Guid? _pressedTrack;
+    private Guid? _draggedTrack;
     private (Guid Track, int Index)? _drop;
+    private int? _trackDrop;
     public EditProject? Project { get; set; }
     public Guid ActiveTrackId { get; set; }
     public Guid? SelectedTrackId { get; set; }
@@ -33,6 +38,7 @@ public sealed class TimelineControl : FrameworkElement
     public event Action<Guid, double>? TrackSelectionChanged;
     public event Action<Guid>? TrackToggled;
     public event Action<Guid, Guid, int>? MoveRequested;
+    public event Action<Guid, int>? TrackMoveRequested;
     public event Action<Point>? AutoScrollRequested;
     public double ContentHeight => RulerHeight + (Project?.Tracks.Count ?? 1) * RowHeight + 8;
     public double Duration { get; set; }
@@ -72,6 +78,16 @@ public sealed class TimelineControl : FrameworkElement
         return (track.Id, track.Clips.Count);
     }
 
+    public int? TrackInsertionAt(Point point)
+    {
+        if (Project is null || point.Y < VerticalOffset + RulerHeight) return null;
+        var raw = (int)Math.Floor((point.Y - RulerHeight) / RowHeight + 0.5);
+        return Project.TrackInsertionBoundaries()
+            .OrderBy(boundary => Math.Abs(boundary - raw))
+            .ThenByDescending(boundary => boundary)
+            .First();
+    }
+
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
@@ -89,7 +105,9 @@ public sealed class TimelineControl : FrameworkElement
                 dc.DrawRectangle(Brush("ColorNeutralBackground2"), null, new Rect(0, top, ActualWidth, RowHeight));
             dc.DrawLine(new Pen(Brush("ColorSubtleStroke"), 1), new Point(0, top + RowHeight), new Point(ActualWidth, top + RowHeight));
             if (track.Clips.Count == 0)
-                Text(dc, "拖拽片段到这里", HorizontalOffset + ContentInset, top + 25, 12,
+                Text(dc, track.Kind == TrackKind.Audio && track.CompanionGroupId.HasValue
+                    ? "伴生音频槽（当前无片段）"
+                    : "拖拽片段到这里", HorizontalOffset + ContentInset, top + 25, 12,
                     track.Id == SelectedTrackId ? "ColorSelectionForeground" : "ColorNeutralForeground3");
             double offset = 0;
             foreach (var clip in track.Clips)
@@ -122,11 +140,37 @@ public sealed class TimelineControl : FrameworkElement
                 dc.Pop();
                 if (_draggedClip == clip.Id) dc.Pop();
             }
+            var handleX = HorizontalOffset + 5;
+            var isCompanionAudio = track.Kind == TrackKind.Audio && track.CompanionGroupId.HasValue;
+            var dragged = _draggedTrack.HasValue ? Project.FindTrack(_draggedTrack.Value) : null;
+            var draggingGroup = _draggedTrack == track.Id ||
+                (track.CompanionGroupId.HasValue && dragged?.CompanionGroupId == track.CompanionGroupId);
+            var rail = track.Id == SelectedTrackId || MultiSelectedTrackIds.Contains(track.Id)
+                ? "ColorSelectionBackground"
+                : track.Id == ActiveTrackId ? "ColorNeutralBackground2" : "ColorNeutralBackground1";
+            dc.DrawRectangle(Brush(rail), null, new Rect(HorizontalOffset, top, TrackHandleWidth + 4, RowHeight));
+            if (isCompanionAudio)
+            {
+                var companionBrush = Brush(draggingGroup ? "ColorBrandBackground" : "ColorNeutralForeground3");
+                var companionPen = new Pen(companionBrush, 1.5);
+                dc.DrawLine(companionPen, new Point(handleX + 7, top), new Point(handleX + 7, top + RowHeight / 2));
+                dc.DrawLine(companionPen, new Point(handleX + 7, top + RowHeight / 2), new Point(handleX + 14, top + RowHeight / 2));
+                dc.DrawEllipse(companionBrush, null, new Point(handleX + 14, top + RowHeight / 2), 2.5, 2.5);
+            }
+            else if (track.Clips.Count > 0 || track.CompanionGroupId.HasValue)
+            {
+                var handleRect = new Rect(handleX, top + 21, 14, 26);
+                dc.DrawRoundedRectangle(Brush(draggingGroup ? "ColorBrandBackground" : "ColorNeutralBackground2"),
+                    null, handleRect, 5, 5);
+                var handlePen = new Pen(Brush(draggingGroup ? "ColorSelectionForeground" : "ColorNeutralForeground3"), 1);
+                foreach (var handleY in new[] { top + 28, top + 34, top + 40 })
+                    dc.DrawLine(handlePen, new Point(handleX + 4, handleY), new Point(handleX + 10, handleY));
+            }
             if (track.BindingId.HasValue)
             {
                 var binding = Brush("ColorBrandStroke");
-                dc.DrawLine(new Pen(binding, 2), new Point(5, top + 12), new Point(5, top + RowHeight - 12));
-                dc.DrawEllipse(binding, null, new Point(5, top + RowHeight / 2), 3, 3);
+                dc.DrawLine(new Pen(binding, 2), new Point(handleX + 18, top + 12), new Point(handleX + 18, top + RowHeight - 12));
+                dc.DrawEllipse(binding, null, new Point(handleX + 18, top + RowHeight / 2), 3, 3);
             }
             if (track.Id == ExportPreviewTrackId)
                 dc.DrawRectangle(null, new Pen(Brush("ColorBrandStroke"), 2), new Rect(1, top + 1, Math.Max(0, ActualWidth - 2), RowHeight - 2));
@@ -136,6 +180,12 @@ public sealed class TimelineControl : FrameworkElement
                 dc.DrawLine(new Pen(Brush("ColorBrandBackground"), 3), new Point(x, top + 2), new Point(x, top + RowHeight - 2));
                 dc.DrawEllipse(Brush("ColorBrandBackground"), null, new Point(x, top + 3), 4, 4);
             }
+        }
+        if (_trackDrop is { } trackDrop)
+        {
+            var y = RulerHeight + trackDrop * RowHeight;
+            dc.DrawLine(new Pen(Brush("ColorBrandBackground"), 3),
+                new Point(HorizontalOffset + 3, y), new Point(Math.Max(HorizontalOffset + 3, ActualWidth - 3), y));
         }
         // Frozen shared ruler.
         dc.DrawRectangle(Brush("ColorNeutralBackground2"), null, new Rect(HorizontalOffset, VerticalOffset, ActualWidth, RulerHeight));
@@ -166,6 +216,7 @@ public sealed class TimelineControl : FrameworkElement
         Focus();
         var point = e.GetPosition(this);
         _pressedClip = null;
+        _pressedTrack = null;
         if (point.Y < VerticalOffset + RulerHeight)
         {
             if (e.ChangedButton == MouseButton.Left)
@@ -182,6 +233,15 @@ public sealed class TimelineControl : FrameworkElement
             if (MultiSelectMode && e.ChangedButton == MouseButton.Left)
             {
                 TrackToggled?.Invoke(track.Id);
+                e.Handled = true;
+                return;
+            }
+            if (e.ChangedButton == MouseButton.Left && (track.Clips.Count > 0 || track.CompanionGroupId.HasValue) &&
+                point.X >= HorizontalOffset && point.X <= HorizontalOffset + TrackHandleWidth)
+            {
+                _pressedTrack = track.Id;
+                _mouseDown = point;
+                CaptureMouse();
                 e.Handled = true;
                 return;
             }
@@ -202,7 +262,17 @@ public sealed class TimelineControl : FrameworkElement
         base.OnMouseMove(e);
         if (!IsMouseCaptured || e.LeftButton != MouseButtonState.Pressed) return;
         var point = e.GetPosition(this);
-        if (_pressedClip is { } id)
+        if (_pressedTrack is { } trackId)
+        {
+            if (Math.Abs(point.X - _mouseDown.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(point.Y - _mouseDown.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+            ReleaseMouseCapture();
+            _draggedTrack = trackId;
+            InvalidateVisual();
+            try { DragDrop.DoDragDrop(this, new DataObject(TrackDataFormat, trackId.ToString()), DragDropEffects.Move); }
+            finally { _pressedTrack = _draggedTrack = null; _trackDrop = null; InvalidateVisual(); }
+        }
+        else if (_pressedClip is { } id)
         {
             if (Math.Abs(point.X - _mouseDown.X) < SystemParameters.MinimumHorizontalDragDistance &&
                 Math.Abs(point.Y - _mouseDown.Y) < SystemParameters.MinimumVerticalDragDistance) return;
@@ -219,13 +289,25 @@ public sealed class TimelineControl : FrameworkElement
     {
         base.OnMouseUp(e);
         _pressedClip = null;
+        _pressedTrack = null;
         if (IsMouseCaptured) ReleaseMouseCapture();
     }
 
     protected override void OnDragOver(DragEventArgs e)
     {
         base.OnDragOver(e);
+        if (e.Data.GetDataPresent(TrackDataFormat))
+        {
+            _drop = null;
+            _trackDrop = TrackInsertionAt(e.GetPosition(this));
+            e.Effects = IsEnabled && _trackDrop is not null ? DragDropEffects.Move : DragDropEffects.None;
+            e.Handled = true;
+            AutoScrollRequested?.Invoke(e.GetPosition(this));
+            InvalidateVisual();
+            return;
+        }
         if (!e.Data.GetDataPresent(ClipDataFormat)) return;
+        _trackDrop = null;
         _drop = InsertionAt(e.GetPosition(this));
         e.Effects = IsEnabled && _drop is not null ? DragDropEffects.Move : DragDropEffects.None;
         e.Handled = true;
@@ -237,12 +319,23 @@ public sealed class TimelineControl : FrameworkElement
     {
         base.OnDragLeave(e);
         _drop = null;
+        _trackDrop = null;
         InvalidateVisual();
     }
 
     protected override void OnDrop(DragEventArgs e)
     {
         base.OnDrop(e);
+        if (e.Data.GetDataPresent(TrackDataFormat))
+        {
+            if (IsEnabled && Guid.TryParse(e.Data.GetData(TrackDataFormat) as string, out var trackId) &&
+                TrackInsertionAt(e.GetPosition(this)) is { } trackDrop)
+                TrackMoveRequested?.Invoke(trackId, trackDrop);
+            e.Handled = true;
+            _trackDrop = null;
+            InvalidateVisual();
+            return;
+        }
         if (!e.Data.GetDataPresent(ClipDataFormat)) return;
         if (IsEnabled && Guid.TryParse(e.Data.GetData(ClipDataFormat) as string, out var id) && InsertionAt(e.GetPosition(this)) is { } drop)
             MoveRequested?.Invoke(id, drop.Track, drop.Index);

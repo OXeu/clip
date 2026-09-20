@@ -29,7 +29,6 @@ import {
   type MediaInfo,
   type VideoClip,
   type VideoTrack,
-  ClipKind,
   EditProject,
   VideoEncoder,
   clipDuration,
@@ -157,6 +156,7 @@ const timeline = new TimelineView(canvas, timelineScroll, {
   onSelectClip: (clipId, time) => selectClip(clipId, time),
   onSelectTrack: (trackId, time) => selectTrack(trackId, time),
   onMoveClip: (clipId, trackId, index) => moveClip(clipId, trackId, index),
+  onMoveTrack: (trackId, index) => moveTrack(trackId, index),
   onToggleTrack: (trackId) => toggleMultiSelectedTrack(trackId),
 });
 timeline.setProject(project);
@@ -451,8 +451,8 @@ function activatePreview(found: ClipPosition, play: boolean, forceReload = false
   playing = resumeOnOpen = play;
 
   const media = found.clip.media;
-  // 分离后视频轨本身无声；音频轨只负责声音，二者可独立编辑。
-  video.muted = found.clip.kind === ClipKind.Video;
+  // 伴生音频槽用于对齐与编辑；视频预览仍播放源文件的内嵌音频。
+  video.muted = false;
   const needsSource = video.dataset.source !== media.path || forceReload;
   if (needsSource) {
     video.dataset.source = media.path;
@@ -706,11 +706,11 @@ function togglePlay(): void {
 function split(): void {
   if (operation || multiSelectMode) return;
   if (playing) tick();
-  const synchronized = project.bindingTracks(activeTrackId).length;
+  const synchronized = project.synchronizedTracks(activeTrackId).length;
   const id = project.split(activeTrackId, position);
   if (!id) {
     status(synchronized > 1
-      ? '绑定轨道无法在此时间点同时分割，请检查各轨道是否都覆盖该位置。'
+      ? '关联轨道无法在此时间点同时分割，请检查伴生音轨和对齐轨是否都覆盖该位置。'
       : '请将播放头移到当前轨道的片段内部再分割。');
     return;
   }
@@ -722,7 +722,7 @@ function split(): void {
   } else {
     activatePreview(project.findClip(id)!, false);
   }
-  status(synchronized > 1 ? `已同步分割 ${synchronized} 条绑定轨道` : '已分割片段');
+  status(synchronized > 1 ? `已同步分割 ${synchronized} 条关联轨道` : '已分割片段');
   refresh();
 }
 
@@ -759,6 +759,13 @@ function moveClip(clipId: string, trackId: string, index: number): void {
     false,
   );
   status('已移动片段');
+}
+
+function moveTrack(trackId: string, index: number): void {
+  if (operation || multiSelectMode) return;
+  if (!project.moveTrack(trackId, index)) return;
+  status('已调整音视频轨道组顺序');
+  refresh();
 }
 
 function restore(redo: boolean): void {
@@ -851,7 +858,10 @@ function refresh(): void {
   const clips = track ? track.clips.length : 0;
   const seconds = track ? trackDuration(track) : 0;
   const bound = project.bindingTracks(track.id).length;
-  timelineSummary.textContent = `${track.kind === 'audio' ? '音频轨' : '视频轨'} · ${clips} 片段 · ${seconds.toFixed(2)} 秒${bound > 1 ? ` · 对齐组 ${bound} 轨` : ''}`;
+  const trackType = track.kind === 'audio'
+    ? (track.companionGroupId ? '伴生音频槽' : '音频轨')
+    : (track.companionGroupId ? '视频轨 · 含伴生音频' : '视频轨');
+  timelineSummary.textContent = `${trackType} · ${clips} 片段 · ${seconds.toFixed(2)} 秒${bound > 1 ? ` · 对齐组 ${bound} 轨` : ''}`;
   document.title = hasMedia ? `${project.sources.length} 个素材 — 视频剪辑` : 'Clip · 视频剪辑';
   refreshPosition();
   scheduleSessionSave();
@@ -1550,7 +1560,10 @@ timelineScroll.addEventListener(
   },
   { passive: false },
 );
-timelineScroll.addEventListener('scroll', scheduleSessionSave, { passive: true });
+timelineScroll.addEventListener('scroll', () => {
+  timeline.draw();
+  scheduleSessionSave();
+}, { passive: true });
 
 // 跟随系统主题
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');

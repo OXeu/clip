@@ -429,9 +429,23 @@ public partial class MainWindow
         }
         var videoTracks = _project.Tracks.Where(track => track.Kind == TrackKind.Video && track.Clips.Count > 0).ToArray();
         var audioTracks = _project.Tracks.Where(track => track.Kind == TrackKind.Audio).ToArray();
-        Require(videoTracks.Length == 2 && audioTracks.Length == _project.Sources.Count(source => source.HasAudio) &&
+        Require(videoTracks.Length == 2 && audioTracks.Length == videoTracks.Length &&
             _project.MainTrack.Clips.Count == 0 && ExportButton.IsEnabled && ExportTracksButton.IsVisible &&
-            _activeTrackId == videoTracks[1].Id, "Imports must create separate audio/video tracks and preview the last video track.");
+            _activeTrackId == videoTracks[1].Id, "Imports must create video tracks with companion audio slots and preview the last video track.");
+        if (audioTracks.Length >= 2)
+        {
+            var videoIndex = _project.Tracks.ToList().FindIndex(track => track.Id == videoTracks[0].Id);
+            Require(TimelineView.TrackInsertionAt(new Point(10, TimelineControl.RulerHeight + videoIndex * TimelineControl.RowHeight + 2)) == videoIndex,
+                "Track drop geometry did not target the requested row.");
+            MoveTrack(audioTracks[1].Id, videoIndex);
+            Require(_project.Tracks[videoIndex].Id == videoTracks[1].Id && _project.Tracks[videoIndex + 1].Id == audioTracks[1].Id &&
+                _project.Tracks[videoIndex + 2].Id == videoTracks[0].Id && _project.Tracks[videoIndex + 3].Id == audioTracks[0].Id,
+                "Dragging an audio slot did not move its complete companion group.");
+            MoveTrack(audioTracks[1].Id, videoIndex + 4);
+            Require(_project.Tracks[videoIndex].Id == videoTracks[0].Id && _project.Tracks[videoIndex + 1].Id == audioTracks[0].Id &&
+                _project.Tracks[videoIndex + 2].Id == videoTracks[1].Id && _project.Tracks[videoIndex + 3].Id == audioTracks[1].Id,
+                "Companion groups could not be restored to their original order.");
+        }
         MultiSelectClick(this, new RoutedEventArgs());
         ToggleMultiSelectedTrack(videoTracks[0].Id);
         ToggleMultiSelectedTrack(videoTracks[1].Id);

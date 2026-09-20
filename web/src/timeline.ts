@@ -2,7 +2,7 @@
  * 时间轴绘制与交互，移植自 src/Clip.Desktop/TimelineControl.cs。
  *
  * 保留桌面端的几何常量与交互模型：
- *   行高 68、片段高 48、标尺高 28、内容内边距 16；
+ *   行高 68、片段高 48、标尺高 28、内容内边距 32；
  *   点击片段只选中片段，点击轨道空白处才选中整轨；
  *   拖拽跨轨移动，拖到边缘自动滚动。
  *
@@ -23,13 +23,15 @@ import {
 export const RULER_HEIGHT = 28;
 export const ROW_HEIGHT = 68;
 export const CLIP_HEIGHT = 48;
-export const CONTENT_INSET = 16;
+export const CONTENT_INSET = 32;
+export const TRACK_HANDLE_WIDTH = 24;
 
 export interface TimelineCallbacks {
   onSeek: (trackId: string, time: number) => void;
   onSelectClip: (clipId: string, time: number) => void;
   onSelectTrack: (trackId: string, time: number) => void;
   onMoveClip: (clipId: string, trackId: string, index: number) => void;
+  onMoveTrack: (trackId: string, index: number) => void;
   onToggleTrack: (trackId: string) => void;
 }
 
@@ -112,7 +114,9 @@ export class TimelineView {
   private readonly waveforms = new Map<string, Float32Array>();
 
   private dragging: { clipId: string; started: boolean; origin: { x: number; y: number } } | null = null;
+  private draggingTrack: { trackId: string; started: boolean; origin: { x: number; y: number } } | null = null;
   private dropTarget: DropTarget | null = null;
+  private trackDropIndex: number | null = null;
   private seeking = false;
   private readonly touchPointers = new Map<number, { x: number; y: number }>();
   private touchGesture: {
@@ -238,6 +242,14 @@ export class TimelineView {
     return { trackId: track.id, index: track.clips.length };
   }
 
+  trackInsertionAt(y: number): number | null {
+    const project = this.project;
+    if (!project || y < RULER_HEIGHT) return null;
+    const raw = Math.round((y - RULER_HEIGHT) / ROW_HEIGHT);
+    return project.trackInsertionBoundaries().reduce((best, boundary) =>
+      Math.abs(boundary - raw) <= Math.abs(best - raw) ? boundary : best);
+  }
+
   private roundedRect(
     context: CanvasRenderingContext2D,
     x: number,
@@ -290,7 +302,9 @@ export class TimelineView {
 
       if (track.clips.length === 0) {
         context.fillStyle = track.id === this.selectedTrackId ? colors.selectionForeground : colors.foregroundMuted;
-        context.fillText('拖拽片段到这里', CONTENT_INSET, top + 32);
+        context.fillText(track.kind === TrackKind.Audio && track.companionGroupId
+          ? '伴生音频槽（当前无片段）'
+          : '拖拽片段到这里', CONTENT_INSET, top + 32);
       }
 
       let offset = 0;
@@ -301,16 +315,53 @@ export class TimelineView {
         this.drawClip(context, track, clip, x, top + 10, rectWidth, clip.id === this.selectedClipId);
       }
 
+      const handleX = this.container.scrollLeft + 5;
+      const isCompanionAudio = track.kind === TrackKind.Audio && Boolean(track.companionGroupId);
+      const dragged = this.draggingTrack ? project.findTrack(this.draggingTrack.trackId) : undefined;
+      const draggingGroup = this.draggingTrack?.trackId === track.id
+        || Boolean(track.companionGroupId && dragged?.companionGroupId === track.companionGroupId);
+      context.fillStyle = track.id === this.selectedTrackId || multiSelected
+        ? colors.trackSelected
+        : track.id === this.activeTrackId ? colors.track : colors.background;
+      context.fillRect(this.container.scrollLeft, top, TRACK_HANDLE_WIDTH + 4, ROW_HEIGHT);
+      if (isCompanionAudio) {
+        context.strokeStyle = draggingGroup ? colors.brand : colors.foregroundMuted;
+        context.fillStyle = draggingGroup ? colors.brand : colors.foregroundMuted;
+        context.lineWidth = 1.5;
+        context.beginPath();
+        context.moveTo(handleX + 7, top);
+        context.lineTo(handleX + 7, top + ROW_HEIGHT / 2);
+        context.lineTo(handleX + 14, top + ROW_HEIGHT / 2);
+        context.stroke();
+        context.beginPath();
+        context.arc(handleX + 14, top + ROW_HEIGHT / 2, 2.5, 0, Math.PI * 2);
+        context.fill();
+      } else if (track.clips.length > 0 || track.companionGroupId) {
+        this.roundedRect(context, handleX, top + 21, 14, 26, 5);
+        context.fillStyle = draggingGroup ? colors.brand : colors.track;
+        context.fill();
+        context.strokeStyle = draggingGroup
+          ? colors.selectionForeground
+          : colors.foregroundMuted;
+        context.lineWidth = 1;
+        for (const handleY of [top + 28, top + 34, top + 40]) {
+          context.beginPath();
+          context.moveTo(handleX + 4, handleY);
+          context.lineTo(handleX + 10, handleY);
+          context.stroke();
+        }
+      }
+
       if (track.bindingId) {
         context.strokeStyle = colors.binding;
         context.lineWidth = 2;
         context.beginPath();
-        context.moveTo(5, top + 12);
-        context.lineTo(5, top + ROW_HEIGHT - 12);
+        context.moveTo(handleX + 18, top + 12);
+        context.lineTo(handleX + 18, top + ROW_HEIGHT - 12);
         context.stroke();
         context.fillStyle = colors.binding;
         context.beginPath();
-        context.arc(5, top + ROW_HEIGHT / 2, 3, 0, Math.PI * 2);
+        context.arc(handleX + 18, top + ROW_HEIGHT / 2, 3, 0, Math.PI * 2);
         context.fill();
       }
 
@@ -336,6 +387,16 @@ export class TimelineView {
         context.fill();
       }
     });
+
+    if (this.trackDropIndex !== null) {
+      const y = RULER_HEIGHT + this.trackDropIndex * ROW_HEIGHT;
+      context.strokeStyle = colors.brand;
+      context.lineWidth = 3;
+      context.beginPath();
+      context.moveTo(this.container.scrollLeft + 3, y);
+      context.lineTo(Math.min(width, this.container.scrollLeft + this.container.clientWidth - 3), y);
+      context.stroke();
+    }
 
     this.drawRuler(context, width);
     this.drawPlayhead(context, project);
@@ -556,6 +617,13 @@ export class TimelineView {
       this.callbacks.onToggleTrack(track.id);
       return;
     }
+    const handleRight = this.container.scrollLeft + TRACK_HANDLE_WIDTH;
+    if (point.x <= handleRight && (track.clips.length > 0 || Boolean(track.companionGroupId))) {
+      this.draggingTrack = { trackId: track.id, started: false, origin: point };
+      this.canvas.style.cursor = 'grab';
+      this.canvas.setPointerCapture(event.pointerId);
+      return;
+    }
     const hit = track.clips.find((clip) => {
       const bounds = this.clipBounds(clip.id);
       return bounds ? point.x >= bounds.x && point.x <= bounds.x + bounds.width : false;
@@ -583,6 +651,19 @@ export class TimelineView {
     const point = this.localPoint(event);
     if (this.seeking) {
       this.callbacks.onSeek(this.activeTrackId, this.timeAtX(point.x));
+      return;
+    }
+    if (this.draggingTrack) {
+      if (!this.draggingTrack.started) {
+        const dx = Math.abs(point.x - this.draggingTrack.origin.x);
+        const dy = Math.abs(point.y - this.draggingTrack.origin.y);
+        if (dx < 4 && dy < 4) return;
+        this.draggingTrack.started = true;
+        this.canvas.style.cursor = 'grabbing';
+      }
+      this.trackDropIndex = this.trackInsertionAt(point.y);
+      this.autoScroll(point);
+      this.draw();
       return;
     }
     if (this.dragging) {
@@ -620,6 +701,9 @@ export class TimelineView {
     if (this.dragging?.started && this.dropTarget) {
       this.callbacks.onMoveClip(this.dragging.clipId, this.dropTarget.trackId, this.dropTarget.index);
     }
+    if (this.draggingTrack?.started && this.trackDropIndex !== null) {
+      this.callbacks.onMoveTrack(this.draggingTrack.trackId, this.trackDropIndex);
+    }
     this.endDrag();
     if (this.canvas.hasPointerCapture(event.pointerId)) {
       this.canvas.releasePointerCapture(event.pointerId);
@@ -638,7 +722,10 @@ export class TimelineView {
 
   private endDrag(): void {
     this.dragging = null;
+    this.draggingTrack = null;
     this.dropTarget = null;
+    this.trackDropIndex = null;
+    this.canvas.style.cursor = '';
     this.draw();
   }
 

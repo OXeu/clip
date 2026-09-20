@@ -11,6 +11,7 @@ import { describe, it } from 'node:test';
 import {
   type MediaInfo,
   EditProject,
+  TrackKind,
   clipDuration,
   createClip,
   trackDuration,
@@ -41,8 +42,8 @@ const assertSingleTrailingEmptyTrack = (project: EditProject): void => {
   const empty = project.allTracks.filter((track) => track.clips.length === 0);
   assert.equal(empty.length, 1, '项目应始终恰好有一条空轨');
   assert.equal(project.allTracks.at(-1)?.id, empty[0]!.id, '空轨应始终位于末尾');
-  assert.equal(project.allTracks[0]?.isMain, true, '首轨应保持为主轨');
-  assert.ok(project.allTracks.slice(1).every((track) => !track.isMain), '只能有一条主轨');
+  assert.equal(project.allTracks.filter((track) => track.isMain).length, 1, '只能有一条主轨');
+  assert.equal(project.mainTrack.isMain, true, '主轨身份应保持有效');
 };
 
 describe('分割与 ripple 删除', () => {
@@ -105,15 +106,40 @@ describe('分割与 ripple 删除', () => {
 });
 
 describe('音视频分轨与对齐绑定', () => {
-  it('导入时生成独立的视频轨和音频轨', () => {
+  it('导入时生成视频轨和紧邻其下的伴生音频槽', () => {
     const project = new EditProject();
     const imported = project.importSeparated(media);
     assert.equal(imported.videoTrack.kind, 'video');
     assert.equal(imported.videoTrack.clips[0]!.kind, 'video');
-    assert.equal(imported.audioTrack?.kind, 'audio');
-    assert.equal(imported.audioTrack?.clips[0]!.kind, 'audio');
-    assert.notEqual(imported.videoTrack.clips[0]!.id, imported.audioTrack?.clips[0]!.id);
+    assert.equal(imported.audioTrack.kind, 'audio');
+    assert.equal(imported.audioTrack.clips[0]!.kind, 'audio');
+    assert.equal(imported.videoTrack.companionGroupId, imported.audioTrack.companionGroupId);
+    assert.deepEqual(project.allTracks.slice(0, 2).map((track) => track.id),
+      [imported.videoTrack.id, imported.audioTrack.id]);
+    assert.notEqual(imported.videoTrack.clips[0]!.id, imported.audioTrack.clips[0]!.id);
     assert.equal(project.exportableTracks.length, 1, '音频轨不应出现在视频导出目标中');
+  });
+
+  it('无声视频也保留一条伴生音频槽', () => {
+    const project = new EditProject();
+    const imported = project.importSeparated({ ...media, audioStreamIndex: null });
+    assert.equal(imported.audioTrack.kind, TrackKind.Audio);
+    assert.equal(imported.audioTrack.companionGroupId, imported.videoTrack.companionGroupId);
+  });
+
+  it('拖动任一伴生轨都会整组排序，音频槽不会脱离视频轨', () => {
+    const project = new EditProject();
+    const first = project.importSeparated(media);
+    const second = project.importSeparated({ ...media, path: 'angle-b.mp4' });
+    assert.equal(project.move(first.audioTrack.clips[0]!.id, first.videoTrack.id, 0), false,
+      '音频片段不应混入视频轨');
+    assert.ok(project.moveTrack(second.audioTrack.id, 0));
+    assert.deepEqual(project.allTracks.slice(0, 4).map((track) => track.id),
+      [second.videoTrack.id, second.audioTrack.id, first.videoTrack.id, first.audioTrack.id]);
+    assert.equal(project.mainTrack.id, first.videoTrack.id, '轨道排序不应改变主轨身份');
+    assert.ok(project.undo());
+    assert.deepEqual(project.allTracks.slice(0, 4).map((track) => track.id),
+      [first.videoTrack.id, first.audioTrack.id, second.videoTrack.id, second.audioTrack.id]);
   });
 
   it('绑定轨道同步分割，但删除只影响当前片段', () => {
@@ -125,6 +151,8 @@ describe('音视频分轨与对齐绑定', () => {
     assert.ok(right);
     assert.equal(project.findTrack(first.id)!.clips.length, 2);
     assert.equal(project.findTrack(second.id)!.clips.length, 2);
+    assert.equal(project.companionTracks(first.id)[1]!.clips.length, 2, '第一视角的伴生音轨应同步分割');
+    assert.equal(project.companionTracks(second.id)[1]!.clips.length, 2, '第二视角的伴生音轨应同步分割');
     assert.ok(project.delete(right));
     assert.equal(project.findTrack(first.id)!.clips.length, 1);
     assert.equal(project.findTrack(second.id)!.clips.length, 2, '删除不应传播到绑定轨道');

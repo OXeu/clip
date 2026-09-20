@@ -27,12 +27,12 @@ public partial class MainWindow
     {
         if (_operation is not null || _multiSelectMode) return;
         if (_playing) Tick(this, EventArgs.Empty);
-        var synchronized = _project.BindingTracks(_activeTrackId).Count;
+        var synchronized = _project.SynchronizedTracks(_activeTrackId).Count;
         var id = _project.Split(_activeTrackId, _position);
         if (id is null)
         {
             StatusText.Text = synchronized > 1
-                ? "绑定轨道无法在此时间点同时分割，请检查各轨道是否都覆盖该位置。"
+                ? "关联轨道无法在此时间点同时分割，请检查伴生音轨和对齐轨是否都覆盖该位置。"
                 : "请将播放头移到当前轨道的片段内部再分割。";
             return;
         }
@@ -40,7 +40,7 @@ public partial class MainWindow
         _selected = id;
         if (_playing) _selected = _playbackClip = _project.Locate(_activeTrackId, _position)?.Clip.Id;
         else ActivatePreview(_project.FindClip(id.Value)!.Value, false);
-        StatusText.Text = synchronized > 1 ? $"已同步分割 {synchronized} 条绑定轨道" : "已分割片段";
+        StatusText.Text = synchronized > 1 ? $"已同步分割 {synchronized} 条关联轨道" : "已分割片段";
         Refresh();
     }
 
@@ -54,6 +54,14 @@ public partial class MainWindow
         ActivatePreview(moved with { SourceTime = Math.Clamp(source, moved.Clip.Start, moved.Clip.End) }, false);
         RevealTrack(trackId);
         StatusText.Text = "已移动片段";
+    }
+
+    private void MoveTrack(Guid trackId, int index)
+    {
+        if (_operation is not null || _multiSelectMode || !_project.MoveTrack(trackId, index)) return;
+        StatusText.Text = "已调整音视频轨道组顺序";
+        Refresh();
+        RevealTrack(trackId);
     }
 
     private void DeleteClick(object sender, RoutedEventArgs e) => DeleteSelected();
@@ -203,7 +211,10 @@ public partial class MainWindow
         TimelineView.IsEnabled = ready;
         Title = hasMedia ? $"{_project.Sources.Count} 个素材 — 视频剪辑" : "视频剪辑";
         var bound = _project.BindingTracks(ActiveTrack.Id).Count;
-        TimelineSummaryText.Text = $"{(ActiveTrack.Kind == TrackKind.Audio ? "音频轨" : "视频轨")} · {ActiveTrack.Clips.Count} 片段 · {ActiveTrack.Duration:0.##} 秒" +
+        var trackType = ActiveTrack.Kind == TrackKind.Audio
+            ? (ActiveTrack.CompanionGroupId.HasValue ? "伴生音频槽" : "音频轨")
+            : (ActiveTrack.CompanionGroupId.HasValue ? "视频轨 · 含伴生音频" : "视频轨");
+        TimelineSummaryText.Text = $"{trackType} · {ActiveTrack.Clips.Count} 片段 · {ActiveTrack.Duration:0.##} 秒" +
             (bound > 1 ? $" · 对齐组 {bound} 轨" : "");
         MultiSelectButton.Content = _multiSelectMode ? "退出多选" : "多选轨道";
         MultiSelectButton.IsEnabled = ready && _project.Tracks.Any(track => track.Clips.Count > 0);

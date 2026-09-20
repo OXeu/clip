@@ -57,6 +57,7 @@ public partial class MainWindow : Window
         TimelineView.TrackToggled += ToggleMultiSelectedTrack;
         TimelineView.SeekRequested += (track, time) => Seek(track, time);
         TimelineView.MoveRequested += MoveClip;
+        TimelineView.TrackMoveRequested += MoveTrack;
         TimelineView.AutoScrollRequested += AutoScrollTimeline;
         _timer.Tick += Tick;
         Design.UiTheme.Changed += ThemeChanged;

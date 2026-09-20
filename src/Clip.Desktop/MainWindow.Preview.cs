@@ -100,7 +100,8 @@ public partial class MainWindow
         _playbackClip = position.Clip.Id;
         _selected = _selectedTrackId is null ? position.Clip.Id : null;
         _position = position.TimelineTime;
-        Preview.IsMuted = position.Clip.Kind == ClipKind.Video;
+        // 伴生音频槽承载编辑关系；视频预览仍需播放源文件的内嵌音频。
+        Preview.IsMuted = false;
         var asset = AssetFor(position.Clip.Media);
         _playing = _resumeOnOpen = play;
         if (_currentAsset != asset || forceSourceReload)

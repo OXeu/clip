@@ -10,7 +10,7 @@ public sealed class EditProject
     private readonly Stack<State> _redo = [];
     public IReadOnlyList<VideoTrack> Tracks => _tracks.AsReadOnly();
     public IReadOnlyList<MediaInfo> Sources => _sources.AsReadOnly();
-    public VideoTrack MainTrack => _tracks[0];
+    public VideoTrack MainTrack => _tracks.First(t => t.IsMain);
     public double Duration => _tracks.Max(t => t.Duration);
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
@@ -37,18 +37,24 @@ public sealed class EditProject
         if (media.IsHdr) throw new NotSupportedException("暂不支持 HDR 素材，请先转换为 SDR。");
         SaveUndo();
         if (!_sources.Any(s => SameSource(s, media))) _sources.Add(media);
+        var companionGroupId = Guid.NewGuid();
         var videoTrack = new VideoTrack(Guid.NewGuid(), $"视频 {media.FileName}", false,
-            Array.AsReadOnly(new[] { videoClip }), TrackKind.Video);
+            Array.AsReadOnly(new[] { videoClip }), TrackKind.Video, CompanionGroupId: companionGroupId);
         _tracks.Add(videoTrack);
-        VideoTrack? audioTrack = null;
-        if (media.HasAudio)
-        {
-            var audioClip = VideoClip.Create(media) with { Kind = ClipKind.Audio };
-            audioTrack = new(Guid.NewGuid(), $"音频 {media.FileName}", false,
-                Array.AsReadOnly(new[] { audioClip }), TrackKind.Audio);
-            _tracks.Add(audioTrack);
-        }
+        var audioClip = VideoClip.Create(media) with { Kind = ClipKind.Audio };
+        var audioTrack = new VideoTrack(Guid.NewGuid(), media.HasAudio ? $"音频 {media.FileName}" : $"音频槽 {media.FileName}", false,
+            Array.AsReadOnly(new[] { audioClip }), TrackKind.Audio, CompanionGroupId: companionGroupId);
+        _tracks.Add(audioTrack);
         return new(videoTrack, audioTrack);
+    }
+
+    public IReadOnlyList<VideoTrack> CompanionTracks(Guid trackId)
+    {
+        var track = FindTrack(trackId);
+        if (track is null) return [];
+        if (track.CompanionGroupId is not { } groupId) return [track];
+        return _tracks.Where(candidate => candidate.CompanionGroupId == groupId)
+            .OrderBy(candidate => candidate.Kind == TrackKind.Video ? 0 : 1).ToArray();
     }
 
     public IReadOnlyList<VideoTrack> BindingTracks(Guid trackId)
@@ -57,6 +63,26 @@ public sealed class EditProject
         if (track is null) return [];
         if (track.BindingId is not { } bindingId) return [track];
         return _tracks.Where(t => t.BindingId == bindingId).ToArray();
+    }
+
+    /// <summary>分割同步集：显式对齐绑定与视频的伴生音频槽做传递闭包。</summary>
+    public IReadOnlyList<VideoTrack> SynchronizedTracks(Guid trackId)
+    {
+        if (FindTrack(trackId) is not { } first) return [];
+        var pending = new Stack<VideoTrack>();
+        var included = new HashSet<Guid>();
+        pending.Push(first);
+        while (pending.TryPop(out var current))
+        {
+            if (!included.Add(current.Id)) continue;
+            foreach (var candidate in _tracks)
+            {
+                var companion = current.CompanionGroupId.HasValue && candidate.CompanionGroupId == current.CompanionGroupId;
+                var aligned = current.BindingId.HasValue && candidate.BindingId == current.BindingId;
+                if ((companion || aligned) && !included.Contains(candidate.Id)) pending.Push(candidate);
+            }
+        }
+        return _tracks.Where(track => included.Contains(track.Id)).ToArray();
     }
 
     public Guid? BindTracks(IEnumerable<Guid> trackIds)
@@ -121,7 +147,7 @@ public sealed class EditProject
     public Guid? Split(Guid trackId, double time)
     {
         var cuts = new List<(VideoTrack Track, ClipPosition Position, double Cut)>();
-        foreach (var track in BindingTracks(trackId))
+        foreach (var track in SynchronizedTracks(trackId))
         {
             if (Locate(track.Id, time) is not { } position) return null;
             var frame = 1 / position.Clip.Media.FrameRate;
@@ -173,6 +199,45 @@ public sealed class EditProject
             };
         }
         return true;
+    }
+
+    public bool MoveTrack(Guid trackId, int insertionIndex)
+    {
+        var sourceIndex = _tracks.FindIndex(t => t.Id == trackId);
+        if (sourceIndex < 0 || (_tracks[sourceIndex].Clips.Count == 0 && !_tracks[sourceIndex].CompanionGroupId.HasValue)) return false;
+        var boundaries = TrackInsertionBoundaries();
+        if (insertionIndex < boundaries[0] || insertionIndex > boundaries[^1])
+            throw new ArgumentOutOfRangeException(nameof(insertionIndex));
+        var targetBoundary = boundaries.OrderBy(boundary => Math.Abs(boundary - insertionIndex)).ThenByDescending(boundary => boundary).First();
+        var unit = CompanionTracks(trackId);
+        var unitIds = unit.Select(track => track.Id).ToHashSet();
+        var unitIndexes = _tracks.Select((track, index) => unitIds.Contains(track.Id) ? index : -1).Where(index => index >= 0).ToArray();
+        var unitStart = unitIndexes.Min();
+        var unitEnd = unitIndexes.Max() + 1;
+        if (targetBoundary >= unitStart && targetBoundary <= unitEnd) return false;
+        SaveUndo();
+        var orderedUnit = unit.OrderBy(track => track.Kind == TrackKind.Video ? 0 : 1).ToArray();
+        _tracks.RemoveAll(track => unitIds.Contains(track.Id));
+        var removedBefore = unitIndexes.Count(index => index < targetBoundary);
+        _tracks.InsertRange(targetBoundary - removedBefore, orderedUnit);
+        return true;
+    }
+
+    public IReadOnlyList<int> TrackInsertionBoundaries()
+    {
+        var minimum = _tracks[0].Clips.Count == 0 && !_tracks[0].CompanionGroupId.HasValue ? 1 : 0;
+        List<int> boundaries = [minimum];
+        var seen = new HashSet<Guid>();
+        var index = minimum;
+        while (index < _tracks.Count)
+        {
+            var track = _tracks[index];
+            if (track.CompanionGroupId is { } groupId && seen.Add(groupId))
+                index += _tracks.Count(candidate => candidate.CompanionGroupId == groupId);
+            else index++;
+            boundaries.Add(index);
+        }
+        return boundaries;
     }
 
     public bool SetSpeed(Guid clipId, double speed)

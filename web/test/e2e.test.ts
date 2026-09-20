@@ -155,13 +155,14 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     return { page, errors };
   }
 
-  /** 导入素材并等待模型中出现片段。 */
+  /** 导入素材并等待模型与导入后的异步波形/能力探测全部就绪。 */
   async function importFixture(page: Page, fixture: FixtureFile): Promise<void> {
     await page.setInputFiles('#file-input', [fixture.path]);
     await page.waitForFunction(
       () => {
         const state = (window as unknown as { __clip: { state: () => StateShape } }).__clip.state();
-        return state.tracks.some((track) => track.clips.length > 0);
+        const progress = document.getElementById('progress') as HTMLProgressElement | null;
+        return state.tracks.some((track) => track.clips.length > 0) && progress?.hidden === true;
       },
       undefined,
       { timeout: 120_000 },
@@ -223,7 +224,7 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     assert.deepEqual(
       state.tracks.filter((track) => track.clips.length > 0).map((track) => track.kind),
       ['video', 'audio'],
-      '有声素材应自动拆成独立的视频轨和音频轨',
+      '有声素材应自动生成视频轨和伴生音频槽',
     );
     await page.context().close();
   });
@@ -791,7 +792,8 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
           anchor,
           clientWidth: scroll.clientWidth,
           canvasWidth: canvas.clientWidth,
-          normalizedAnchor: (scroll.scrollLeft + anchor - 16) / Math.max(1, canvas.clientWidth - 36),
+          // 与时间轴的 32px 左侧轨道把手区和 20px 右侧留白一致。
+          normalizedAnchor: (scroll.scrollLeft + anchor - 32) / Math.max(1, canvas.clientWidth - 52),
         };
       });
       const wheelPoint = {
@@ -808,7 +810,7 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
           clientWidth: scroll.clientWidth,
           canvasWidth: canvas.clientWidth,
           scrollLeft: scroll.scrollLeft,
-          normalizedAnchor: (scroll.scrollLeft + anchor - 16) / Math.max(1, canvas.clientWidth - 36),
+          normalizedAnchor: (scroll.scrollLeft + anchor - 32) / Math.max(1, canvas.clientWidth - 52),
         };
       }, timelineBefore.anchor);
       assert.ok(
