@@ -56,6 +56,8 @@ interface StateShape {
     readonly duration: number;
     readonly width: number;
     readonly height: number;
+    readonly videoStreamIndex: number;
+    readonly audioStreamIndex: number | null;
   }[];
   readonly duration: number;
   readonly selectedClipId: string | null;
@@ -228,6 +230,30 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
       ['video', 'audio'],
       '有声素材应自动生成视频轨和伴生音频槽',
     );
+    await page.context().close();
+  });
+
+  it('单独导入普通音频时创建空视频轨和已加载的伴生音频轨', async () => {
+    const fixture = fixtures.find((item) => item.name === 'tone-3s.m4a');
+    assert.ok(fixture, '应准备普通音频回归素材');
+    const { page, errors } = await openPage();
+    await importFixture(page, fixture);
+    const state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state(),
+    );
+    assert.equal(state.sources.length, 1);
+    assert.equal(state.sources[0]!.videoStreamIndex, -1);
+    assert.equal(state.sources[0]!.audioStreamIndex, 0);
+    assert.ok(Math.abs(state.sources[0]!.duration - 3) < 0.1);
+    assert.deepEqual(
+      state.tracks.slice(0, 2).map((track) => ({ kind: track.kind, clips: track.clips.length })),
+      [{ kind: 'video', clips: 0 }, { kind: 'audio', clips: 1 }],
+    );
+    assert.equal(state.exportableTracks, 0, '空视频轨不能直接导出');
+    assert.equal(await page.locator('#audio-preview').isVisible(), true);
+    assert.equal(await page.locator('#audio-preview-name').textContent(), fixture.name);
+    assert.equal(await page.locator('#export-button').isDisabled(), true);
+    assert.equal(errors.length, 0, `普通音频导入期间不应报错：${errors.join(' | ')}`);
     await page.context().close();
   });
 
@@ -415,7 +441,7 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     await page.click('#more-button');
     assert.equal(await page.locator('#more-menu').getAttribute('role'), 'menu');
     assert.deepEqual(
-      await page.locator('.more-menu-item > span:first-of-type').allTextContents(),
+      await page.locator('#more-menu .more-menu-item > span:first-of-type').allTextContents(),
       ['设置', '导入项目', '导出项目'],
     );
 

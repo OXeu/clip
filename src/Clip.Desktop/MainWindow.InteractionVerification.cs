@@ -304,7 +304,7 @@ public partial class MainWindow
         Require(_project.Tracks.SequenceEqual(before), "Context-menu undo did not restore the split.");
         await OpenTimelineMenuAsync(TimelineRegion, new Point(40, TimelineRegion.ActualHeight - 16), realInput);
         InvokeTimelineMenuItem(RedoMenuItem);
-        Require(_project.FindTrack(candidate.Id)!.Clips.Count == 2, "Context-menu redo did not restore the split.");
+        Require(_project.FindTrack(playbackTrack.Id)!.Clips.Count == 2, "Context-menu redo did not restore the split.");
         await OpenTimelineMenuAsync(TimelineView, new Point(120, 12), realInput);
         InvokeTimelineMenuItem(UndoMenuItem);
         Require(_project.Tracks.SequenceEqual(before), "Timeline menu actions changed unrelated project state.");
