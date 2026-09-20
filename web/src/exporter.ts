@@ -108,7 +108,8 @@ export function muxerFrameRate(frameRate: number): number | undefined {
 /**
  * mp4-muxer 直接消费 VideoEncoder 的输出顺序，而 WebCodecs 不会额外提供 DTS。
  * quality 模式在部分硬件 H.264 编码器上会生成 B 帧，使回调里的 PTS 出现
- * 0 → 2 → 1 这样的回退。realtime 模式要求低延迟输出，避免这类帧重排。
+ * 0 → 2 → 1 这样的回退。realtime 模式要求低延迟输出，通常能减少这类重排；
+ * 若驱动仍忽略该要求，运行期会改用平台软件 WebCodecs。
  */
 export function webCodecsVideoConfig(
   codec: string,
@@ -420,6 +421,11 @@ interface VideoTrackResult {
  * 若配置不受支持则抛出 WebCodecsUnavailableError，由调用方降级。
  */
 class WebCodecsUnavailableError extends Error {}
+class WebCodecsReorderedFramesError extends WebCodecsUnavailableError {}
+
+// 某些浏览器会忽略 realtime 并让硬件 H.264 编码器输出 B 帧。首次发现后，
+// 本次页面会话内直接使用平台软件 WebCodecs，避免每次导出都重复失败一次。
+let preferSoftwareVideoEncoder = false;
 
 interface WebCodecsAudioStage {
   readonly codec: WebCodecsAudioCodec;
@@ -434,6 +440,7 @@ async function encodeVideoTrack(
   report: (progress: ExportProgress) => void,
   signal?: AbortSignal,
   audioStage?: WebCodecsAudioStage,
+  hardwareAccelerations: readonly HardwareAcceleration[] = ['prefer-hardware', 'no-preference'],
 ): Promise<VideoTrackResult> {
   const first = clips[0]!;
   const { width, height } = getDimensions(options, first.media);
@@ -448,8 +455,8 @@ async function encodeVideoTrack(
   let codec: string | null = null;
   let encoderConfig: VideoEncoderConfig | null = null;
   const candidates = h264CodecCandidates(width, height, fps, capabilities.h264Codec);
-  // 先穷举各 profile 的硬件实现，再允许浏览器回落到默认实现。
-  for (const acceleration of ['prefer-hardware', 'no-preference'] as const) {
+  // 按调用方指定的加速偏好穷举所有 profile；运行期可用它强制软件重试。
+  for (const acceleration of hardwareAccelerations) {
     for (const candidate of candidates) {
       const config = webCodecsVideoConfig(candidate, width, height, bitrate, fps, acceleration);
       try {
@@ -520,8 +527,8 @@ async function encodeVideoTrack(
     const failure = encoderError;
     if (!failure) return;
     if (isNonMonotonicDtsError(failure)) {
-      throw new WebCodecsUnavailableError(
-        '当前浏览器的视频编码器输出了重排帧，已改用 ffmpeg.wasm 保证时间戳正确。',
+      throw new WebCodecsReorderedFramesError(
+        '当前浏览器的视频编码器输出了重排帧。',
       );
     }
     throw failure;
@@ -919,35 +926,69 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
       }
 
       let encoded: VideoTrackResult | null = null;
+      const encodeWithWebCodecs = async (
+        audioCodec: WebCodecsAudioCodec | null,
+        accelerations?: readonly HardwareAcceleration[],
+      ): Promise<VideoTrackResult> => encodeVideoTrack(
+        clips,
+        options,
+        capabilities,
+        cache,
+        (update) => report({
+          fraction: 0.01 + update.fraction * (audioCodec ? 0.69 : 0.79),
+          message: update.message,
+        }),
+        signal,
+        audioCodec
+          ? {
+            codec: audioCodec,
+            encode: (muxer) => encodeWebCodecsAudio(
+              clips,
+              (path) => cache.get(path),
+              muxer,
+              audioCodec,
+              (fraction) => report({
+                // 为运行期音频编码失败后的 wasm 兜底保留进度区间。
+                fraction: 0.70 + fraction * 0.12,
+                message: `正在用 WebCodecs 编码 ${audioCodec === 'aac' ? 'AAC' : 'Opus'} 音频…`,
+              }),
+              signal,
+            ),
+          }
+          : undefined,
+        accelerations,
+      );
+
+      const encodeWithSoftwareRetry = async (
+        audioCodec: WebCodecsAudioCodec | null,
+      ): Promise<VideoTrackResult> => {
+        try {
+          return await encodeWithWebCodecs(
+            audioCodec,
+            preferSoftwareVideoEncoder ? ['prefer-software'] : undefined,
+          );
+        } catch (error) {
+          if (!(error instanceof WebCodecsReorderedFramesError) || preferSoftwareVideoEncoder) throw error;
+          preferSoftwareVideoEncoder = true;
+          report({
+            fraction: 0.02,
+            message: '硬件 WebCodecs 输出了重排帧，正在切换到软件 WebCodecs…',
+          });
+          try {
+            return await encodeWithWebCodecs(audioCodec, ['prefer-software']);
+          } catch (retryError) {
+            if (retryError instanceof WebCodecsAudioUnavailableError ||
+              (retryError instanceof DOMException && retryError.name === 'AbortError')) throw retryError;
+            const detail = retryError instanceof Error ? retryError.message : String(retryError);
+            throw new WebCodecsUnavailableError(
+              `${error.message} 软件 WebCodecs 重试仍不可用：${detail}`,
+            );
+          }
+        }
+      };
+
       try {
-        encoded = await encodeVideoTrack(
-          clips,
-          options,
-          capabilities,
-          cache,
-          (update) => report({
-            fraction: 0.01 + update.fraction * (webCodecsAudioCodec ? 0.69 : 0.79),
-            message: update.message,
-          }),
-          signal,
-          webCodecsAudioCodec
-            ? {
-              codec: webCodecsAudioCodec,
-              encode: (muxer) => encodeWebCodecsAudio(
-                clips,
-                (path) => cache.get(path),
-                muxer,
-                webCodecsAudioCodec!,
-                (fraction) => report({
-                  // 为运行期音频编码失败后的 wasm 兜底保留进度区间。
-                  fraction: 0.70 + fraction * 0.12,
-                  message: `正在用 WebCodecs 编码 ${webCodecsAudioCodec === 'aac' ? 'AAC' : 'Opus'} 音频…`,
-                }),
-                signal,
-              ),
-            }
-            : undefined,
-        );
+        encoded = await encodeWithSoftwareRetry(webCodecsAudioCodec);
       } catch (error) {
         if (error instanceof WebCodecsAudioUnavailableError) {
           // 能力探测通过后仍可能因具体素材或平台编码器失败。丢弃未完成的
@@ -955,17 +996,7 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
           audioFallback = error.message;
           webCodecsAudioCodec = null;
           report({ fraction: 0.70, message: `WebCodecs 音频不可用，正在回退：${error.message}` });
-          encoded = await encodeVideoTrack(
-            clips,
-            options,
-            capabilities,
-            cache,
-            (update) => report({
-              fraction: 0.01 + update.fraction * 0.79,
-              message: update.message,
-            }),
-            signal,
-          );
+          encoded = await encodeWithSoftwareRetry(null);
         } else if (error instanceof WebCodecsUnavailableError) {
           fellBack = error.message;
         } else {

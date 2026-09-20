@@ -61,13 +61,18 @@ describe('WebCodecs 视频时间戳', () => {
     assert.equal(h264CodecCandidates(1920, 1080, 30, 'avc1.4d0028')[0], 'avc1.4d0028');
   });
 
-  it('使用 realtime 模式防止硬件编码器输出 B 帧重排', () => {
+  it('请求 realtime 以减少硬件 B 帧，并允许重排时切换软件编码器', () => {
     const config = webCodecsVideoConfig(
       'avc1.640028', 1920, 1080, 8_000_000, 60, 'prefer-hardware',
     );
     assert.equal(config.latencyMode, 'realtime');
     assert.equal(config.framerate, 60);
     assert.equal(config.hardwareAcceleration, 'prefer-hardware');
+    assert.equal(
+      webCodecsVideoConfig('avc1.640028', 1920, 1080, 8_000_000, 60, 'prefer-software')
+        .hardwareAcceleration,
+      'prefer-software',
+    );
   });
 
   it('识别 mp4-muxer 的 DTS 回退错误以触发安全回退', () => {
