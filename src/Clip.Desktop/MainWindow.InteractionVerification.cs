@@ -15,13 +15,14 @@ public partial class MainWindow
         if (!condition) throw new InvalidOperationException(failure);
     }
 
-    private void VerifyUnbrandedHeader()
+    private void VerifyBrandHeader()
     {
         UpdateLayout();
         WindowPresentation.VerifyCaption(this);
         Require(CommandHeader.Children.Count == 2 && CommandHeader.ColumnDefinitions.Count == 2 &&
-            Grid.GetColumn(DocumentTitle) == 0 && Math.Abs(DocumentTitle.TranslatePoint(new Point(), WindowRoot).X - 24) < 1,
-            "The command header retained a brand block, separator, or empty left gutter.");
+            BrandLogo.Source is System.Windows.Media.Imaging.BitmapSource { PixelWidth: > 0, PixelHeight: > 0 } &&
+            Grid.GetColumn(BrandLogo) == 0 && Math.Abs(BrandLogo.TranslatePoint(new Point(), WindowRoot).X - 24) < 1,
+            "The command header did not show the embedded logo at the left edge.");
     }
 
     private void VerifyWheelNavigation()
@@ -325,8 +326,20 @@ public partial class MainWindow
         var items = ExportTracksMenu.Items.Cast<MenuItem>().ToArray();
         Require(items.Select(item => (Guid)item.Tag).SequenceEqual(_project.ExportableTracks.Select(t => t.Id)),
             "The export dropdown included an empty track or omitted a candidate.");
+        var selectionBeforePreview = (_selected, _selectedTrackId, _activeTrackId, _position);
+        items[1].RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount) { RoutedEvent = Mouse.MouseEnterEvent });
+        Require(TimelineView.ExportPreviewTrackId == track.Id &&
+            selectionBeforePreview == (_selected, _selectedTrackId, _activeTrackId, _position),
+            "Hovering an export choice did not highlight its row or changed the editing selection.");
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+        Require(items[1].Focus() && items[0].Focus() && TimelineView.ExportPreviewTrackId == (Guid)items[0].Tag,
+            "Keyboard focus did not preview the export choice.");
         UiCapture.Save(ExportTracksMenu, "smoke-export-tracks.png");
         ExportTracksMenu.IsOpen = false;
+        await WaitForPreviewAsync(() => TimelineView.ExportPreviewTrackId is null,
+            "Closing the export menu left a preview highlight in the timeline.");
+        Require(selectionBeforePreview == (_selected, _selectedTrackId, _activeTrackId, _position),
+            "Previewing export choices changed the editing selection.");
         await VerifyTrackExportDialogAsync(() => items[1].RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)), track);
 
         UpdateLayout();
@@ -360,7 +373,7 @@ public partial class MainWindow
             var dialog = OwnedWindows.OfType<ExportWindow>().Single();
             try
             {
-                Require(dialog.SourceNameText.Text.StartsWith(expected.Name + " ·", StringComparison.Ordinal),
+                Require(dialog.SourceNameText.Text == $"{expected.Clips[0].DisplayName} · {expected.Clips.Count} 个片段 · {expected.Duration:0.##} 秒",
                     "The export dialog described the wrong track.");
                 Require(dialog.SourceInfoText.Text.StartsWith($"{expected.Clips[0].Media.Width} × {expected.Clips[0].Media.Height}", StringComparison.Ordinal),
                     "Export dimensions came from a different track.");
@@ -374,7 +387,7 @@ public partial class MainWindow
     internal async Task VerifyUiAsync()
     {
         Refresh();
-        VerifyUnbrandedHeader();
+        VerifyBrandHeader();
         Require(TimelineRegion.Visibility == Visibility.Collapsed && ExportButtonGroup.Visibility == Visibility.Collapsed, "Editing controls leaked into empty state.");
         UiCapture.Save(WindowRoot, "smoke-empty.png");
         var source = Environment.GetEnvironmentVariable("CLIP_UI_TEST_VIDEO");
@@ -398,7 +411,7 @@ public partial class MainWindow
         }
         Require(_project.Tracks.Count == 3 && _project.MainTrack.Clips.Count == 0 && ExportButton.IsEnabled && ExportTracksButton.IsVisible &&
             _activeTrackId == _project.Tracks[2].Id, "Imports must enter separate candidate tracks and preview the last candidate.");
-        VerifyUnbrandedHeader();
+        VerifyBrandHeader();
         UiCapture.Save(WindowRoot, "smoke-imported.png");
         await VerifyTimelineMenuAsync(realMedia);
         await VerifyCopyAndNamingAsync(realMedia);

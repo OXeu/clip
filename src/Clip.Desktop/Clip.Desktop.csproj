@@ -15,6 +15,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Clip.Core/Clip.Core.csproj" />
+    <Resource Include="Assets/Clip.png" />
   </ItemGroup>
   <ItemGroup Condition="'$(GITHUB_REPOSITORY)' == 'OXeu/clip' And '$(GITHUB_WORKFLOW)' == 'Windows build'">
     <AssemblyMetadata Include="GitHubSha" Value="$(GITHUB_SHA)" />

@@ -20,6 +20,7 @@ public sealed class TimelineControl : FrameworkElement
     public EditProject? Project { get; set; }
     public Guid ActiveTrackId { get; set; }
     public Guid? SelectedTrackId { get; set; }
+    public Guid? ExportPreviewTrackId { get; set; }
     public Guid? SelectedId { get; set; }
     public double Position { get; set; }
     public double HorizontalOffset { get; set; }
@@ -84,7 +85,7 @@ public sealed class TimelineControl : FrameworkElement
                 dc.DrawRectangle(Brush("ColorNeutralBackground2"), null, new Rect(0, top, ActualWidth, RowHeight));
             dc.DrawLine(new Pen(Brush("ColorSubtleStroke"), 1), new Point(0, top + RowHeight), new Point(ActualWidth, top + RowHeight));
             if (track.Clips.Count == 0)
-                Text(dc, track.Name + " · 拖拽片段到这里", HorizontalOffset + ContentInset, top + 25, 12,
+                Text(dc, "拖拽片段到这里", HorizontalOffset + ContentInset, top + 25, 12,
                     track.Id == SelectedTrackId ? "ColorSelectionForeground" : "ColorNeutralForeground3");
             double offset = 0;
             foreach (var clip in track.Clips)
@@ -114,6 +115,8 @@ public sealed class TimelineControl : FrameworkElement
                 dc.Pop();
                 if (_draggedClip == clip.Id) dc.Pop();
             }
+            if (track.Id == ExportPreviewTrackId)
+                dc.DrawRectangle(null, new Pen(Brush("ColorBrandStroke"), 2), new Rect(1, top + 1, Math.Max(0, ActualWidth - 2), RowHeight - 2));
             if (_drop is { } drop && drop.Track == track.Id)
             {
                 var x = XAtTime(track.Clips.Take(drop.Index).Sum(c => c.Duration));

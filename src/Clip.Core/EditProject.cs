@@ -16,7 +16,7 @@ public sealed class EditProject
     public bool CanRedo => _redo.Count > 0;
     public IReadOnlyList<VideoTrack> ExportableTracks => _tracks.Where(t => t.Clips.Count > 0).ToArray();
 
-    public EditProject() => _tracks.Add(new(Guid.NewGuid(), "主轨", true, Array.AsReadOnly(Array.Empty<VideoClip>())));
+    public EditProject() => _tracks.Add(new(Guid.NewGuid(), "轨道 1", true, Array.AsReadOnly(Array.Empty<VideoClip>())));
 
     public VideoTrack Import(MediaInfo media)
     {
@@ -25,7 +25,7 @@ public sealed class EditProject
         if (media.IsHdr) throw new NotSupportedException("暂不支持 HDR 素材，请先转换为 SDR。");
         SaveUndo();
         if (!_sources.Any(s => SameSource(s, media))) _sources.Add(media);
-        var track = new VideoTrack(Guid.NewGuid(), $"候选 {_tracks.Count:00}", false, Array.AsReadOnly(new[] { clip }));
+        var track = new VideoTrack(Guid.NewGuid(), $"轨道 {_tracks.Count + 1}", false, Array.AsReadOnly(new[] { clip }));
         _tracks.Add(track);
         return track;
     }
@@ -141,7 +141,7 @@ public sealed class EditProject
         else
         {
             var row = _tracks.FindIndex(t => t.Id == position.TrackId);
-            _tracks.Insert(row + 1, new(Guid.NewGuid(), $"候选 {_tracks.Count:00}", false, Array.AsReadOnly(new[] { copy })));
+            _tracks.Insert(row + 1, new(Guid.NewGuid(), $"轨道 {_tracks.Count + 1}", false, Array.AsReadOnly(new[] { copy })));
         }
         return copy.Id;
     }

@@ -123,7 +123,7 @@ public partial class MainWindow : Window
         if (_operation is not null) return;
         var dialog = new OpenFileDialog
         {
-            Title = "导入素材到候选轨", Filter = "视频文件|*.mp4;*.mov;*.mkv;*.avi;*.webm;*.m4v;*.wmv;*.ts;*.mts;*.m2ts|所有文件|*.*",
+            Title = "导入素材", Filter = "视频文件|*.mp4;*.mov;*.mkv;*.avi;*.webm;*.m4v;*.wmv;*.ts;*.mts;*.m2ts|所有文件|*.*",
             Multiselect = true, CheckFileExists = true
         };
         if (dialog.ShowDialog(this) == true) await ImportFilesAsync(dialog.FileNames);
@@ -133,7 +133,7 @@ public partial class MainWindow : Window
     {
         if (_operation is not null) return;
         Pause();
-        SetBusy(true, "正在导入素材到候选轨…");
+        SetBusy(true, "正在导入素材…");
         Guid? last = null;
         var imported = 0;
         var cancelled = false;
@@ -179,7 +179,7 @@ public partial class MainWindow : Window
             ActivatePreview(p, false);
             RevealTrack(p.TrackId);
             StatusText.Text = cancelled ? $"已停止导入，保留已导入的 {imported} 个素材。" :
-                $"已导入 {imported} 个素材到独立候选轨 · 可选择任意有内容的轨道导出。";
+                $"已导入 {imported} 个素材";
         }
         Refresh();
         if (failures.Count > 0) ShowError(new InvalidOperationException("以下素材未导入；其他素材已保留。\n\n" + string.Join("\n", failures)));

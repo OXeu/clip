@@ -44,7 +44,7 @@ public partial class MainWindow
         if (_operation is not null || _project.FindTrack(id) is null) return;
         _selectedTrackId = id;
         Seek(id, time);
-        StatusText.Text = $"已选中 {_project.FindTrack(id)!.Name} · 点击导出可导出整条轨道";
+        StatusText.Text = "已选中整条轨道";
     }
 
     private void Seek(Guid trackId, double time)

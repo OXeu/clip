@@ -33,7 +33,7 @@ public partial class MainWindow
         _selected = id;
         if (_playing) _selected = _playbackClip = _project.Locate(_activeTrackId, _position)?.Clip.Id;
         else ActivatePreview(_project.FindClip(id.Value)!.Value, false);
-        StatusText.Text = "已分割当前轨道 · 可跨轨拖拽，Delete / X 删除。";
+        StatusText.Text = "已分割片段";
         Refresh();
     }
 
@@ -46,7 +46,7 @@ public partial class MainWindow
         var moved = _project.FindClip(id)!.Value;
         ActivatePreview(moved with { SourceTime = Math.Clamp(source, moved.Clip.Start, moved.Clip.End) }, false);
         RevealTrack(trackId);
-        StatusText.Text = $"已移动片段到 {_project.FindTrack(trackId)!.Name} · 可选中该轨道导出。";
+        StatusText.Text = "已移动片段";
     }
 
     private void DeleteClick(object sender, RoutedEventArgs e) => DeleteSelected();
@@ -57,7 +57,7 @@ public partial class MainWindow
         if (!_project.Delete(id)) return;
         var position = _position >= p.TimelineStart ? Math.Max(p.TimelineStart, _position - p.Clip.Duration) : _position;
         Seek(p.TrackId, position);
-        StatusText.Text = "已删除片段并收拢当前轨道 · Ctrl + Z 撤销";
+        StatusText.Text = "已删除片段并收拢间隙";
         Refresh();
     }
 
@@ -85,7 +85,7 @@ public partial class MainWindow
         var copy = _project.FindClip(copyId)!.Value;
         ActivatePreview(copy, false);
         RevealTrack(copy.TrackId);
-        StatusText.Text = copy.Clip.Duration < 10 ? "已复制片段并插入原片段后方" : "已复制片段到原轨道下方的新候选轨道";
+        StatusText.Text = copy.Clip.Duration < 10 ? "已复制片段并插入原片段后方" : "已复制片段到下方";
     }
 
     private void RenameClick(object sender, RoutedEventArgs e)
@@ -95,7 +95,7 @@ public partial class MainWindow
         var dialog = new ClipNameWindow(clip.Clip.DisplayName) { Owner = this };
         if (dialog.ShowDialog() == true && _project.Rename(id, dialog.ClipName))
         {
-            StatusText.Text = $"片段已命名为“{dialog.ClipName}” · Ctrl + Z 撤销";
+            StatusText.Text = $"片段已命名为“{dialog.ClipName}”";
             Refresh();
         }
     }
@@ -128,10 +128,8 @@ public partial class MainWindow
         TimelineView.SelectedId = _selected;
         TimelineView.SelectedTrackId = _selectedTrackId;
         TimelineView.IsEnabled = ready;
-        DocumentTitle.Text = hasMedia ? $"{_project.Sources.Count} 个素材 · {_project.ExportableTracks.Count} 条可导出轨道" : "新建剪辑";
         Title = hasMedia ? $"{_project.Sources.Count} 个素材 — 视频剪辑" : "视频剪辑";
-        TimelineSummaryText.Text = $"{ActiveTrack.Name} · {ActiveTrack.Clips.Count} 片段 · {ActiveTrack.Duration:0.##} 秒";
-        TimelineSummaryText.ToolTip = $"共 {_project.Tracks.Count} 条轨道；点击轨道空白处选中整轨，或通过导出按钮的箭头选择轨道。";
+        TimelineSummaryText.Text = $"{ActiveTrack.Clips.Count} 片段 · {ActiveTrack.Duration:0.##} 秒";
         RefreshPosition();
     }
 
