@@ -261,29 +261,45 @@ public partial class MainWindow
         var before = _project.Tracks.ToArray();
         await OpenTimelineMenuAsync(TimelineView,
             new Point(80, TimelineView.TrackTop(0) + TimelineControl.RowHeightFor(_project.Tracks[0]) / 2), realInput);
-        Require(!SplitMenuItem.IsEnabled && !DeleteMenuItem.IsEnabled && !CopyMenuItem.IsEnabled && !RenameMenuItem.IsEnabled && UndoMenuItem.IsEnabled && !RedoMenuItem.IsEnabled,
+        Require(!SplitMenuItem.IsEnabled && !DeleteMenuItem.IsEnabled && !CopyMenuItem.IsEnabled && !RenameMenuItem.IsEnabled &&
+            !SpeedMenuItem.IsEnabled && UndoMenuItem.IsEnabled && !RedoMenuItem.IsEnabled,
             "An empty track exposed invalid editing actions or hid undo history.");
         TimelineMenu.IsOpen = false;
 
-        var candidate = before[1];
+        var playbackTrack = before.Skip(1).First(track => track.Kind == TrackKind.Video && track.Clips.Count > 0);
+        var candidate = before.Skip(1).First(track => track.Kind == TrackKind.Video && track.Clips.Count > 0 && track.Id != playbackTrack.Id);
+        var playbackTime = playbackTrack.Clips[0].Duration * 0.2;
+        Seek(playbackTrack.Id, playbackTime);
+        var activeBefore = _activeTrackId;
+        var playbackBefore = _playbackClip;
+        var positionBefore = _position;
         var clip = candidate.Clips[0];
         var rect = TimelineView.ClipBounds(clip.Id);
         var point = new Point(rect.X + rect.Width * 0.4, rect.Y + rect.Height / 2);
-        if (!realInput) SelectClip(clip.Id, TimelineView.TimeAtX(point.X));
+        if (!realInput) SelectClipForContextMenu(clip.Id);
         await OpenTimelineMenuAsync(TimelineView, point, realInput);
-        Require(_selected == clip.Id && _activeTrackId == candidate.Id && SplitMenuItem.IsEnabled && DeleteMenuItem.IsEnabled,
-            "Right-click did not target the candidate clip.");
-        var cut = _position;
-        Require(cut > 0 && cut < clip.Duration, "Right-click did not place the playhead inside the target clip.");
+        Require(_selected == clip.Id && _activeTrackId == activeBefore && _playbackClip == playbackBefore &&
+            Math.Abs(_position - positionBefore) < 0.000001 && SplitMenuItem.IsEnabled && DeleteMenuItem.IsEnabled &&
+            SpeedMenuItem.IsEnabled && Speed1MenuItem.IsChecked && Equals(SpeedMenuItem.Header, "片段倍速 · 1×"),
+            "Right-click did not select the target clip without changing playback or expose its speed.");
         UiCapture.Save(TimelineMenu, "smoke-timeline-menu.png");
-        InvokeTimelineMenuItem(SplitMenuItem);
-        Require(_project.FindTrack(candidate.Id)!.Clips.Count == 2 && _project.MainTrack.Clips.Count == 0 &&
-            Math.Abs(_project.FindTrack(candidate.Id)!.Clips[0].Duration - cut) <= 1 / clip.Media.FrameRate,
-            "Context-menu split did not use the target track and playhead.");
+        InvokeTimelineMenuItem(Speed2MenuItem);
+        Require(_project.FindClip(clip.Id)!.Value.Clip.Speed == 2 && _activeTrackId == activeBefore &&
+            _playbackClip == playbackBefore && Math.Abs(_position - positionBefore) < 0.000001,
+            "Context-menu speed changed playback selection or position.");
+        Require(_project.Undo(), "Context-menu speed could not be undone.");
+        Refresh();
+        Require(_project.Tracks.SequenceEqual(before), "Undo speed did not restore the project.");
 
-        var position = _position;
+        var cut = playbackTrack.Clips[0].Duration * 0.4;
+        Seek(playbackTrack.Id, cut);
         await OpenTimelineMenuAsync(TimelineView, new Point(80, 12), realInput);
-        Require(_position == position, "Opening the ruler context menu moved the playhead.");
+        Require(Math.Abs(_position - cut) < 0.000001, "Opening the ruler context menu moved the playhead.");
+        InvokeTimelineMenuItem(SplitMenuItem);
+        Require(_project.FindTrack(playbackTrack.Id)!.Clips.Count == 2 && _project.MainTrack.Clips.Count == 0 &&
+            Math.Abs(_project.FindTrack(playbackTrack.Id)!.Clips[0].Duration - cut) <= 1 / playbackTrack.Clips[0].Media.FrameRate,
+            "Context-menu split did not use the active playback track and playhead.");
+        await OpenTimelineMenuAsync(TimelineView, new Point(80, 12), realInput);
         InvokeTimelineMenuItem(UndoMenuItem);
         Require(_project.Tracks.SequenceEqual(before), "Context-menu undo did not restore the split.");
         await OpenTimelineMenuAsync(TimelineRegion, new Point(40, TimelineRegion.ActualHeight - 16), realInput);
@@ -297,7 +313,7 @@ public partial class MainWindow
         try
         {
             await OpenTimelineMenuAsync(TimelineRegion, new Point(120, TimelineRegion.ActualHeight - 16), realInput);
-            Require(new[] { SplitMenuItem, DeleteMenuItem, CopyMenuItem, RenameMenuItem, UndoMenuItem, RedoMenuItem }.All(item => !item.IsEnabled) &&
+            Require(new[] { SplitMenuItem, DeleteMenuItem, CopyMenuItem, RenameMenuItem, SpeedMenuItem, UndoMenuItem, RedoMenuItem }.All(item => !item.IsEnabled) &&
                 !ExportButton.IsEnabled && !ExportTracksButton.IsEnabled,
                 "Timeline context-menu actions remained enabled while busy.");
         }
@@ -369,6 +385,31 @@ public partial class MainWindow
             "Naming did not update the clip label or changed its source.");
         Restore(false);
         Require(_project.Tracks.SequenceEqual(before), "Undo naming did not restore the original label.");
+
+        SelectClipForContextMenu(clip.Id);
+        await OpenTimelineMenuAsync(TimelineView, target, false);
+        var speedCheck = Dispatcher.InvokeAsync(() =>
+        {
+            var dialog = OwnedWindows.OfType<ClipSpeedWindow>().Single();
+            try
+            {
+                WindowPresentation.VerifyCaption(dialog);
+                dialog.SpeedInput.Text = "0";
+                dialog.ApplySpeedButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Require(dialog.IsVisible && dialog.ValidationText.Visibility == Visibility.Visible,
+                    "An invalid custom speed closed the dialog.");
+                dialog.SpeedInput.Text = "1.37";
+                UiCapture.Save((FrameworkElement)dialog.Content, "smoke-clip-speed.png");
+                dialog.ApplySpeedButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            }
+            finally { if (dialog.IsVisible) dialog.Close(); }
+        }, DispatcherPriority.ApplicationIdle);
+        InvokeTimelineMenuItem(CustomSpeedMenuItem);
+        await speedCheck.Task;
+        Require(Math.Abs(_project.FindClip(clip.Id)!.Value.Clip.Speed - 1.37) < 0.000001,
+            "Custom speed did not update the selected clip.");
+        Restore(false);
+        Require(_project.Tracks.SequenceEqual(before), "Undo custom speed did not restore the project.");
     }
 
     private async Task VerifyTrackExportAsync(bool realInput)

@@ -30,6 +30,8 @@ import {
   type VideoClip,
   type VideoTrack,
   EditProject,
+  MAXIMUM_SPEED,
+  MINIMUM_SPEED,
   VideoEncoder,
   clipDuration,
   defaultExportOptions,
@@ -148,6 +150,15 @@ const fileInput = $<HTMLInputElement>('file-input');
 const projectFileInput = $<HTMLInputElement>('project-file-input');
 const dropOverlay = $('drop-overlay');
 const timelineSummary = $('timeline-summary');
+const clipContextMenu = $('clip-context-menu');
+const clipSpeedCurrent = $('clip-speed-current');
+const speedPresetButtons = Array.from(clipContextMenu.querySelectorAll<HTMLButtonElement>('[data-speed]'));
+const customSpeedButton = $<HTMLButtonElement>('custom-speed-button');
+const speedDialog = $<HTMLDialogElement>('speed-dialog');
+const speedForm = $<HTMLFormElement>('speed-form');
+const speedInput = $<HTMLInputElement>('speed-input');
+const speedValidation = $('speed-validation');
+const speedCancelButton = $<HTMLButtonElement>('speed-cancel');
 const exportDialog = $<HTMLDialogElement>('export-dialog');
 const settingsDialog = $<HTMLDialogElement>('settings-dialog');
 const recoveryDialog = $<HTMLDialogElement>('recovery-dialog');
@@ -174,6 +185,7 @@ video.disableRemotePlayback = true;
 const timeline = new TimelineView(canvas, timelineScroll, {
   onSeek: (trackId, time) => seek(trackId, time),
   onSelectClip: (clipId, time) => selectClip(clipId, time),
+  onContextClip: (clipId, clientX, clientY) => openClipContextMenu(clipId, clientX, clientY),
   onSelectTrack: (trackId, time) => selectTrack(trackId, time),
   onMoveClip: (clipId, trackId, index) => moveClip(clipId, trackId, index),
   onMoveTrack: (trackId, index) => moveTrack(trackId, index),
@@ -213,7 +225,10 @@ function setBusy(busy: boolean, message?: string): void {
     progress.hidden = true;
     cancelButton.hidden = true;
   }
-  if (busy) setMoreMenuOpen(false);
+  if (busy) {
+    setMoreMenuOpen(false);
+    closeClipContextMenu();
+  }
   importButton.disabled = moreButton.disabled = openProjectButton.disabled = emptyImportButton.disabled = busy;
   saveProjectButton.disabled = busy || project.sources.length === 0;
   if (message !== undefined) status(message);
@@ -663,6 +678,14 @@ function selectClip(clipId: string, time: number): void {
   activatePreview({ ...found, sourceTime: source }, playing);
 }
 
+function selectClipForContextMenu(clipId: string): boolean {
+  if (operation || multiSelectMode || !project.findClip(clipId)) return false;
+  selectedTrackId = null;
+  selectedClipId = clipId;
+  refresh();
+  return true;
+}
+
 function selectTrack(trackId: string, time: number): void {
   if (operation || !project.findTrack(trackId)) return;
   selectedTrackId = trackId;
@@ -840,6 +863,66 @@ function renameSelected(): void {
     status(`片段已命名为“${name}”`);
     refresh();
   }
+}
+
+function setSelectedSpeed(speed: number): void {
+  if (operation || multiSelectMode || !selectedClipId || !Number.isFinite(speed)
+    || speed < MINIMUM_SPEED || speed > MAXIMUM_SPEED) return;
+  const cursor = project.locate(activeTrackId, position);
+  if (!project.setSpeed(selectedClipId, speed)) {
+    closeClipContextMenu();
+    return;
+  }
+  if (cursor) {
+    const current = project.findClip(cursor.clip.id);
+    if (current) {
+      const sourceTime = Math.min(Math.max(cursor.sourceTime, current.clip.start), current.clip.end);
+      position = current.timelineStart + (sourceTime - current.clip.start) / current.clip.speed;
+      if (mediaReady && playbackClipId === current.clip.id) {
+        video.playbackRate = clampPlaybackRate(current.clip.speed);
+      }
+    }
+  }
+  closeClipContextMenu();
+  status(`片段倍速已设为 ${speed.toFixed(3).replace(/\.?0+$/, '')}× · 可撤销`);
+  refresh();
+}
+
+function closeClipContextMenu(): void {
+  clipContextMenu.hidden = true;
+}
+
+function openClipContextMenu(clipId: string | null, clientX: number, clientY: number): void {
+  closeClipContextMenu();
+  if (!clipId || !selectClipForContextMenu(clipId)) return;
+  const found = project.findClip(clipId);
+  if (!found) return;
+  const speed = found.clip.speed;
+  clipSpeedCurrent.textContent = `${speed.toFixed(3).replace(/\.?0+$/, '')}×`;
+  for (const button of speedPresetButtons) {
+    const selected = Math.abs(Number(button.dataset.speed) - speed) < 0.000001;
+    button.setAttribute('aria-checked', String(selected));
+  }
+  clipContextMenu.hidden = false;
+  const bounds = clipContextMenu.getBoundingClientRect();
+  clipContextMenu.style.left = `${Math.max(8, Math.min(clientX, window.innerWidth - bounds.width - 8))}px`;
+  clipContextMenu.style.top = `${Math.max(8, Math.min(clientY, window.innerHeight - bounds.height - 8))}px`;
+  (speedPresetButtons.find((button) => button.getAttribute('aria-checked') === 'true') ?? speedPresetButtons[0])
+    ?.focus({ preventScroll: true });
+}
+
+function openCustomSpeedDialog(): void {
+  if (!selectedClipId) return;
+  const found = project.findClip(selectedClipId);
+  if (!found) return;
+  closeClipContextMenu();
+  speedInput.value = found.clip.speed.toFixed(3).replace(/\.?0+$/, '');
+  speedValidation.hidden = true;
+  speedDialog.showModal();
+  queueMicrotask(() => {
+    speedInput.focus({ preventScroll: true });
+    speedInput.select();
+  });
 }
 
 // ---------- 刷新 ----------
@@ -1476,6 +1559,26 @@ moreMenu.addEventListener('keydown', (event) => {
 });
 document.addEventListener('pointerdown', (event) => {
   if (!moreMenu.hidden && !moreMenuWrap.contains(event.target as Node)) setMoreMenuOpen(false);
+  if (!clipContextMenu.hidden && !clipContextMenu.contains(event.target as Node)) closeClipContextMenu();
+});
+clipContextMenu.addEventListener('keydown', (event) => {
+  const items = Array.from(clipContextMenu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+  const current = items.indexOf(document.activeElement as HTMLButtonElement);
+  let next = current;
+  if (event.key === 'ArrowDown' || event.key === 'ArrowRight') next = (current + 1) % items.length;
+  else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') next = (current - 1 + items.length) % items.length;
+  else if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = items.length - 1;
+  else if (event.key === 'Escape') {
+    event.preventDefault();
+    closeClipContextMenu();
+    return;
+  } else if (event.key === 'Tab') {
+    closeClipContextMenu();
+    return;
+  } else return;
+  event.preventDefault();
+  items[next]?.focus({ preventScroll: true });
 });
 moreSettingsButton.addEventListener('click', () => {
   setMoreMenuOpen(false);
@@ -1551,6 +1654,25 @@ recoveryDiscardDialog.addEventListener('cancel', (event) => {
 recoveryDialog.addEventListener('cancel', (event) => {
   event.preventDefault();
   if (recoveryOrigin === 'file') discardPendingRecovery();
+});
+
+for (const button of speedPresetButtons) {
+  button.addEventListener('click', () => setSelectedSpeed(Number(button.dataset.speed)));
+}
+customSpeedButton.addEventListener('click', openCustomSpeedDialog);
+speedInput.addEventListener('input', () => { speedValidation.hidden = true; });
+speedCancelButton.addEventListener('click', () => speedDialog.close());
+speedForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const speed = Number(speedInput.value);
+  if (!Number.isFinite(speed) || speed < MINIMUM_SPEED || speed > MAXIMUM_SPEED) {
+    speedValidation.hidden = false;
+    speedInput.focus();
+    speedInput.select();
+    return;
+  }
+  speedDialog.close();
+  setSelectedSpeed(speed);
 });
 
 exportButton.addEventListener('click', () => void openExportDialog());
@@ -1641,7 +1763,15 @@ window.addEventListener('keydown', (event) => {
   if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
     return;
   }
-  if (exportDialog.open || settingsDialog.open || recoveryDialog.open) return;
+  if (exportDialog.open || settingsDialog.open || speedDialog.open || recoveryDialog.open) return;
+  if (!clipContextMenu.hidden) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeClipContextMenu();
+      canvas.focus({ preventScroll: true });
+    }
+    return;
+  }
   if (!event.ctrlKey && !event.metaKey && target && moreMenuWrap.contains(target)) return;
   if (event.key === ' ' && !event.ctrlKey && !event.metaKey) {
     event.preventDefault();
@@ -1766,6 +1896,7 @@ timelineScroll.addEventListener(
   { passive: false },
 );
 timelineScroll.addEventListener('scroll', () => {
+  closeClipContextMenu();
   timeline.draw();
   scheduleSessionSave();
 }, { passive: true });
@@ -1786,6 +1917,7 @@ window.addEventListener('beforeunload', (event) => {
 });
 
 window.addEventListener('resize', () => {
+  closeClipContextMenu();
   timeline.resize();
   drawPreviewFrame();
 });

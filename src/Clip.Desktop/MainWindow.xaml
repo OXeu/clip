@@ -150,7 +150,7 @@
             <MenuItem Header="4×" Tag="4" IsCheckable="True" Click="SpeedPresetClick" />
             <MenuItem Header="8×" Tag="8" IsCheckable="True" Click="SpeedPresetClick" />
             <Separator />
-            <MenuItem Header="自定义…" Click="CustomSpeedClick" />
+            <MenuItem x:Name="CustomSpeedMenuItem" Header="自定义…" Click="CustomSpeedClick" />
           </MenuItem>
           <Separator />
           <MenuItem x:Name="UndoMenuItem" Header="撤销" InputGestureText="Ctrl+Z" Click="UndoClick" IsEnabled="False">

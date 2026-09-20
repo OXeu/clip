@@ -58,13 +58,15 @@ interface StateShape {
     readonly height: number;
   }[];
   readonly duration: number;
+  readonly selectedClipId: string | null;
+  readonly activeTrackId: string;
   readonly position: number;
   readonly playing: boolean;
   readonly exportableTracks: number;
   readonly tracks: readonly {
     id: string;
     kind: 'video' | 'audio';
-    clips: readonly { id: string; start: number; end: number }[];
+    clips: readonly { id: string; start: number; end: number; speed: number }[];
   }[];
 }
 
@@ -226,6 +228,89 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
       ['video', 'audio'],
       '有声素材应自动生成视频轨和伴生音频槽',
     );
+    await page.context().close();
+  });
+
+  it('右键只选择片段并可设置预设或自定义倍速，左键才改变播放进度', async () => {
+    const { page, errors } = await openPage();
+    await importFixture(page, fixtures[0]!);
+    await page.setInputFiles('#file-input', fixtures[1]!.path);
+    await page.waitForFunction(() => {
+      const state = (window as unknown as { __clip: { state: () => StateShape } }).__clip.state();
+      const progress = document.getElementById('progress') as HTMLProgressElement | null;
+      return state.sources.length === 2 && progress?.hidden === true;
+    }, undefined, { timeout: 120_000 });
+
+    const initial = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    const videoTracks = initial.tracks.filter((track) => track.kind === 'video' && track.clips.length > 0);
+    assert.ok(videoTracks.length >= 2, '测试需要两个可选择的视频片段');
+    const rowCenter = (trackId: string): number => {
+      let top = 28;
+      for (const track of initial.tracks) {
+        const height = track.kind === 'audio' ? 34 : 68;
+        if (track.id === trackId) return top + height / 2;
+        top += height;
+      }
+      throw new Error(`找不到轨道 ${trackId}`);
+    };
+    const bounds = await page.locator('#timeline').boundingBox();
+    assert.ok(bounds, '时间轴没有可点击区域');
+    const first = videoTracks[0]!;
+    const target = videoTracks[1]!;
+
+    await page.locator('#timeline').click({
+      button: 'left',
+      position: { x: bounds.width * 0.4, y: rowCenter(first.id) },
+    });
+    const afterLeft = await page.evaluate(() => ({
+      state: (window as unknown as { __clip: { state: () => StateShape } }).__clip.state(),
+      source: document.querySelector<HTMLVideoElement>('#preview')?.dataset.source ?? null,
+    }));
+    assert.equal(afterLeft.state.activeTrackId, first.id);
+    assert.equal(afterLeft.state.selectedClipId, first.clips[0]!.id);
+    assert.ok(afterLeft.state.position > 0, '左键选择片段应更新播放进度');
+
+    await page.locator('#timeline').click({
+      button: 'right',
+      position: { x: bounds.width * 0.7, y: rowCenter(target.id) },
+    });
+    await page.locator('#clip-context-menu').waitFor({ state: 'visible' });
+    const afterRight = await page.evaluate(() => ({
+      state: (window as unknown as { __clip: { state: () => StateShape } }).__clip.state(),
+      source: document.querySelector<HTMLVideoElement>('#preview')?.dataset.source ?? null,
+    }));
+    assert.equal(afterRight.state.selectedClipId, target.clips[0]!.id, '右键应选中目标片段');
+    assert.equal(afterRight.state.activeTrackId, afterLeft.state.activeTrackId, '右键不应切换播放轨道');
+    assert.ok(Math.abs(afterRight.state.position - afterLeft.state.position) < 0.000001, '右键不应改变播放进度');
+    assert.equal(afterRight.source, afterLeft.source, '右键不应切换正在播放的素材');
+    assert.equal(await page.locator('[data-speed="1"]').getAttribute('aria-checked'), 'true');
+
+    await page.click('[data-speed="2"]');
+    let changed = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.equal(changed.tracks.find((track) => track.id === target.id)!.clips[0]!.speed, 2);
+    assert.equal(changed.activeTrackId, afterLeft.state.activeTrackId);
+    assert.ok(Math.abs(changed.position - afterLeft.state.position) < 0.000001);
+
+    await page.locator('#timeline').click({
+      button: 'right',
+      position: { x: bounds.width * 0.2, y: rowCenter(target.id) },
+    });
+    await page.locator('#clip-context-menu').waitFor({ state: 'visible' });
+    await page.click('#custom-speed-button');
+    await page.locator('#speed-dialog').waitFor({ state: 'visible' });
+    await page.fill('#speed-input', '9');
+    await page.click('#speed-confirm');
+    assert.equal(await page.locator('#speed-dialog').getAttribute('open'), '', '非法倍速不应关闭对话框');
+    assert.equal(await page.locator('#speed-validation').isVisible(), true);
+    await page.fill('#speed-input', '1.37');
+    await page.click('#speed-confirm');
+    await page.waitForFunction(() => !document.getElementById('speed-dialog')?.hasAttribute('open'));
+    changed = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.ok(Math.abs(changed.tracks.find((track) => track.id === target.id)!.clips[0]!.speed - 1.37) < 0.000001);
+    assert.equal(errors.length, 0, `倍速菜单交互不应报错：${errors.join(' | ')}`);
     await page.context().close();
   });
 
