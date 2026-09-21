@@ -214,6 +214,8 @@ describe('多音轨导出路由', () => {
       '素材音量变化必须进入支持增益的混音路线');
     assert.equal(requiresAudioMix([video], [{ clips: [original], volume: 0.4 }]), true,
       '轨道音量变化必须进入支持增益的混音路线');
+    assert.equal(requiresAudioMix([video], [{ clips: [{ ...original, pitchSemitones: 1 }] }]), true,
+      '素材变调必须进入 FFmpeg 音频处理路线');
     assert.equal(requiresAudioMix([video], [{ clips: [original] }, { clips: [bgm] }]), true);
     assert.equal(requiresAudioMix([video], [{ clips: [bgm] }]), true);
     assert.equal(requiresAudioMix([video], []), true, '删除全部显式音轨后必须导出静音，而不是回用视频内嵌音频');

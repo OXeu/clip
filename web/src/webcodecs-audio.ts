@@ -7,7 +7,7 @@
 
 import { waitForCodecCapacity } from './codec-queue.ts';
 import type { DemuxedFile } from './mp4demux.ts';
-import { clipDuration, hasAudio, type MediaInfo, type VideoClip } from './model.ts';
+import { clipDuration, clipPitch, hasAudio, type MediaInfo, type VideoClip } from './model.ts';
 
 export const WEB_AUDIO_SAMPLE_RATE = 48_000;
 const WEB_AUDIO_CHANNELS = 2;
@@ -342,6 +342,31 @@ export function timeStretchPcm(input: StereoPcm, speed: number, outputLength: nu
   return { left, right };
 }
 
+/**
+ * 先用重采样改变音高，再由 WSOLA 独立恢复到目标倍速对应的时长。
+ * 因此 +12 半音会把频率提高一倍，但 1× 时总时长保持不变。
+ */
+export function pitchAndTimeStretchPcm(
+  input: StereoPcm,
+  speed: number,
+  pitchSemitones: number,
+): StereoPcm {
+  if (!Number.isFinite(speed) || speed < 0.1 || speed > 8) throw new RangeError('speed');
+  if (!Number.isFinite(pitchSemitones) || pitchSemitones < -12 || pitchSemitones > 12) {
+    throw new RangeError('pitchSemitones');
+  }
+  if (input.left.length !== input.right.length || input.left.length === 0) {
+    return { left: new Float32Array(), right: new Float32Array() };
+  }
+  const pitchFactor = 2 ** (pitchSemitones / 12);
+  const shiftedLength = Math.max(1, Math.round(input.left.length / pitchFactor));
+  const shifted = Math.abs(pitchFactor - 1) < 0.000001
+    ? input
+    : linearStretch(input, shiftedLength);
+  const outputLength = Math.max(1, Math.round(input.left.length / speed));
+  return timeStretchPcm(shifted, speed / pitchFactor, outputLength);
+}
+
 async function waitForEncoderCapacity(encoder: AudioEncoder, signal?: AbortSignal): Promise<void> {
   await waitForCodecCapacity(encoder, 12, signal);
 }
@@ -434,7 +459,7 @@ export async function encodeWebCodecsAudio(
           clip.start,
           clip.end,
         );
-        const stretched = timeStretchPcm(normalSpeed, clip.speed, outputFrames);
+        const stretched = pitchAndTimeStretchPcm(normalSpeed, clip.speed, clipPitch(clip));
         await feedPcm(encoder, stretched, outputFrames, timelineFrame, encoderFrameSize, signal);
       }
       timelineFrame += outputFrames;

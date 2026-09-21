@@ -78,6 +78,8 @@ export interface VideoClip {
   readonly kind?: ClipKind;
   /** 线性音量增益；1 为 100%。仅在音频轨导出时使用。 */
   readonly volume?: number;
+  /** 音频音高偏移，单位为半音；0 保持原调。 */
+  readonly pitchSemitones?: number;
   readonly name?: string;
 }
 
@@ -85,10 +87,13 @@ export const MINIMUM_SPEED = 0.1;
 export const MAXIMUM_SPEED = 8;
 export const MINIMUM_VOLUME = 0;
 export const MAXIMUM_VOLUME = 2;
+export const MINIMUM_PITCH = -12;
+export const MAXIMUM_PITCH = 12;
 
 export const clipDuration = (clip: VideoClip): number => (clip.end - clip.start) / clip.speed;
 export const displayName = (clip: VideoClip): string => clip.name ?? fileName(clip.media);
 export const clipVolume = (clip: VideoClip): number => clip.volume ?? 1;
+export const clipPitch = (clip: VideoClip): number => clip.pitchSemitones ?? 0;
 
 export interface VideoTrack {
   readonly id: string;
@@ -166,9 +171,16 @@ export function validateVolume(volume: number): void {
   }
 }
 
+export function validatePitch(pitchSemitones: number): void {
+  if (!Number.isFinite(pitchSemitones) || pitchSemitones < MINIMUM_PITCH || pitchSemitones > MAXIMUM_PITCH) {
+    throw new Error('变调必须在 −12 到 +12 半音之间。');
+  }
+}
+
 export function validateClip(clip: VideoClip): void {
   validateSpeed(clip.speed);
   validateVolume(clipVolume(clip));
+  validatePitch(clipPitch(clip));
   const media = clip.media;
   const audioOnly = !hasVideo(media);
   const invalid =
@@ -313,6 +325,7 @@ function parseProjectSnapshot(value: unknown): ProjectState {
         || typeof clipCandidate.speed !== 'number'
         || !(clipCandidate.kind === undefined || Object.values(ClipKind).includes(clipCandidate.kind as ClipKind))
         || !(clipCandidate.volume === undefined || typeof clipCandidate.volume === 'number')
+        || !(clipCandidate.pitchSemitones === undefined || typeof clipCandidate.pitchSemitones === 'number')
         || !(clipCandidate.name === undefined || clipCandidate.name === null || typeof clipCandidate.name === 'string')
       ) throw new Error('保存的片段信息不完整。');
       const clip: VideoClip = {
@@ -323,6 +336,7 @@ function parseProjectSnapshot(value: unknown): ProjectState {
         speed: clipCandidate.speed,
         kind: (clipCandidate.kind as ClipKind | undefined) ?? ClipKind.Combined,
         ...(typeof clipCandidate.volume === 'number' ? { volume: clipCandidate.volume } : {}),
+        ...(typeof clipCandidate.pitchSemitones === 'number' ? { pitchSemitones: clipCandidate.pitchSemitones } : {}),
         ...(typeof clipCandidate.name === 'string' ? { name: clipCandidate.name } : {}),
       };
       if (!media || clip.id.length === 0 || clipIds.has(clip.id)) {
@@ -1038,6 +1052,21 @@ export class EditProject {
     this.saveUndo();
     const clips = [...track.clips];
     clips[position.index] = { ...position.clip, volume };
+    this.replaceClips(track.id, clips);
+    return true;
+  }
+
+  setAudioAdjustment(clipId: string, speed: number, pitchSemitones: number): boolean {
+    validateSpeed(speed);
+    validatePitch(pitchSemitones);
+    const position = this.findClip(clipId);
+    const track = position ? this.findTrack(position.trackId) : undefined;
+    if (!position || track?.kind !== TrackKind.Audio
+      || (Math.abs(position.clip.speed - speed) < 0.000001
+        && Math.abs(clipPitch(position.clip) - pitchSemitones) < 0.000001)) return false;
+    this.saveUndo();
+    const clips = [...track.clips];
+    clips[position.index] = { ...position.clip, speed, pitchSemitones };
     this.replaceClips(track.id, clips);
     return true;
   }

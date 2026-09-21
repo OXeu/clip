@@ -104,13 +104,31 @@ Test("one video group supports multiple independently removable audio tracks", (
         "Audio clip or track volume was not updated");
     Check(Math.Abs(project.FindClip(originalClip.Id)!.Value.Clip.Volume * project.FindTrack(imported.AudioTrack.Id)!.Volume - 0.2) < 0.000001,
         "Effective audio volume was not the product of track and clip volume");
+    Check(project.SetAudioAdjustment(originalClip.Id, 1.25, 7),
+        "Audio speed and pitch adjustment was not updated");
     var restored = EditProject.FromSnapshot(project.ExportSnapshot());
-    Check(restored.FindClip(originalClip.Id)!.Value.Clip.Volume == 0.5 && restored.FindTrack(imported.AudioTrack.Id)!.Volume == 0.4,
-        "Audio volume was not preserved in the project snapshot");
+    var restoredClip = restored.FindClip(originalClip.Id)!.Value.Clip;
+    Check(restoredClip.Volume == 0.5 && restored.FindTrack(imported.AudioTrack.Id)!.Volume == 0.4 &&
+        restoredClip.Speed == 1.25 && restoredClip.PitchSemitones == 7,
+        "Audio adjustment was not preserved in the project snapshot");
     Check(project.DeleteAudioTrack(second.Id) && project.FindTrack(second.Id) is null &&
         project.AudioTracks(imported.VideoTrack.Id).Count == 2, "Audio track deletion changed the wrong group");
     Check(project.Undo() && project.FindTrack(second.Id) is not null && project.FindTrack(third.Id) is not null,
         "Audio track deletion could not be undone");
+});
+
+Test("audio speed and pitch adjustment is one undoable operation", () =>
+{
+    var project = new EditProject();
+    var imported = project.ImportSeparated(media);
+    var clipId = imported.AudioTrack.Clips[0].Id;
+    Check(project.SetAudioAdjustment(clipId, 1.5, -5), "Audio adjustment failed");
+    Check(project.FindClip(clipId)!.Value.Clip is { Speed: 1.5, PitchSemitones: -5 },
+        "Audio adjustment values were not stored together");
+    Check(project.Undo() && project.FindClip(clipId)!.Value.Clip is { Speed: 1, PitchSemitones: 0 },
+        "One undo did not restore both audio values");
+    Check(project.Redo() && project.FindClip(clipId)!.Value.Clip is { Speed: 1.5, PitchSemitones: -5 },
+        "Redo did not restore both audio values");
 });
 
 Test("empty companion audio tracks do not block video splits", () =>
@@ -492,6 +510,10 @@ Test("invalid speed cannot mutate a project and tempo stages preserve the reques
         Check(stages.All(s => s >= 0.5 && s <= 2), "Tempo stage can skip audio samples");
         Near(stages.Aggregate(1.0, (a, b) => a * b), speed);
     }
+    Check(ExportService.BuildAudioTransformFilter(1, 12) ==
+        "asetrate=96000,aresample=48000,atempo=0.5", "Octave-up filter was incorrect");
+    Check(ExportService.BuildAudioTransformFilter(2, -12) ==
+        "asetrate=24000,aresample=48000,atempo=2,atempo=2", "Combined pitch and speed filter was incorrect");
 });
 
 Test("multi-source filter normalizes each video and pads silent sections before concatenating", () =>

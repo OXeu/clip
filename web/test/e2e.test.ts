@@ -69,7 +69,14 @@ interface StateShape {
     id: string;
     kind: 'video' | 'audio' | 'subtitle';
     volume?: number;
-    clips: readonly { id: string; start: number; end: number; speed: number; volume?: number }[];
+    clips: readonly {
+      id: string;
+      start: number;
+      end: number;
+      speed: number;
+      volume?: number;
+      pitchSemitones?: number;
+    }[];
     cues?: readonly { id: string; start: number; end: number; text: string }[];
   }[];
 }
@@ -313,6 +320,32 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     assert.match(await page.locator('#status-text').textContent() ?? '', /将与各素材音量相乘/);
     await page.locator('#status-text').click();
 
+    // 独立调整窗口可先试听，再把倍速与变调作为一次操作应用。
+    await timeline.click({ button: 'right', position: { x: 220, y: 147 } });
+    await page.locator('#audio-adjust-button').waitFor({ state: 'visible' });
+    await page.click('#audio-adjust-button');
+    await page.locator('#audio-pitch-slider').evaluate((element) => {
+      const input = element as HTMLInputElement;
+      input.value = '12';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.locator('#audio-speed-slider').evaluate((element) => {
+      const input = element as HTMLInputElement;
+      input.value = '1.25';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    assert.match(await page.locator('#audio-adjust-summary').textContent() ?? '', /1\.25×.*\+12 半音/);
+    await page.click('#audio-adjust-preview');
+    await page.locator('#audio-adjust-preview-label', { hasText: '停止试听' }).waitFor({ timeout: 30_000 });
+    await page.click('#audio-adjust-preview');
+    await page.click('#audio-adjust-confirm');
+    state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    const adjustedBgm = state.tracks.filter((track) => track.kind === 'audio')[1]!.clips[0]!;
+    assert.equal(adjustedBgm.speed, 1.25);
+    assert.equal(adjustedBgm.pitchSemitones, 12);
+    assert.match(await page.locator('#status-text').textContent() ?? '', /\+12 半音、1\.25×/);
+
     const videoTrackId = state.tracks.find((track) => track.kind === 'video' && track.clips.length > 0)!.id;
     const results = await page.evaluate(async (trackId) => {
       const api = (window as unknown as {
@@ -351,9 +384,9 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
       assert.ok(Math.abs(summary.duration - 4) < 0.15, `混音输出应跟随视频时长，实际 ${summary.duration}`);
       const pcm = extractPcm(output);
       const originalEnergy = toneEnergy(pcm, 440);
-      const bgmEnergy = toneEnergy(pcm, 523.25);
+      const bgmEnergy = toneEnergy(pcm, 1046.5);
       assert.ok(originalEnergy > toneEnergy(pcm, 480) * 5, '混音应保留视频原声 440 Hz');
-      assert.ok(bgmEnergy > toneEnergy(pcm, 560) * 5, '混音应包含 BGM 523.25 Hz');
+      assert.ok(bgmEnergy > toneEnergy(pcm, 1000) * 5, '混音应包含升高八度的 BGM 1046.5 Hz');
       const actualRatio = bgmEnergy / originalEnergy;
       assert.ok(actualRatio > expectedMixedRatio * 0.75 && actualRatio < expectedMixedRatio * 1.25,
         `BGM 应按 50% × 40% 混音，期望频域比例 ${expectedMixedRatio}，实际 ${actualRatio}`);

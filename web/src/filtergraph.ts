@@ -13,6 +13,7 @@ import {
   type MediaInfo,
   type VideoClip,
   VideoEncoder,
+  clipPitch,
   clipVolume,
   clipDuration,
   getDimensions,
@@ -31,11 +32,9 @@ export function n(value: number): string {
   return text;
 }
 
-/** 与桌面端一致：每级速度保持在 0.5–2，避免音频跳采样。 */
-export function buildTempoFilter(speed: number): string {
-  if (!Number.isFinite(speed) || speed < 0.1 || speed > 8) {
-    throw new Error('片段速度必须在 0.1–8 倍之间。');
-  }
+/** 每级保持在 0.5–2；变调补偿后的临时倍率可以超出片段倍速范围。 */
+function buildTempoStages(speed: number): string {
+  if (!Number.isFinite(speed) || speed <= 0) throw new Error('音频临时倍率无效。');
   const filters: string[] = [];
   let remaining = speed;
   while (remaining < 0.5) {
@@ -48,6 +47,26 @@ export function buildTempoFilter(speed: number): string {
   }
   filters.push(`atempo=${n(remaining)}`);
   return filters.join(',');
+}
+
+/** 与桌面端一致：每级速度保持在 0.5–2，避免音频跳采样。 */
+export function buildTempoFilter(speed: number): string {
+  if (!Number.isFinite(speed) || speed < 0.1 || speed > 8) {
+    throw new Error('片段速度必须在 0.1–8 倍之间。');
+  }
+  return buildTempoStages(speed);
+}
+
+export function buildAudioTransformFilter(speed: number, pitchSemitones: number): string {
+  if (!Number.isFinite(speed) || speed < 0.1 || speed > 8) {
+    throw new Error('片段速度必须在 0.1–8 倍之间。');
+  }
+  if (!Number.isFinite(pitchSemitones) || pitchSemitones < -12 || pitchSemitones > 12) {
+    throw new Error('变调必须在 −12 到 +12 半音之间。');
+  }
+  if (Math.abs(pitchSemitones) < 0.000001) return buildTempoFilter(speed);
+  const pitchFactor = 2 ** (pitchSemitones / 12);
+  return `asetrate=${n(48_000 * pitchFactor)},aresample=48000,${buildTempoStages(speed / pitchFactor)}`;
 }
 
 const distinctSources = (clips: readonly VideoClip[]): MediaInfo[] => {
@@ -71,7 +90,7 @@ const silenceChain = (clip: VideoClip): string =>
 
 const audioClipChain = (clip: VideoClip): string =>
   `atrim=start=${n(clip.start)}:end=${n(clip.end)},asetpts=PTS-STARTPTS,` +
-  `${buildTempoFilter(clip.speed)}` +
+  `${buildAudioTransformFilter(clip.speed, clipPitch(clip))}` +
   (Math.abs(clipVolume(clip) - 1) < 0.000001 ? '' : `,volume=${n(clipVolume(clip))}`) +
   `,apad,atrim=duration=${n(clipDuration(clip))}`;
 

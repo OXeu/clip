@@ -36,12 +36,14 @@ public sealed record SubtitleRegion(
 }
 
 public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double End, double Speed = 1,
-    ClipKind Kind = ClipKind.Combined, double Volume = 1)
+    ClipKind Kind = ClipKind.Combined, double Volume = 1, double PitchSemitones = 0)
 {
     public const double MinimumSpeed = 0.1;
     public const double MaximumSpeed = 8;
     public const double MinimumVolume = 0;
     public const double MaximumVolume = 2;
+    public const double MinimumPitch = -12;
+    public const double MaximumPitch = 12;
     public string? Name { get; init; }
     public string DisplayName => Name ?? Media.FileName;
     public double SourceDuration => End - Start;
@@ -52,6 +54,7 @@ public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double En
     {
         ValidateSpeed(Speed);
         ValidateVolume(Volume);
+        ValidatePitch(PitchSemitones);
         if (!double.IsFinite(Start) || !double.IsFinite(End) || Start < 0 || End > Media.Duration + 0.001 || End <= Start ||
             !double.IsFinite(Media.Duration) || Media.Duration <= 0 || !double.IsFinite(Media.FrameRate) || Media.FrameRate <= 0 ||
             Media.Width < 1 || Media.Height < 1 || Media.VideoStreamIndex < 0 || Media.AudioStreamIndex < 0 || string.IsNullOrWhiteSpace(Media.Path))
@@ -68,6 +71,12 @@ public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double En
     {
         if (!double.IsFinite(volume) || volume < MinimumVolume || volume > MaximumVolume)
             throw new ArgumentException("音量必须在 0%–200% 之间。");
+    }
+
+    public static void ValidatePitch(double pitchSemitones)
+    {
+        if (!double.IsFinite(pitchSemitones) || pitchSemitones < MinimumPitch || pitchSemitones > MaximumPitch)
+            throw new ArgumentException("变调必须在 −12 到 +12 半音之间。");
     }
 }
 

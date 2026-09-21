@@ -531,6 +531,20 @@ public sealed class EditProject
         return true;
     }
 
+    public bool SetAudioAdjustment(Guid clipId, double speed, double pitchSemitones)
+    {
+        VideoClip.ValidateSpeed(speed);
+        VideoClip.ValidatePitch(pitchSemitones);
+        if (FindClip(clipId) is not { } position || FindTrack(position.TrackId) is not { Kind: TrackKind.Audio } track ||
+            (Math.Abs(position.Clip.Speed - speed) < 0.000001 &&
+             Math.Abs(position.Clip.PitchSemitones - pitchSemitones) < 0.000001)) return false;
+        SaveUndo();
+        var clips = track.Clips.ToList();
+        clips[position.Index] = position.Clip with { Speed = speed, PitchSemitones = pitchSemitones };
+        ReplaceClips(track.Id, clips);
+        return true;
+    }
+
     public bool SetTrackVolume(Guid trackId, double volume)
     {
         VideoClip.ValidateVolume(volume);

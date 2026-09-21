@@ -16,15 +16,30 @@ public sealed class ExportService(FfmpegTools tools)
     public static string BuildFilter(MediaInfo media, IReadOnlyList<Segment> segments, ExportOptions options) =>
         BuildFilter(ConvertClips(media, segments), options);
 
-    public static string BuildTempoFilter(double speed)
+    private static string BuildTempoStages(double speed)
     {
-        VideoClip.ValidateSpeed(speed);
+        if (!double.IsFinite(speed) || speed <= 0) throw new ArgumentOutOfRangeException(nameof(speed));
         List<string> filters = [];
         // Keep every stage within 0.5–2 so faster changes do not skip audio samples.
         while (speed < 0.5) { filters.Add("atempo=0.5"); speed /= 0.5; }
         while (speed > 2) { filters.Add("atempo=2"); speed /= 2; }
         filters.Add($"atempo={N(speed)}");
         return string.Join(",", filters);
+    }
+
+    public static string BuildTempoFilter(double speed)
+    {
+        VideoClip.ValidateSpeed(speed);
+        return BuildTempoStages(speed);
+    }
+
+    public static string BuildAudioTransformFilter(double speed, double pitchSemitones)
+    {
+        VideoClip.ValidateSpeed(speed);
+        VideoClip.ValidatePitch(pitchSemitones);
+        if (Math.Abs(pitchSemitones) < 0.000001) return BuildTempoFilter(speed);
+        var pitchFactor = Math.Pow(2, pitchSemitones / 12);
+        return $"asetrate={N(48000 * pitchFactor)},aresample=48000,{BuildTempoStages(speed / pitchFactor)}";
     }
 
     public static string BuildFilter(IReadOnlyList<VideoClip> clips, ExportOptions options)
@@ -55,7 +70,7 @@ public sealed class ExportService(FfmpegTools tools)
                 $"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p," +
                 $"fps={N(fps)}:eof_action=pass,tpad=stop_mode=clone:stop_duration={N(Math.Max(1 / (clip.Media.FrameRate * clip.Speed), 2 / fps))},trim=duration={N(Math.Max(clip.Duration, 1 / fps))},settb=AVTB[v{i}];");
             if (clip.Media.HasAudio)
-                graph.AppendLine($"[as{i}]atrim=start={N(clip.Start)}:end={N(clip.End)},asetpts=PTS-STARTPTS,{BuildTempoFilter(clip.Speed)}" +
+                graph.AppendLine($"[as{i}]atrim=start={N(clip.Start)}:end={N(clip.End)},asetpts=PTS-STARTPTS,{BuildAudioTransformFilter(clip.Speed, clip.PitchSemitones)}" +
                     (Math.Abs(clip.Volume - 1) < 0.000001 ? "" : $",volume={N(clip.Volume)}") +
                     $",apad,atrim=duration={N(clip.Duration)}[a{i}];");
             else if (hasAudio)

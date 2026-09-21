@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import { editMediaTimeOffset, findAudioSpecificConfig } from '../src/mp4demux.ts';
 import {
+  pitchAndTimeStretchPcm,
   timeStretchPcm,
   WEB_AUDIO_SAMPLE_RATE,
   type StereoPcm,
@@ -49,6 +50,22 @@ describe('WebCodecs 音频处理', () => {
     const output = timeStretchPcm(input, 1, input.left.length);
     assert.deepEqual(output.left, input.left);
     assert.deepEqual(output.right, input.right);
+  });
+
+  it('变调与倍速相互独立', () => {
+    const octaveUp = pitchAndTimeStretchPcm(sine(440, 1), 1, 12);
+    assert.equal(octaveUp.left.length, WEB_AUDIO_SAMPLE_RATE);
+    assert.ok(
+      Math.abs(estimateFrequency(octaveUp.left) - 880) < 24,
+      `升高八度后的频率错误：${estimateFrequency(octaveUp.left).toFixed(1)} Hz`,
+    );
+
+    const faster = pitchAndTimeStretchPcm(sine(440, 1), 2, 12);
+    assert.equal(faster.left.length, WEB_AUDIO_SAMPLE_RATE / 2);
+    assert.ok(
+      Math.abs(estimateFrequency(faster.left) - 880) < 24,
+      `变速加变调后的频率错误：${estimateFrequency(faster.left).toFixed(1)} Hz`,
+    );
   });
 
   it('从嵌套 esds descriptor 提取 AAC AudioSpecificConfig', () => {

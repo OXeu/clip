@@ -794,7 +794,8 @@ export function requiresAudioMix(
   const videoHasAudio = videoClips.some((clip) => hasAudio(clip.media));
   if (!videoHasAudio && audibleTracks.length === 0) return false;
   if (audibleTracks.some((track) => Math.abs((track.volume ?? 1) - 1) > 0.000001
-    || track.clips.some((clip) => Math.abs((clip.volume ?? 1) - 1) > 0.000001))) return true;
+    || track.clips.some((clip) => Math.abs((clip.volume ?? 1) - 1) > 0.000001
+      || Math.abs(clip.pitchSemitones ?? 0) > 0.000001))) return true;
   if (audibleTracks.length !== 1) return true;
   const audioClips = audibleTracks[0]!.clips;
   if (audioClips.length !== videoClips.length) return true;

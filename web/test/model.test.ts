@@ -15,6 +15,7 @@ import {
   SubtitleVerticalAlignment,
   TrackKind,
   clipDuration,
+  clipPitch,
   clipVolume,
   createClip,
   subtitleCues,
@@ -188,22 +189,44 @@ describe('音视频分轨与对齐绑定', () => {
       [imported.audioTrack.id, bgm.id]);
     assert.equal(project.findClip(bgmClipId)?.clip.media.path, shortBgm.path);
     assert.equal(project.findTrack(subtitle.id)?.kind, TrackKind.Subtitle);
+    assert.ok(project.setAudioAdjustment(bgmClipId, 1.25, 7));
     assert.ok(project.setClipVolume(bgmClipId, 0.5));
     assert.ok(project.setTrackVolume(bgm.id, 0.4));
     assert.equal(clipVolume(project.findClip(bgmClipId)!.clip), 0.5);
     assert.equal(trackVolume(project.findTrack(bgm.id)!), 0.4);
     assert.equal(clipVolume(project.findClip(bgmClipId)!.clip) * trackVolume(project.findTrack(bgm.id)!), 0.2);
+    assert.equal(project.findClip(bgmClipId)!.clip.speed, 1.25);
+    assert.equal(clipPitch(project.findClip(bgmClipId)!.clip), 7);
     assert.throws(() => project.setClipVolume(bgmClipId, 2.01), /0%–200%/);
     assert.ok(project.split(imported.videoTrack.id, 5), '短 BGM 不应阻止视频与原声在后续时间点分割');
     assert.equal(project.findTrack(bgm.id)?.clips.length, 1, '短于切点的 BGM 不应产生空片段');
     const restored = EditProject.fromSnapshot(project.exportSnapshot());
     assert.equal(clipVolume(restored.findClip(bgmClipId)!.clip), 0.5);
     assert.equal(trackVolume(restored.findTrack(bgm.id)!), 0.4);
+    assert.equal(restored.findClip(bgmClipId)!.clip.speed, 1.25);
+    assert.equal(clipPitch(restored.findClip(bgmClipId)!.clip), 7);
 
     assert.ok(project.deleteAudioTrack(bgm.id));
     assert.equal(project.audioTracks(imported.videoTrack.id).length, 1);
     assert.ok(project.undo());
     assert.equal(project.audioTracks(imported.videoTrack.id).length, 2);
+  });
+
+  it('音频倍速和变调作为一次操作撤销与重做', () => {
+    const project = new EditProject();
+    const imported = project.importSeparated(media);
+    const clipId = imported.audioTrack.clips[0]!.id;
+    assert.ok(project.setAudioAdjustment(clipId, 1.5, -5));
+    assert.equal(project.findClip(clipId)!.clip.speed, 1.5);
+    assert.equal(clipPitch(project.findClip(clipId)!.clip), -5);
+    assert.ok(project.undo());
+    assert.equal(project.findClip(clipId)!.clip.speed, 1);
+    assert.equal(clipPitch(project.findClip(clipId)!.clip), 0);
+    assert.ok(project.redo());
+    assert.equal(project.findClip(clipId)!.clip.speed, 1.5);
+    assert.equal(clipPitch(project.findClip(clipId)!.clip), -5);
+    assert.throws(() => project.setAudioAdjustment(clipId, 1, 12.1), /−12 到 \+12/);
+    assert.equal(project.setAudioAdjustment(imported.videoTrack.clips[0]!.id, 1, 2), false);
   });
 
   it('普通音频不能被误导入为视频片段', () => {

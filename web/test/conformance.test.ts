@@ -14,6 +14,7 @@ import { describe, it } from 'node:test';
 
 import {
   buildAudioFilter,
+  buildAudioTransformFilter,
   buildFilter,
   buildMixedAudioFilter,
   buildMixedAudioMuxArguments,
@@ -202,6 +203,18 @@ describe('tempo 分级与桌面端一致', () => {
       assert.ok(Math.abs(product - speed) < 1e-9, `${speed}x 分级乘积为 ${product}`);
     }
   });
+
+  it('变调通过重采样改变音高，并用 atempo 独立补偿倍速', () => {
+    assert.equal(
+      buildAudioTransformFilter(1, 12),
+      'asetrate=96000,aresample=48000,atempo=0.5',
+    );
+    assert.equal(
+      buildAudioTransformFilter(2, -12),
+      'asetrate=24000,aresample=48000,atempo=2,atempo=2',
+    );
+    assert.equal(buildAudioTransformFilter(1.25, 0), buildTempoFilter(1.25));
+  });
 });
 
 describe('音频半边 filter graph', () => {
@@ -245,11 +258,14 @@ describe('音频半边 filter graph', () => {
 
   it('多条伴生音轨分别拼接后混合，并裁剪到视频时长', () => {
     const original = { ...clip(media, 0, 10), id: 'original', kind: ClipKind.Audio };
-    const music = { ...clip(bgm, 0, 6), id: 'music', kind: ClipKind.Audio, volume: 0.5 };
+    const music = {
+      ...clip(bgm, 0, 6), id: 'music', kind: ClipKind.Audio, volume: 0.5, pitchSemitones: 12,
+    };
     const graph = buildMixedAudioFilter([{ clips: [original] }, { clips: [music], volume: 0.4 }], 10);
     assert.match(graph, /^\[1:1\]/, '原声应从视频输入之后的第一个音频输入读取');
     assert.match(graph, /^\[2:0\]/m, 'BGM 应使用自己的音频流');
-    assert.match(graph, /atempo=1,volume=0\.5,apad/, '素材音量应先应用到片段');
+    assert.match(graph, /asetrate=96000,aresample=48000,atempo=0\.5,volume=0\.5,apad/,
+      '素材变调与音量应先应用到片段');
     assert.match(graph, /\[a1_0\]anull,volume=0\.4,apad/, '轨道音量应在拼接后应用，最终增益为 0.5 × 0.4');
     assert.match(graph, /\[atrack0\]\[atrack1\]amix=inputs=2/);
     assert.match(graph, /alimiter=limit=0\.95,atrim=duration=10\[audio\]$/);

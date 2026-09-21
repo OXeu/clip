@@ -33,14 +33,17 @@ import {
   type VideoTrack,
   ClipKind,
   EditProject,
+  MAXIMUM_PITCH,
   MAXIMUM_SPEED,
   MAXIMUM_VOLUME,
+  MINIMUM_PITCH,
   MINIMUM_SPEED,
   MINIMUM_VOLUME,
   SubtitleVerticalAlignment,
   TrackKind,
   VideoEncoder,
   clipDuration,
+  clipPitch,
   clipVolume,
   defaultExportOptions,
   displayName,
@@ -66,6 +69,11 @@ import {
 import { TimelineView, formatTime } from './timeline.ts';
 import { extractWaveform } from './waveform.ts';
 import { subtitleRenderTrack } from './subtitle-renderer.ts';
+import {
+  WEB_AUDIO_SAMPLE_RATE,
+  pitchAndTimeStretchPcm,
+  type StereoPcm,
+} from './webcodecs-audio.ts';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -182,6 +190,7 @@ const clipVolumeActions = $('clip-volume-actions');
 const clipVolumeCurrent = $<HTMLOutputElement>('clip-volume-current');
 const clipVolumeSlider = $<HTMLInputElement>('clip-volume-slider');
 const clipVolumeResetButton = $<HTMLButtonElement>('clip-volume-reset');
+const audioAdjustButton = $<HTMLButtonElement>('audio-adjust-button');
 const trackContextMenu = $('track-context-menu');
 const trackContextTitle = $('track-context-title');
 const addAudioTrackButton = $<HTMLButtonElement>('add-audio-track');
@@ -205,6 +214,19 @@ const speedForm = $<HTMLFormElement>('speed-form');
 const speedInput = $<HTMLInputElement>('speed-input');
 const speedValidation = $('speed-validation');
 const speedCancelButton = $<HTMLButtonElement>('speed-cancel');
+const audioAdjustDialog = $<HTMLDialogElement>('audio-adjust-dialog');
+const audioAdjustForm = $<HTMLFormElement>('audio-adjust-form');
+const audioAdjustSource = $('audio-adjust-source');
+const audioPitchSlider = $<HTMLInputElement>('audio-pitch-slider');
+const audioPitchValue = $<HTMLOutputElement>('audio-pitch-value');
+const audioSpeedSlider = $<HTMLInputElement>('audio-speed-slider');
+const audioSpeedValue = $<HTMLOutputElement>('audio-speed-value');
+const audioAdjustSummary = $('audio-adjust-summary');
+const audioAdjustValidation = $('audio-adjust-validation');
+const audioAdjustPreviewButton = $<HTMLButtonElement>('audio-adjust-preview');
+const audioAdjustPreviewIcon = $('audio-adjust-preview-icon');
+const audioAdjustPreviewLabel = $('audio-adjust-preview-label');
+const audioAdjustCancelButton = $<HTMLButtonElement>('audio-adjust-cancel');
 const exportDialog = $<HTMLDialogElement>('export-dialog');
 const settingsDialog = $<HTMLDialogElement>('settings-dialog');
 const settingsForm = $<HTMLFormElement>('settings-form');
@@ -1129,6 +1151,217 @@ function setSelectedSpeed(speed: number): void {
   refresh();
 }
 
+let adjustingAudioClipId: string | null = null;
+let audioAdjustmentPreview: {
+  readonly context: AudioContext;
+  source: AudioBufferSourceNode | null;
+} | null = null;
+let audioAdjustmentPreviewGeneration = 0;
+
+const formatSpeed = (speed: number): string =>
+  `${speed.toFixed(2).replace(/\.?0+$/, '')}×`;
+
+const formatPitch = (pitch: number): string => {
+  if (Math.abs(pitch) < 0.000001) return '原调';
+  return `${pitch > 0 ? '+' : '−'}${Math.abs(pitch)} 半音`;
+};
+
+function updateParameterSlider(input: HTMLInputElement): void {
+  const minimum = Number(input.min);
+  const maximum = Number(input.max);
+  const percent = (input.valueAsNumber - minimum) / (maximum - minimum) * 100;
+  input.style.setProperty('--parameter-position', `${Math.min(100, Math.max(0, percent))}%`);
+}
+
+function audioAdjustmentValues(): { speed: number; pitch: number } | null {
+  const speed = audioSpeedSlider.valueAsNumber;
+  const pitch = audioPitchSlider.valueAsNumber;
+  if (!Number.isFinite(speed) || speed < MINIMUM_SPEED || speed > MAXIMUM_SPEED
+    || !Number.isFinite(pitch) || pitch < MINIMUM_PITCH || pitch > MAXIMUM_PITCH) {
+    audioAdjustValidation.textContent = '变调须在 −12 到 +12 半音之间，倍速须在 0.1–8× 之间。';
+    audioAdjustValidation.hidden = false;
+    return null;
+  }
+  audioAdjustValidation.hidden = true;
+  return { speed, pitch };
+}
+
+function updateAudioAdjustmentSummary(): void {
+  updateParameterSlider(audioPitchSlider);
+  updateParameterSlider(audioSpeedSlider);
+  const speed = audioSpeedSlider.valueAsNumber;
+  const pitch = audioPitchSlider.valueAsNumber;
+  audioPitchValue.value = formatPitch(pitch);
+  audioSpeedValue.value = formatSpeed(speed);
+  const found = adjustingAudioClipId ? project.findClip(adjustingAudioClipId) : undefined;
+  if (!found || !Number.isFinite(speed) || speed <= 0 || !Number.isFinite(pitch)) {
+    audioAdjustSummary.textContent = '';
+    return;
+  }
+  const outputDuration = (found.clip.end - found.clip.start) / speed;
+  const pitchFactor = 2 ** (pitch / 12);
+  audioAdjustSummary.textContent =
+    `输出时长 ${formatTime(outputDuration)} · 倍速 ${formatSpeed(speed)} · `
+    + `音高 ${formatPitch(pitch)}（${pitchFactor.toFixed(2)}×） · `
+    + '倍速与音高将相互独立。';
+  audioAdjustValidation.hidden = true;
+}
+
+function resetAudioAdjustmentPreviewButton(): void {
+  audioAdjustPreviewButton.disabled = false;
+  audioAdjustPreviewButton.classList.remove('is-playing');
+  audioAdjustPreviewIcon.setAttribute('href', './remixicon.svg#ri-play-fill');
+  audioAdjustPreviewLabel.textContent = '试听';
+}
+
+function stopAudioAdjustmentPreview(): void {
+  audioAdjustmentPreviewGeneration++;
+  const preview = audioAdjustmentPreview;
+  audioAdjustmentPreview = null;
+  if (preview) {
+    if (preview.source) {
+      preview.source.onended = null;
+      try { preview.source.stop(); } catch { /* 已自然结束。 */ }
+    }
+    void preview.context.close().catch(() => undefined);
+  }
+  resetAudioAdjustmentPreviewButton();
+}
+
+function audioBufferInterval(buffer: AudioBuffer, start: number, duration: number): StereoPcm {
+  const outputLength = Math.max(1, Math.round(duration * WEB_AUDIO_SAMPLE_RATE));
+  const left = new Float32Array(outputLength);
+  const right = new Float32Array(outputLength);
+  const leftSource = buffer.getChannelData(0);
+  const rightSource = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : leftSource;
+
+  for (let output = 0; output < outputLength; output++) {
+    const exact = (start + output / WEB_AUDIO_SAMPLE_RATE) * buffer.sampleRate;
+    const first = Math.min(leftSource.length - 1, Math.max(0, Math.floor(exact)));
+    const second = Math.min(leftSource.length - 1, first + 1);
+    const fraction = Math.min(1, Math.max(0, exact - first));
+    left[output] = leftSource[first]! + (leftSource[second]! - leftSource[first]!) * fraction;
+    right[output] = rightSource[first]! + (rightSource[second]! - rightSource[first]!) * fraction;
+  }
+  return { left, right };
+}
+
+async function previewAudioAdjustment(): Promise<void> {
+  if (audioAdjustmentPreview) {
+    stopAudioAdjustmentPreview();
+    return;
+  }
+  const values = audioAdjustmentValues();
+  const found = adjustingAudioClipId ? project.findClip(adjustingAudioClipId) : undefined;
+  const track = found ? project.findTrack(found.trackId) : undefined;
+  if (!values || !found || track?.kind !== TrackKind.Audio) return;
+  const file = files.get(found.clip.media.path);
+  if (!file) {
+    audioAdjustValidation.textContent = `找不到素材 ${found.clip.media.path}，无法试听。`;
+    audioAdjustValidation.hidden = false;
+    return;
+  }
+  if (typeof AudioContext === 'undefined') {
+    audioAdjustValidation.textContent = '当前浏览器不支持音频试听。';
+    audioAdjustValidation.hidden = false;
+    return;
+  }
+
+  stopAudioAdjustmentPreview();
+  const generation = audioAdjustmentPreviewGeneration;
+  audioAdjustPreviewButton.disabled = true;
+  audioAdjustPreviewLabel.textContent = '正在处理…';
+  const context = new AudioContext({ sampleRate: WEB_AUDIO_SAMPLE_RATE });
+  audioAdjustmentPreview = { context, source: null };
+  try {
+    await context.resume();
+    const decoded = await context.decodeAudioData(await file.arrayBuffer());
+    if (generation !== audioAdjustmentPreviewGeneration || !audioAdjustDialog.open) return;
+    const start = Math.min(Math.max(0, found.clip.start), decoded.duration);
+    // 最多处理 20 秒源音频，并将试听输出限制在 10 秒内。
+    const sourceDuration = Math.min(
+      found.clip.end - found.clip.start,
+      decoded.duration - start,
+      20,
+      10 * values.speed,
+    );
+    if (sourceDuration <= 0) throw new Error('该片段没有可试听的音频。');
+    const pcm = pitchAndTimeStretchPcm(
+      audioBufferInterval(decoded, start, sourceDuration),
+      values.speed,
+      values.pitch,
+    );
+    if (generation !== audioAdjustmentPreviewGeneration || !audioAdjustDialog.open) return;
+    const rendered = context.createBuffer(2, pcm.left.length, WEB_AUDIO_SAMPLE_RATE);
+    rendered.getChannelData(0).set(pcm.left);
+    rendered.getChannelData(1).set(pcm.right);
+    const source = context.createBufferSource();
+    const gain = context.createGain();
+    gain.gain.value = clipVolume(found.clip) * trackVolume(track);
+    source.buffer = rendered;
+    source.connect(gain).connect(context.destination);
+    audioAdjustmentPreview = { context, source };
+    audioAdjustPreviewButton.disabled = false;
+    audioAdjustPreviewButton.classList.add('is-playing');
+    audioAdjustPreviewIcon.setAttribute('href', './remixicon.svg#ri-pause-fill');
+    audioAdjustPreviewLabel.textContent = '停止试听';
+    source.onended = () => {
+      if (audioAdjustmentPreview?.source !== source) return;
+      audioAdjustmentPreview = null;
+      void context.close().catch(() => undefined);
+      resetAudioAdjustmentPreviewButton();
+    };
+    source.start();
+  } catch (error) {
+    if (generation !== audioAdjustmentPreviewGeneration) return;
+    audioAdjustmentPreview = null;
+    void context.close().catch(() => undefined);
+    resetAudioAdjustmentPreviewButton();
+    audioAdjustValidation.textContent = `试听失败：${error instanceof Error ? error.message : String(error)}`;
+    audioAdjustValidation.hidden = false;
+  }
+}
+
+function openAudioAdjustmentDialog(): void {
+  const found = selectedClipId ? project.findClip(selectedClipId) : undefined;
+  const track = found ? project.findTrack(found.trackId) : undefined;
+  if (!found || track?.kind !== TrackKind.Audio) return;
+  closeClipContextMenu();
+  pause();
+  adjustingAudioClipId = found.clip.id;
+  audioAdjustSource.textContent = displayName(found.clip);
+  audioPitchSlider.value = String(clipPitch(found.clip));
+  audioSpeedSlider.value = String(found.clip.speed);
+  audioAdjustValidation.hidden = true;
+  updateAudioAdjustmentSummary();
+  audioAdjustDialog.showModal();
+  queueMicrotask(() => audioPitchSlider.focus({ preventScroll: true }));
+}
+
+function applyAudioAdjustment(speed: number, pitch: number): void {
+  const clipId = adjustingAudioClipId;
+  if (operation || !clipId) return;
+  const cursor = project.locate(activeTrackId, position);
+  if (!project.setAudioAdjustment(clipId, speed, pitch)) {
+    audioAdjustDialog.close();
+    return;
+  }
+  if (cursor) {
+    const current = project.findClip(cursor.clip.id);
+    if (current) {
+      const sourceTime = Math.min(Math.max(cursor.sourceTime, current.clip.start), current.clip.end);
+      position = current.timelineStart + (sourceTime - current.clip.start) / current.clip.speed;
+      if (mediaReady && playbackClipId === current.clip.id) {
+        video.playbackRate = clampPlaybackRate(current.clip.speed);
+      }
+    }
+  }
+  stopAudioAdjustmentPreview();
+  audioAdjustDialog.close();
+  status(`音频已设为 ${formatPitch(pitch)}、${formatSpeed(speed)} · 可撤销`);
+  refresh();
+}
+
 const volumePercent = (volume: number): number => Math.round(volume * 100);
 
 function updateVolumeControl(input: HTMLInputElement, output: HTMLOutputElement, percent: number): void {
@@ -1473,6 +1706,7 @@ function openClipContextMenu(clipId: string | null, clientX: number, clientY: nu
     button.setAttribute('aria-checked', String(selected));
   }
   clipVolumeActions.hidden = !audioClip;
+  audioAdjustButton.hidden = !audioClip;
   if (audioClip) {
     const percent = volumePercent(clipVolume(found.clip));
     updateVolumeControl(clipVolumeSlider, clipVolumeCurrent, percent);
@@ -1813,7 +2047,12 @@ function audioTracksForExport(
             candidate.media.path.toLowerCase() === clip.media.path.toLowerCase()
             && Math.abs(candidate.start - clip.start) < 0.000001
             && Math.abs(candidate.end - clip.end) < 0.000001);
-          return { ...clip, kind: ClipKind.Audio, volume: source ? clipVolume(source) : 1 };
+          return {
+            ...clip,
+            kind: ClipKind.Audio,
+            volume: source ? clipVolume(source) : 1,
+            pitchSemitones: source ? clipPitch(source) : 0,
+          };
         })
         : audio.clips,
     };
@@ -2327,6 +2566,7 @@ for (const button of speedPresetButtons) {
   button.addEventListener('click', () => setSelectedSpeed(Number(button.dataset.speed)));
 }
 customSpeedButton.addEventListener('click', openCustomSpeedDialog);
+audioAdjustButton.addEventListener('click', openAudioAdjustmentDialog);
 clipVolumeSlider.addEventListener('input', () => {
   updateVolumeControl(clipVolumeSlider, clipVolumeCurrent, clipVolumeSlider.valueAsNumber);
 });
@@ -2386,6 +2626,23 @@ speedForm.addEventListener('submit', (event) => {
   }
   speedDialog.close();
   setSelectedSpeed(speed);
+});
+for (const slider of [audioPitchSlider, audioSpeedSlider]) {
+  slider.addEventListener('input', () => {
+    stopAudioAdjustmentPreview();
+    updateAudioAdjustmentSummary();
+  });
+}
+audioAdjustPreviewButton.addEventListener('click', () => void previewAudioAdjustment());
+audioAdjustCancelButton.addEventListener('click', () => audioAdjustDialog.close());
+audioAdjustForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const values = audioAdjustmentValues();
+  if (values) applyAudioAdjustment(values.speed, values.pitch);
+});
+audioAdjustDialog.addEventListener('close', () => {
+  stopAudioAdjustmentPreview();
+  adjustingAudioClipId = null;
 });
 
 exportButton.addEventListener('click', () => void openExportDialog());
@@ -2498,7 +2755,8 @@ window.addEventListener('keydown', (event) => {
   if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
     return;
   }
-  if (exportDialog.open || settingsDialog.open || speedDialog.open || recoveryDialog.open) return;
+  if (exportDialog.open || settingsDialog.open || speedDialog.open
+    || audioAdjustDialog.open || recoveryDialog.open) return;
   if (!clipContextMenu.hidden) {
     if (event.key === 'Escape') {
       event.preventDefault();
