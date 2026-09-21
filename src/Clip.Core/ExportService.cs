@@ -55,7 +55,9 @@ public sealed class ExportService(FfmpegTools tools)
                 $"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p," +
                 $"fps={N(fps)}:eof_action=pass,tpad=stop_mode=clone:stop_duration={N(Math.Max(1 / (clip.Media.FrameRate * clip.Speed), 2 / fps))},trim=duration={N(Math.Max(clip.Duration, 1 / fps))},settb=AVTB[v{i}];");
             if (clip.Media.HasAudio)
-                graph.AppendLine($"[as{i}]atrim=start={N(clip.Start)}:end={N(clip.End)},asetpts=PTS-STARTPTS,{BuildTempoFilter(clip.Speed)},apad,atrim=duration={N(clip.Duration)}[a{i}];");
+                graph.AppendLine($"[as{i}]atrim=start={N(clip.Start)}:end={N(clip.End)},asetpts=PTS-STARTPTS,{BuildTempoFilter(clip.Speed)}" +
+                    (Math.Abs(clip.Volume - 1) < 0.000001 ? "" : $",volume={N(clip.Volume)}") +
+                    $",apad,atrim=duration={N(clip.Duration)}[a{i}];");
             else if (hasAudio)
                 graph.AppendLine($"anullsrc=r=48000:cl=stereo,atrim=duration={N(clip.Duration)},asetpts=PTS-STARTPTS[a{i}];");
         }

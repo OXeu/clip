@@ -22,8 +22,11 @@ import {
   buildAudioFilter,
   buildAudioMuxArguments,
   buildFilter,
+  buildMixedAudioFilter,
+  buildMixedAudioMuxArguments,
   buildWasmExportArguments,
   n,
+  type AudioMixTrack,
 } from './filtergraph.ts';
 import {
   type ExportOptions,
@@ -50,6 +53,8 @@ import {
 
 export interface ExportRequest {
   readonly clips: readonly VideoClip[];
+  /** 传入时表示视频组显式管理音频；多轨或独立编辑后由 ffmpeg.wasm 混音。 */
+  readonly audioTracks?: readonly AudioMixTrack[];
   readonly subtitles?: readonly SubtitleRenderTrack[];
   readonly options: ExportOptions;
   readonly route: EncoderRoute;
@@ -745,6 +750,10 @@ export interface WasmMediaMapping {
   }[];
 }
 
+interface WasmAudioMapping extends WasmMediaMapping {
+  readonly tracks: readonly AudioMixTrack[];
+}
+
 /**
  * filtergraph、-i 参数和 wasm 文件写入必须共享同一份源映射。
  * 不能分别从清洗后的 basename 去重，否则不同素材可能折叠成同一个输入。
@@ -763,6 +772,41 @@ export function mapWasmMedia(clips: readonly VideoClip[]): WasmMediaMapping {
   return { clips: mapped, sources };
 }
 
+function mapWasmAudioTracks(tracks: readonly AudioMixTrack[]): WasmAudioMapping {
+  const mapping = mapWasmMedia(tracks.flatMap((track) => track.clips));
+  const mappedById = new Map(mapping.clips.map((clip) => [clip.id, clip]));
+  return {
+    ...mapping,
+    tracks: tracks.map((track) => ({
+      ...track,
+      clips: track.clips.map((clip) => mappedById.get(clip.id) ?? clip),
+    })),
+  };
+}
+
+/** 默认分离音轨与视频片段完全同构时仍可走 WebCodecs；真正的多轨才加载混音核心。 */
+export function requiresAudioMix(
+  videoClips: readonly VideoClip[],
+  audioTracks: readonly AudioMixTrack[] | undefined,
+): boolean {
+  if (audioTracks === undefined) return false;
+  const audibleTracks = audioTracks.filter((track) => track.clips.some((clip) => hasAudio(clip.media)));
+  const videoHasAudio = videoClips.some((clip) => hasAudio(clip.media));
+  if (!videoHasAudio && audibleTracks.length === 0) return false;
+  if (audibleTracks.some((track) => Math.abs((track.volume ?? 1) - 1) > 0.000001
+    || track.clips.some((clip) => Math.abs((clip.volume ?? 1) - 1) > 0.000001))) return true;
+  if (audibleTracks.length !== 1) return true;
+  const audioClips = audibleTracks[0]!.clips;
+  if (audioClips.length !== videoClips.length) return true;
+  return audioClips.some((audio, index) => {
+    const video = videoClips[index]!;
+    return audio.media.path.toLowerCase() !== video.media.path.toLowerCase()
+      || Math.abs(audio.start - video.start) > 0.000001
+      || Math.abs(audio.end - video.end) > 0.000001
+      || Math.abs(audio.speed - video.speed) > 0.000001;
+  });
+}
+
 async function wasmInputs(
   mapping: WasmMediaMapping,
   readSource: (path: string) => Promise<ArrayBuffer>,
@@ -774,6 +818,36 @@ async function wasmInputs(
     inputs.push({ name, data: new Uint8Array(await readSource(original.path)) });
   }
   return inputs;
+}
+
+async function muxAudioTracks(
+  video: Uint8Array,
+  tracks: readonly AudioMixTrack[],
+  duration: number,
+  runner: FfmpegRunner,
+  readSource: (path: string) => Promise<ArrayBuffer>,
+  report: (progress: ExportProgress) => void,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  const mapping = mapWasmAudioTracks(tracks);
+  const filterName = 'clip-multitrack-audio.ffgraph';
+  await runner.writeFile(filterName, new TextEncoder().encode(buildMixedAudioFilter(mapping.tracks, duration)));
+  try {
+    const result = await runner.run({
+      args: buildMixedAudioMuxArguments(mapping.tracks, 'video.mp4', filterName, 'output.mp4'),
+      inputs: [
+        { name: 'video.mp4', data: video },
+        ...await wasmInputs(mapping, readSource, true),
+      ],
+      output: 'output.mp4',
+      duration,
+      onProgress: report,
+      ...(signal ? { signal } : {}),
+    });
+    return result.data;
+  } finally {
+    await runner.deleteFile(filterName);
+  }
 }
 
 export function wasmConcatManifest(segmentNames: readonly string[]): string {
@@ -964,6 +1038,10 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
     request;
   if (clips.length === 0) throw new Error('所选轨道为空，请选择包含片段的轨道。');
   const { width, height } = getDimensions(options, clips[0]!.media);
+  const duration = clips.reduce((total, clip) => total + clipDuration(clip), 0);
+  const mixRequired = requiresAudioMix(clips, request.audioTracks);
+  const mixTracks = request.audioTracks ?? [];
+  const hasMixedAudio = mixTracks.some((track) => track.clips.some((clip) => hasAudio(clip.media)));
   let lastReportedFraction = 0;
   const report = (update: ExportProgress): void => {
     const fraction = Math.min(1, Math.max(lastReportedFraction, update.fraction));
@@ -979,10 +1057,10 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
     // ---- 快速路线：WebCodecs 编码视频，音频优先 AAC、其次 Opus ----
     if (route === EncoderRoute.WebCodecsVideo && capabilities.webCodecsVideo) {
       report({ fraction: 0.01, message: '正在解析并启动 WebCodecs 编码…' });
-      const anyAudio = clips.some((clip) => hasAudio(clip.media));
-      let webCodecsAudioCodec = preferredWebCodecsAudioCodec(anyAudio, capabilities);
+      const anyAudio = mixRequired ? hasMixedAudio : clips.some((clip) => hasAudio(clip.media));
+      let webCodecsAudioCodec = mixRequired ? null : preferredWebCodecsAudioCodec(anyAudio, capabilities);
       let audioFallback: string | undefined;
-      if (anyAudio && webCodecsAudioCodec) {
+      if (!mixRequired && anyAudio && webCodecsAudioCodec) {
         try {
           await assertWebCodecsAudioSupported(
             clips,
@@ -994,7 +1072,7 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
           if (error instanceof WebCodecsAudioUnavailableError) audioFallback = error.message;
           else throw error;
         }
-      } else if (anyAudio) {
+      } else if (!mixRequired && anyAudio) {
         audioFallback = '此浏览器不支持 WebCodecs AAC 或 Opus 编码。';
       }
 
@@ -1049,6 +1127,50 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
       }
 
       if (encoded) {
+        if (mixRequired) {
+          if (!anyAudio) {
+            report({ fraction: 1, message: '导出完成' });
+            return {
+              data: encoded.data,
+              route: EncoderRoute.WebCodecsVideo,
+              mimeType: 'video/mp4',
+              width,
+              height,
+              codec: encoded.codec,
+              audioRoute: 'none',
+              audioCodec: null,
+            };
+          }
+          report({ fraction: 0.82, message: '正在加载 ffmpeg.wasm 多音轨混音核心…' });
+          const loaded = await runner.load(ffmpegBase, capabilities.sharedArrayBuffer, onLog, signal);
+          const threading = loaded.fellBackFromMultithreaded
+            ? '多线程核心不可用，多音轨混音改用单线程核心。'
+            : undefined;
+          report({ fraction: 0.84, message: `正在混合 ${mixTracks.length} 条音频轨道…` });
+          const data = await muxAudioTracks(
+            encoded.data,
+            mixTracks,
+            duration,
+            runner,
+            readSource,
+            (update) => report({
+              fraction: 0.84 + update.fraction * 0.16,
+              message: `正在混合 ${mixTracks.length} 条音频轨道…`,
+            }),
+            signal,
+          );
+          return {
+            data,
+            route: EncoderRoute.WebCodecsVideo,
+            mimeType: 'video/mp4',
+            width,
+            height,
+            codec: encoded.codec,
+            audioRoute: 'ffmpeg-wasm',
+            audioCodec: 'aac',
+            ...(threading ? { threading } : {}),
+          };
+        }
         if (!anyAudio || webCodecsAudioCodec) {
           report({ fraction: 1, message: '导出完成' });
           return {
@@ -1079,7 +1201,6 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
           ...await wasmInputs(mapping, readSource, true),
         ];
 
-        const duration = clips.reduce((total, clip) => total + clipDuration(clip), 0);
         const result = await runner.run({
           args: buildAudioMuxArguments(mapping.clips, 'video.mp4', audioFilterName, 'output.mp4'),
           inputs,
@@ -1110,15 +1231,38 @@ export async function exportClips(request: ExportRequest): Promise<ExportResult>
 
     // ---- 兜底路线 ----
     try {
+      const silentClips = mixRequired
+        ? clips.map((clip) => ({
+          ...clip,
+          media: { ...clip.media, audioStreamIndex: null },
+        }))
+        : clips;
       const result = await exportWithWasm(
-        { ...request, route: EncoderRoute.Wasm },
+        { ...request, clips: silentClips, audioTracks: undefined, route: EncoderRoute.Wasm },
         runner,
-        report,
+        mixRequired
+          ? (update) => report({ ...update, fraction: update.fraction * 0.82 })
+          : report,
         width,
         height,
         fellBack,
       );
-      return fellBack ? { ...result, fellBack } : result;
+      const videoResult = fellBack ? { ...result, fellBack } : result;
+      if (!mixRequired || !hasMixedAudio) return videoResult;
+      report({ fraction: 0.84, message: `正在混合 ${mixTracks.length} 条音频轨道…` });
+      const data = await muxAudioTracks(
+        videoResult.data,
+        mixTracks,
+        duration,
+        runner,
+        readSource,
+        (update) => report({
+          fraction: 0.84 + update.fraction * 0.16,
+          message: `正在混合 ${mixTracks.length} 条音频轨道…`,
+        }),
+        signal,
+      );
+      return { ...videoResult, data, audioRoute: 'ffmpeg-wasm', audioCodec: 'aac' };
     } catch (error) {
       if (!fellBack) throw error;
       const detail = error instanceof Error ? error.message : String(error);

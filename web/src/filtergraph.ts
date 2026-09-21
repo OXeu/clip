@@ -13,6 +13,7 @@ import {
   type MediaInfo,
   type VideoClip,
   VideoEncoder,
+  clipVolume,
   clipDuration,
   getDimensions,
   hasAudio,
@@ -70,7 +71,9 @@ const silenceChain = (clip: VideoClip): string =>
 
 const audioClipChain = (clip: VideoClip): string =>
   `atrim=start=${n(clip.start)}:end=${n(clip.end)},asetpts=PTS-STARTPTS,` +
-  `${buildTempoFilter(clip.speed)},apad,atrim=duration=${n(clipDuration(clip))}`;
+  `${buildTempoFilter(clip.speed)}` +
+  (Math.abs(clipVolume(clip) - 1) < 0.000001 ? '' : `,volume=${n(clipVolume(clip))}`) +
+  `,apad,atrim=duration=${n(clipDuration(clip))}`;
 
 const videoClipChain = (clip: VideoClip, width: number, height: number, fps: number): string =>
   `trim=start=${n(clip.start)}:end=${n(clip.end)},settb=AVTB,setpts=(PTS-STARTPTS)/${n(clip.speed)},` +
@@ -99,6 +102,12 @@ function validate(clips: readonly VideoClip[], options: ExportOptions): void {
 export interface FilterBuildOverrides {
   readonly outputFrameRate?: number;
   readonly forceAudio?: boolean;
+}
+
+export interface AudioMixTrack {
+  readonly clips: readonly VideoClip[];
+  /** 线性轨道增益；与每段 clip.volume 相乘。 */
+  readonly volume?: number;
 }
 
 export function buildFilter(
@@ -185,6 +194,64 @@ export function buildAudioFilter(clips: readonly VideoClip[]): string {
   return lines.join('\n');
 }
 
+/**
+ * 把同一视频组内的多条音频轨按各自时间线先拼接、补齐，再等增益混合。
+ * 输入 0 保留给已经编码好的无声视频，音频素材从输入 1 开始。
+ */
+export function buildMixedAudioFilter(
+  tracks: readonly AudioMixTrack[],
+  outputDuration: number,
+): string {
+  if (!Number.isFinite(outputDuration) || outputDuration <= 0) throw new Error('混音时长无效。');
+  const mixedTracks = tracks.filter((track) => track.clips.some((clip) => hasAudio(clip.media)));
+  if (mixedTracks.length === 0) throw new Error('没有可混合的音频轨道。');
+  for (const track of mixedTracks) {
+    const volume = track.volume ?? 1;
+    if (!Number.isFinite(volume) || volume < 0 || volume > 2) throw new Error('轨道音量必须在 0%–200% 之间。');
+    for (const clip of track.clips) validateClip(clip);
+  }
+
+  const positions = mixedTracks.flatMap((track, trackIndex) =>
+    track.clips.map((clip, clipIndex) => ({ clip, trackIndex, clipIndex })));
+  const sources = distinctSources(positions.map((position) => position.clip)).filter((source) => hasAudio(source));
+  const lines: string[] = [];
+
+  sources.forEach((source, sourceIndex) => {
+    const occurrences = positions.filter((position) => sameSource(position.clip.media, source));
+    lines.push(
+      `[${sourceIndex + 1}:${source.audioStreamIndex}]asetpts=PTS-(${n(source.videoTimestampOffset)})/TB,` +
+        'aresample=48000:async=1:first_pts=0,' +
+        'aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,apad,' +
+        `asplit=${occurrences.length}` +
+        occurrences.map((position) => `[as${position.trackIndex}_${position.clipIndex}]`).join('') +
+        ';',
+    );
+  });
+
+  mixedTracks.forEach((track, trackIndex) => {
+    track.clips.forEach((clip, clipIndex) => {
+      const output = `[a${trackIndex}_${clipIndex}]`;
+      lines.push(hasAudio(clip.media)
+        ? `[as${trackIndex}_${clipIndex}]${audioClipChain(clip)}${output};`
+        : `${silenceChain(clip)}${output};`);
+    });
+    const inputs = track.clips.map((_, clipIndex) => `[a${trackIndex}_${clipIndex}]`).join('');
+    const joined = track.clips.length === 1
+      ? `${inputs}anull`
+      : `${inputs}concat=n=${track.clips.length}:v=0:a=1`;
+    const trackGain = track.volume ?? 1;
+    const gain = Math.abs(trackGain - 1) < 0.000001 ? '' : `,volume=${n(trackGain)}`;
+    lines.push(`${joined}${gain},apad,atrim=duration=${n(outputDuration)}[atrack${trackIndex}];`);
+  });
+
+  const mixInputs = mixedTracks.map((_, index) => `[atrack${index}]`).join('');
+  lines.push(mixedTracks.length === 1
+    ? `${mixInputs}anull[audio]`
+    : `${mixInputs}amix=inputs=${mixedTracks.length}:duration=longest:dropout_transition=0:normalize=0,` +
+      `alimiter=limit=0.95,atrim=duration=${n(outputDuration)}[audio]`);
+  return lines.join('\n');
+}
+
 /** 兜底路线：与桌面端 BuildArguments 相同，但强制软件编码且不带 NVDEC。 */
 export function buildWasmExportArguments(
   clips: readonly VideoClip[],
@@ -226,6 +293,29 @@ export function buildAudioMuxArguments(
   output: string,
 ): string[] {
   const sources = distinctSources(clips).filter((source) => hasAudio(source));
+  const args = [
+    '-hide_banner', '-nostdin', '-y', '-loglevel', 'warning', '-copyts', '-start_at_zero',
+    '-i', videoInput,
+  ];
+  for (const media of sources) args.push('-i', media.path);
+  args.push(
+    '-filter_complex_script', filterFile,
+    '-map', '0:v', '-map', '[audio]',
+    '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
+    '-map_metadata', '-1', '-movflags', '+faststart',
+    output,
+  );
+  return args;
+}
+
+/** 多音轨混音路线：输入顺序与 buildMixedAudioFilter 完全一致。 */
+export function buildMixedAudioMuxArguments(
+  tracks: readonly AudioMixTrack[],
+  videoInput: string,
+  filterFile: string,
+  output: string,
+): string[] {
+  const sources = distinctSources(tracks.flatMap((track) => track.clips)).filter((source) => hasAudio(source));
   const args = [
     '-hide_banner', '-nostdin', '-y', '-loglevel', 'warning', '-copyts', '-start_at_zero',
     '-i', videoInput,

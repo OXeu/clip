@@ -31,19 +31,25 @@ import {
   type SubtitleRegion,
   type VideoClip,
   type VideoTrack,
+  ClipKind,
   EditProject,
   MAXIMUM_SPEED,
+  MAXIMUM_VOLUME,
   MINIMUM_SPEED,
+  MINIMUM_VOLUME,
   SubtitleVerticalAlignment,
   TrackKind,
   VideoEncoder,
   clipDuration,
+  clipVolume,
   defaultExportOptions,
   displayName,
   fileName,
+  hasAudio,
   hasVideo,
   subtitleCues,
   trackDuration,
+  trackVolume,
 } from './model.ts';
 import { probeFile } from './probe.ts';
 import {
@@ -123,6 +129,7 @@ const video = $<HTMLVideoElement>('preview');
 const previewFrame = $<HTMLCanvasElement>('preview-frame');
 const previewRegion = $('preview-region');
 const previewCanvas = $('preview-canvas');
+const subtitleExportLayer = $('subtitle-export-layer');
 const audioPreview = $('audio-preview');
 const audioPreviewName = $('audio-preview-name');
 const subtitleOverlay = $('subtitle-overlay');
@@ -171,11 +178,24 @@ const clipContextMenu = $('clip-context-menu');
 const clipSpeedCurrent = $('clip-speed-current');
 const speedPresetButtons = Array.from(clipContextMenu.querySelectorAll<HTMLButtonElement>('[data-speed]'));
 const customSpeedButton = $<HTMLButtonElement>('custom-speed-button');
+const clipVolumeActions = $('clip-volume-actions');
+const clipVolumeCurrent = $<HTMLOutputElement>('clip-volume-current');
+const clipVolumeSlider = $<HTMLInputElement>('clip-volume-slider');
+const clipVolumeResetButton = $<HTMLButtonElement>('clip-volume-reset');
 const trackContextMenu = $('track-context-menu');
 const trackContextTitle = $('track-context-title');
+const addAudioTrackButton = $<HTMLButtonElement>('add-audio-track');
 const addSubtitleTrackButton = $<HTMLButtonElement>('add-subtitle-track');
 const recognizeSubtitlesButton = $<HTMLButtonElement>('recognize-subtitles');
+const audioTrackActions = $('audio-track-actions');
+const trackVolumeCurrent = $<HTMLOutputElement>('track-volume-current');
+const trackVolumeSlider = $<HTMLInputElement>('track-volume-slider');
+const trackVolumeResetButton = $<HTMLButtonElement>('track-volume-reset');
+const importAudioTrackButton = $<HTMLButtonElement>('import-audio-track');
+const deleteAudioTrackButton = $<HTMLButtonElement>('delete-audio-track');
 const subtitleAlignmentActions = $('subtitle-alignment-actions');
+const fillSubtitleGapsButton = $<HTMLButtonElement>('fill-subtitle-gaps');
+const deleteSubtitleTrackButton = $<HTMLButtonElement>('delete-subtitle-track');
 const subtitleAlignButtons = Array.from(trackContextMenu.querySelectorAll<HTMLButtonElement>('[data-alignment]'));
 const subtitleCueActions = $('subtitle-cue-actions');
 const editSubtitleCueButton = $<HTMLButtonElement>('edit-subtitle-cue');
@@ -187,7 +207,10 @@ const speedValidation = $('speed-validation');
 const speedCancelButton = $<HTMLButtonElement>('speed-cancel');
 const exportDialog = $<HTMLDialogElement>('export-dialog');
 const settingsDialog = $<HTMLDialogElement>('settings-dialog');
+const settingsForm = $<HTMLFormElement>('settings-form');
+const settingsEncoder = $<HTMLSelectElement>('settings-encoder');
 const settingsAsrKey = $<HTMLInputElement>('settings-asr-key');
+const settingsAsrKeyToggle = $<HTMLButtonElement>('settings-asr-key-toggle');
 const recoveryDialog = $<HTMLDialogElement>('recovery-dialog');
 const recoveryDiscardDialog = $<HTMLDialogElement>('recovery-discard-dialog');
 const recoveryInput = $<HTMLInputElement>('recovery-file-input');
@@ -221,9 +244,12 @@ const timeline = new TimelineView(canvas, timelineScroll, {
   onContextSubtitle: (cueId, trackId, clientX, clientY) =>
     openTrackContextMenu(trackId, cueId, clientX, clientY),
   onCreateSubtitle: (trackId, time) => createSubtitle(trackId, time),
+  onSelectSubtitleTrack: (trackId) => selectSubtitleTrack(trackId),
   onSelectSubtitle: (cueId) => selectSubtitle(cueId),
   onEditSubtitle: (cueId) => editSubtitle(cueId),
   onMoveSubtitle: (cueId, start, end) => moveSubtitle(cueId, start, end),
+  onToggleAudioDisplay: (_trackId, mode) =>
+    status(mode === 'waveform' ? '音频槽已切换为响度线' : '音频槽已切换为名称'),
 });
 timeline.setProject(project);
 settingsAsrKey.value = sessionStorage.getItem('clip.tencent-asr-key') ?? '';
@@ -342,7 +368,7 @@ function scheduleSessionSave(): void {
 
 // ---------- 导入 ----------
 
-async function importFiles(list: readonly File[]): Promise<void> {
+async function importFiles(list: readonly File[], targetAudioTrackId: string | null = null): Promise<void> {
   if (operation) return;
   pause();
   const controller = beginOperation('正在导入素材…');
@@ -376,12 +402,18 @@ async function importFiles(list: readonly File[]): Promise<void> {
         // 同一素材只登记一次；重复导入会新建轨道但复用源文件。
         const existing = project.sources.find((source) => source.path === probe.media.path);
         const source = existing ?? probe.media;
-        const separated = hasVideo(source)
-          ? project.importSeparated(source)
-          : project.importAudio(source);
-        lastClipId = hasVideo(source)
-          ? separated.videoTrack.clips[0]!.id
-          : separated.audioTrack.clips[0]!.id;
+        if (targetAudioTrackId) {
+          if (!hasAudio(source)) throw new Error(`${file.name} 中没有可导入的音频。`);
+          lastClipId = project.importAudioToTrack(source, targetAudioTrackId) ?? null;
+          if (!lastClipId) throw new Error('目标音频轨道不存在。');
+        } else {
+          const separated = hasVideo(source)
+            ? project.importSeparated(source)
+            : project.importAudio(source);
+          lastClipId = hasVideo(source)
+            ? separated.videoTrack.clips[0]!.id
+            : separated.audioTrack.clips[0]!.id;
+        }
         if (!hasVideo(source)) importedAudio++;
         if (probe.media.audioStreamIndex !== null) {
           try {
@@ -424,7 +456,9 @@ async function importFiles(list: readonly File[]): Promise<void> {
     if (found) activatePreview(found, false);
   }
   status(imported > 0
-    ? `已导入 ${imported} 个素材${importedAudio > 0 ? ` · ${importedAudio} 个普通音频已放入空视频轨的伴生轨` : ' · 有声音的素材已自动分轨'}`
+    ? targetAudioTrackId
+      ? `已向音频轨道导入 ${imported} 个素材 · 导出时将与同组音轨混合`
+      : `已导入 ${imported} 个素材${importedAudio > 0 ? ` · ${importedAudio} 个普通音频已放入空视频轨的伴生轨` : ' · 有声音的素材已自动分轨'}`
     : '未导入任何素材');
   if (failures.length > 0) {
     await showAlert('部分素材未导入', `${failures.join('\n')}\n\n其余素材已保留，可继续编辑。`);
@@ -481,9 +515,8 @@ let subtitleRegionGesture: {
 const MIN_PREVIEW_ZOOM = 0.25;
 const MAX_PREVIEW_ZOOM = 4;
 
-function subtitleVideoBounds(): { left: number; top: number; width: number; height: number } | null {
-  if (!selectedSubtitleTrackId) return null;
-  const videoTrack = videoForTrack(selectedSubtitleTrackId);
+function videoBoundsForTrack(trackId: string): { left: number; top: number; width: number; height: number } | null {
+  const videoTrack = videoForTrack(trackId);
   const media = videoTrack?.clips[0]?.media;
   const width = previewCanvas.clientWidth;
   const height = previewCanvas.clientHeight;
@@ -499,6 +532,10 @@ function subtitleVideoBounds(): { left: number; top: number; width: number; heig
     width: baseWidth * previewZoom,
     height: baseHeight * previewZoom,
   };
+}
+
+function subtitleVideoBounds(): { left: number; top: number; width: number; height: number } | null {
+  return selectedSubtitleTrackId ? videoBoundsForTrack(selectedSubtitleTrackId) : null;
 }
 
 function showSubtitleGuides(centerX: boolean, centerY: boolean): void {
@@ -528,17 +565,49 @@ function renderSubtitleRegion(region: SubtitleRegion): void {
   subtitleOverlay.dataset.alignment = region.alignment;
 }
 
+function renderExportSubtitle(track: VideoTrack, text: string): void {
+  const region = track.subtitleRegion;
+  const bounds = region ? videoBoundsForTrack(track.id) : null;
+  if (!region || !bounds) return;
+  const item = document.createElement('div');
+  item.className = 'subtitle-export-item';
+  item.dataset.alignment = region.alignment;
+  item.style.left = `${bounds.left + region.x * bounds.width}px`;
+  item.style.top = `${bounds.top + region.y * bounds.height}px`;
+  item.style.width = `${region.width * bounds.width}px`;
+  item.style.height = `${region.height * bounds.height}px`;
+  const content = document.createElement('div');
+  content.className = 'subtitle-preview-text';
+  content.textContent = text;
+  item.append(content);
+  subtitleExportLayer.append(item);
+}
+
 function refreshSubtitleOverlay(): void {
   const track = selectedSubtitleTrackId ? project.findTrack(selectedSubtitleTrackId) : undefined;
-  const region = track?.kind === TrackKind.Subtitle ? track.subtitleRegion : null;
+  const editingTrack = track?.kind === TrackKind.Subtitle
+    && (selectedTrackId === track.id || project.findSubtitle(selectedSubtitleId ?? '')?.trackId === track.id)
+    ? track
+    : undefined;
+  subtitleExportLayer.textContent = '';
+  subtitleExportLayer.hidden = previewFrame.hidden;
+  const previewVideo = videoForTrack(activeTrackId);
+  if (!previewFrame.hidden && previewVideo) {
+    for (const subtitleTrack of project.subtitleTracks(previewVideo.id)) {
+      if (subtitleTrack.id === editingTrack?.id) continue;
+      const cue = subtitleCues(subtitleTrack).find((candidate) => position >= candidate.start && position < candidate.end);
+      if (cue) renderExportSubtitle(subtitleTrack, cue.text);
+    }
+  }
+  const region = editingTrack?.subtitleRegion ?? null;
   const bounds = region ? subtitleVideoBounds() : null;
   subtitleOverlay.hidden = !region || !bounds || previewFrame.hidden;
   if (!region || !bounds) {
     showSubtitleGuides(false, false);
     return;
   }
-  const current = subtitleCues(track!).find((cue) => position >= cue.start && position < cue.end)
-    ?? (selectedSubtitleId ? subtitleCues(track!).find((cue) => cue.id === selectedSubtitleId) : undefined);
+  const current = subtitleCues(editingTrack!).find((cue) => position >= cue.start && position < cue.end)
+    ?? (selectedSubtitleId ? subtitleCues(editingTrack!).find((cue) => cue.id === selectedSubtitleId) : undefined);
   subtitlePreviewText.textContent = current?.text ?? '字幕预览';
   renderSubtitleRegion(region);
 }
@@ -837,6 +906,7 @@ function selectClip(clipId: string, time: number): void {
   if (!found) return;
   selectedTrackId = null;
   selectedSubtitleId = null;
+  selectedSubtitleTrackId = null;
   const clip = found.clip;
   const source = Math.min(
     Math.max(clip.start + (time - found.timelineStart) * clip.speed, clip.start),
@@ -850,12 +920,15 @@ function selectClipForContextMenu(clipId: string): boolean {
   selectedTrackId = null;
   selectedClipId = clipId;
   selectedSubtitleId = null;
+  selectedSubtitleTrackId = null;
   refresh();
   return true;
 }
 
 function selectTrack(trackId: string, time: number): void {
   if (operation || !project.findTrack(trackId)) return;
+  selectedSubtitleId = null;
+  selectedSubtitleTrackId = null;
   selectedTrackId = trackId;
   seek(trackId, time);
   status('已选中整条轨道');
@@ -1056,6 +1129,40 @@ function setSelectedSpeed(speed: number): void {
   refresh();
 }
 
+const volumePercent = (volume: number): number => Math.round(volume * 100);
+
+function updateVolumeControl(input: HTMLInputElement, output: HTMLOutputElement, percent: number): void {
+  const clamped = Math.min(200, Math.max(0, Math.round(percent)));
+  input.value = String(clamped);
+  input.style.setProperty('--volume-position', `${clamped / 2}%`);
+  output.value = `${clamped}%`;
+}
+
+function setSelectedClipVolume(percent: number): void {
+  if (operation || !selectedClipId || !Number.isFinite(percent)) return;
+  const volume = percent / 100;
+  if (volume < MINIMUM_VOLUME || volume > MAXIMUM_VOLUME) return;
+  const found = project.findClip(selectedClipId);
+  const track = found ? project.findTrack(found.trackId) : undefined;
+  if (!found || track?.kind !== TrackKind.Audio) return;
+  updateVolumeControl(clipVolumeSlider, clipVolumeCurrent, percent);
+  if (!project.setClipVolume(selectedClipId, volume)) return;
+  const absolute = volumePercent(volume * trackVolume(track));
+  status(`素材音量 ${Math.round(percent)}% · 当前绝对音量 ${absolute}% · 可撤销`);
+  refresh();
+}
+
+function setSelectedTrackVolume(percent: number): void {
+  const trackId = trackContextMenu.dataset.trackId;
+  if (operation || !trackId || !Number.isFinite(percent)) return;
+  const volume = percent / 100;
+  if (volume < MINIMUM_VOLUME || volume > MAXIMUM_VOLUME) return;
+  updateVolumeControl(trackVolumeSlider, trackVolumeCurrent, percent);
+  if (!project.setTrackVolume(trackId, volume)) return;
+  status(`轨道音量 ${Math.round(percent)}% · 将与各素材音量相乘 · 可撤销`);
+  refresh();
+}
+
 function closeClipContextMenu(): void {
   clipContextMenu.hidden = true;
 }
@@ -1075,15 +1182,23 @@ function videoForTrack(trackId: string): VideoTrack | undefined {
 function selectSubtitle(cueId: string): void {
   if (operation) return;
   const found = project.findSubtitle(cueId);
-  const videoTrack = found ? videoForTrack(found.trackId) : undefined;
-  if (!found || !videoTrack) return;
-  pause();
-  seek(videoTrack.id, found.cue.start);
+  if (!found) return;
   selectedClipId = null;
   selectedTrackId = found.trackId;
   selectedSubtitleId = cueId;
   selectedSubtitleTrackId = found.trackId;
   status('已选中字幕 · 拖动两侧调整时间，双击编辑内容');
+  refresh();
+}
+
+function selectSubtitleTrack(trackId: string): void {
+  const track = project.findTrack(trackId);
+  if (operation || track?.kind !== TrackKind.Subtitle) return;
+  selectedClipId = null;
+  selectedTrackId = trackId;
+  selectedSubtitleId = null;
+  selectedSubtitleTrackId = trackId;
+  status('已选中字幕轨道 · 预览框可拖动和缩放');
   refresh();
 }
 
@@ -1167,13 +1282,22 @@ function openTrackContextMenu(
   closeTrackContextMenu();
   const track = project.findTrack(trackId);
   if (!track || operation) return;
-  selectedSubtitleTrackId = track.kind === TrackKind.Subtitle ? track.id : selectedSubtitleTrackId;
-  selectedSubtitleId = cueId;
+  selectedTrackId = track.id;
+  selectedClipId = null;
+  selectedSubtitleTrackId = track.kind === TrackKind.Subtitle ? track.id : null;
+  selectedSubtitleId = track.kind === TrackKind.Subtitle ? cueId : null;
   trackContextTitle.textContent = track.kind === TrackKind.Video
     ? '视频轨道' : track.kind === TrackKind.Audio ? '音频轨道' : '字幕轨道';
+  addAudioTrackButton.hidden = track.kind !== TrackKind.Video;
   addSubtitleTrackButton.hidden = track.kind !== TrackKind.Video;
   recognizeSubtitlesButton.hidden = track.kind !== TrackKind.Audio || track.clips.length === 0;
+  audioTrackActions.hidden = track.kind !== TrackKind.Audio;
+  if (track.kind === TrackKind.Audio) {
+    const percent = volumePercent(trackVolume(track));
+    updateVolumeControl(trackVolumeSlider, trackVolumeCurrent, percent);
+  }
   subtitleAlignmentActions.hidden = track.kind !== TrackKind.Subtitle;
+  fillSubtitleGapsButton.disabled = track.kind !== TrackKind.Subtitle || subtitleCues(track).length < 2;
   subtitleCueActions.hidden = cueId === null;
   const alignment = track.subtitleRegion?.alignment;
   for (const button of subtitleAlignButtons) {
@@ -1188,6 +1312,31 @@ function openTrackContextMenu(
   refreshSubtitleOverlay();
 }
 
+function fillSubtitleGapsFromMenu(): void {
+  const trackId = trackContextMenu.dataset.trackId;
+  closeTrackContextMenu();
+  if (!trackId) return;
+  if (project.fillSubtitleGaps(trackId)) {
+    selectedTrackId = trackId;
+    selectedSubtitleTrackId = trackId;
+    status('已将每条字幕延伸到下一条字幕开始 · 可撤销');
+    refresh();
+  } else {
+    status('字幕之间没有可填充的空隙');
+  }
+}
+
+function deleteSubtitleTrackFromMenu(): void {
+  const trackId = trackContextMenu.dataset.trackId;
+  closeTrackContextMenu();
+  if (!trackId || !project.deleteSubtitleTrack(trackId)) return;
+  if (selectedTrackId === trackId) selectedTrackId = null;
+  if (selectedSubtitleTrackId === trackId) selectedSubtitleTrackId = null;
+  selectedSubtitleId = null;
+  status('字幕轨道已删除 · 可撤销');
+  refresh();
+}
+
 function addSubtitleTrackFromMenu(): void {
   const videoId = trackContextMenu.dataset.trackId;
   closeTrackContextMenu();
@@ -1196,8 +1345,62 @@ function addSubtitleTrackFromMenu(): void {
   if (!track) return;
   selectedSubtitleTrackId = track.id;
   selectedSubtitleId = null;
+  selectedTrackId = track.id;
+  selectedClipId = null;
   timeline.expandVideoTrack(videoId);
   status('已添加字幕伴生轨 · 单击轨道创建字幕');
+  refresh();
+}
+
+let pendingAudioImportTrackId: string | null = null;
+
+function chooseAudioForTrack(trackId: string): void {
+  const track = project.findTrack(trackId);
+  if (!track || track.kind !== TrackKind.Audio || operation) return;
+  pendingAudioImportTrackId = trackId;
+  fileInput.click();
+}
+
+function addAudioTrackFromMenu(): void {
+  const videoId = trackContextMenu.dataset.trackId;
+  closeTrackContextMenu();
+  if (!videoId) return;
+  const track = project.addAudioTrack(videoId);
+  if (!track) return;
+  selectedTrackId = track.id;
+  selectedClipId = null;
+  selectedSubtitleTrackId = null;
+  selectedSubtitleId = null;
+  timeline.expandVideoTrack(videoId);
+  status('已添加音频轨道 · 请选择 BGM 或其他音频素材');
+  refresh();
+  chooseAudioForTrack(track.id);
+}
+
+function importAudioToTrackFromMenu(): void {
+  const trackId = trackContextMenu.dataset.trackId;
+  closeTrackContextMenu();
+  if (trackId) chooseAudioForTrack(trackId);
+}
+
+function deleteAudioTrackFromMenu(): void {
+  const trackId = trackContextMenu.dataset.trackId;
+  closeTrackContextMenu();
+  if (!trackId) return;
+  const parentVideoId = videoForTrack(trackId)?.id;
+  const wasActive = activeTrackId === trackId;
+  if (!project.deleteAudioTrack(trackId)) return;
+  if (selectedTrackId === trackId) selectedTrackId = null;
+  selectedClipId = null;
+  if (wasActive) {
+    pause();
+    activeTrackId = parentVideoId ?? project.mainTrack.id;
+    const parent = project.findTrack(activeTrackId);
+    const preview = parent ? project.locate(parent.id, Math.min(position, trackDuration(parent))) : undefined;
+    if (preview) activatePreview(preview, false);
+    else playbackClipId = null;
+  }
+  status('音频轨道已删除 · 可撤销');
   refresh();
 }
 
@@ -1213,8 +1416,8 @@ async function recognizeSelectedAudio(requestedTrackId?: string): Promise<void> 
   }
   const apiKey = settingsAsrKey.value.trim();
   if (!apiKey) {
-    settingsDialog.showModal();
-    settingsAsrKey.focus();
+    openSettings();
+    queueMicrotask(() => settingsAsrKey.focus({ preventScroll: true }));
     status('请先填写腾讯云 ASR API Key。');
     return;
   }
@@ -1262,10 +1465,17 @@ function openClipContextMenu(clipId: string | null, clientX: number, clientY: nu
   const found = project.findClip(clipId);
   if (!found) return;
   const speed = found.clip.speed;
+  const track = project.findTrack(found.trackId);
+  const audioClip = track?.kind === TrackKind.Audio;
   clipSpeedCurrent.textContent = `${speed.toFixed(3).replace(/\.?0+$/, '')}×`;
   for (const button of speedPresetButtons) {
     const selected = Math.abs(Number(button.dataset.speed) - speed) < 0.000001;
     button.setAttribute('aria-checked', String(selected));
+  }
+  clipVolumeActions.hidden = !audioClip;
+  if (audioClip) {
+    const percent = volumePercent(clipVolume(found.clip));
+    updateVolumeControl(clipVolumeSlider, clipVolumeCurrent, percent);
   }
   clipContextMenu.hidden = false;
   const bounds = clipContextMenu.getBoundingClientRect();
@@ -1351,7 +1561,7 @@ function refresh(): void {
   const seconds = track ? trackDuration(track) : 0;
   const bound = project.bindingTracks(track.id).length;
   const trackType = track.kind === 'audio'
-    ? (track.companionGroupId ? '伴生音频槽' : '音频轨')
+    ? (track.companionGroupId ? '伴生音频轨' : '音频轨')
     : (track.companionGroupId ? '视频轨 · 含伴生音频' : '视频轨');
   timelineSummary.textContent = `${trackType} · ${clips} 片段 · ${seconds.toFixed(2)} 秒${bound > 1 ? ` · 对齐组 ${bound} 轨` : ''}`;
   document.title = hasMedia ? `${project.sources.length} 个素材 — 视频剪辑` : 'Clip · 视频剪辑';
@@ -1584,6 +1794,32 @@ const emptyCapabilities = (): Capabilities => ({
   notes: [],
 });
 
+function audioTracksForExport(
+  track: VideoTrack,
+): readonly { readonly clips: readonly VideoClip[]; readonly volume?: number }[] | undefined {
+  const separated = Boolean(track.companionGroupId)
+    || track.clips.some((clip) => clip.kind === ClipKind.Video);
+  if (!separated) return undefined;
+  return project.audioTracks(track.id).map((audio, index) => {
+    // 第一条分离音轨是视频原声的可视化槽。仍由视频片段决定其剪切与倍速，
+    // 保持既有“删除只影响当前片段”的语义；后续音轨才是独立 BGM/伴声。
+    const followsVideo = index === 0 && audio.clips.length > 0 && track.clips.length > 0
+      && audio.clips[0]!.media.path.toLowerCase() === track.clips[0]!.media.path.toLowerCase();
+    return {
+      volume: trackVolume(audio),
+      clips: followsVideo
+        ? track.clips.map((clip) => {
+          const source = audio.clips.find((candidate) =>
+            candidate.media.path.toLowerCase() === clip.media.path.toLowerCase()
+            && Math.abs(candidate.start - clip.start) < 0.000001
+            && Math.abs(candidate.end - clip.end) < 0.000001);
+          return { ...clip, kind: ClipKind.Audio, volume: source ? clipVolume(source) : 1 };
+        })
+        : audio.clips,
+    };
+  });
+}
+
 async function runExport(
   track: VideoTrack,
   options: ExportOptions,
@@ -1597,6 +1833,7 @@ async function runExport(
   try {
     const result = await exportClips({
       clips,
+      audioTracks: audioTracksForExport(track),
       subtitles: project.subtitleTracks(track.id)
         .map((subtitle) => subtitleRenderTrack(subtitle))
         .filter((subtitle) => subtitle !== null),
@@ -1884,19 +2121,23 @@ function offerRecovery(): void {
 
 function openSettings(): void {
   applyCapabilities();
-  const select = $<HTMLSelectElement>('settings-encoder');
-  select.value = route;
-  const onClose = (): void => {
-    route = select.value as EncoderRoute | 'auto';
-    localStorage.setItem('clip.encoder', route);
-    const apiKey = settingsAsrKey.value.trim();
-    if (apiKey) sessionStorage.setItem('clip.tencent-asr-key', apiKey);
-    else sessionStorage.removeItem('clip.tencent-asr-key');
-    settingsDialog.removeEventListener('close', onClose);
-  };
-  settingsDialog.addEventListener('close', onClose);
-  $('settings-close').addEventListener('click', () => settingsDialog.close(), { once: true });
-  settingsDialog.showModal();
+  settingsEncoder.value = route;
+  if (!settingsDialog.open) settingsDialog.showModal();
+}
+
+function saveSettings(): void {
+  route = settingsEncoder.value as EncoderRoute | 'auto';
+  localStorage.setItem('clip.encoder', route);
+  const apiKey = settingsAsrKey.value.trim();
+  if (apiKey) sessionStorage.setItem('clip.tencent-asr-key', apiKey);
+  else sessionStorage.removeItem('clip.tencent-asr-key');
+}
+
+function setAsrKeyVisible(visible: boolean): void {
+  settingsAsrKey.type = visible ? 'text' : 'password';
+  settingsAsrKeyToggle.textContent = visible ? '隐藏' : '显示';
+  settingsAsrKeyToggle.setAttribute('aria-label', `${visible ? '隐藏' : '显示'} API Key`);
+  settingsAsrKeyToggle.setAttribute('aria-pressed', String(visible));
 }
 
 function setMoreMenuOpen(open: boolean, moveFocus = false): void {
@@ -1913,8 +2154,14 @@ function moreMenuItems(): HTMLButtonElement[] {
 
 // ---------- 事件绑定 ----------
 
-importButton.addEventListener('click', () => fileInput.click());
-emptyImportButton.addEventListener('click', () => fileInput.click());
+importButton.addEventListener('click', () => {
+  pendingAudioImportTrackId = null;
+  fileInput.click();
+});
+emptyImportButton.addEventListener('click', () => {
+  pendingAudioImportTrackId = null;
+  fileInput.click();
+});
 moreButton.addEventListener('click', () => setMoreMenuOpen(moreMenu.hidden, moreMenu.hidden));
 moreButton.addEventListener('keydown', (event) => {
   if (event.key !== 'ArrowDown' && event.key !== 'Enter' && event.key !== ' ') return;
@@ -1947,6 +2194,8 @@ document.addEventListener('pointerdown', (event) => {
   if (!trackContextMenu.hidden && !trackContextMenu.contains(event.target as Node)) closeTrackContextMenu();
 });
 clipContextMenu.addEventListener('keydown', (event) => {
+  if (event.target instanceof HTMLInputElement && event.target.type === 'range'
+    && event.key !== 'Escape' && event.key !== 'Tab') return;
   const items = Array.from(clipContextMenu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
   const current = items.indexOf(document.activeElement as HTMLButtonElement);
   let next = current;
@@ -1966,6 +2215,8 @@ clipContextMenu.addEventListener('keydown', (event) => {
   items[next]?.focus({ preventScroll: true });
 });
 trackContextMenu.addEventListener('keydown', (event) => {
+  if (event.target instanceof HTMLInputElement && event.target.type === 'range'
+    && event.key !== 'Escape' && event.key !== 'Tab') return;
   const items = Array.from(trackContextMenu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
     .filter((button) => button.offsetParent !== null);
   const current = items.indexOf(document.activeElement as HTMLButtonElement);
@@ -1980,6 +2231,19 @@ trackContextMenu.addEventListener('keydown', (event) => {
   } else return;
   event.preventDefault();
   items[next]?.focus({ preventScroll: true });
+});
+settingsForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  saveSettings();
+  settingsDialog.close('confirm');
+});
+settingsDialog.addEventListener('close', () => {
+  saveSettings();
+  setAsrKeyVisible(false);
+});
+settingsAsrKeyToggle.addEventListener('click', () => {
+  setAsrKeyVisible(settingsAsrKey.type === 'password');
+  settingsAsrKey.focus({ preventScroll: true });
 });
 moreSettingsButton.addEventListener('click', () => {
   setMoreMenuOpen(false);
@@ -1997,8 +2261,10 @@ saveProjectButton.addEventListener('click', () => {
 });
 fileInput.addEventListener('change', () => {
   const list = Array.from(fileInput.files ?? []);
+  const targetAudioTrackId = pendingAudioImportTrackId;
+  pendingAudioImportTrackId = null;
   fileInput.value = '';
-  if (list.length > 0) void importFiles(list);
+  if (list.length > 0) void importFiles(list, targetAudioTrackId);
 });
 projectFileInput.addEventListener('change', () => {
   const file = projectFileInput.files?.[0];
@@ -2061,8 +2327,23 @@ for (const button of speedPresetButtons) {
   button.addEventListener('click', () => setSelectedSpeed(Number(button.dataset.speed)));
 }
 customSpeedButton.addEventListener('click', openCustomSpeedDialog);
+clipVolumeSlider.addEventListener('input', () => {
+  updateVolumeControl(clipVolumeSlider, clipVolumeCurrent, clipVolumeSlider.valueAsNumber);
+});
+clipVolumeSlider.addEventListener('change', () => setSelectedClipVolume(clipVolumeSlider.valueAsNumber));
+clipVolumeResetButton.addEventListener('click', () => setSelectedClipVolume(100));
+trackVolumeSlider.addEventListener('input', () => {
+  updateVolumeControl(trackVolumeSlider, trackVolumeCurrent, trackVolumeSlider.valueAsNumber);
+});
+trackVolumeSlider.addEventListener('change', () => setSelectedTrackVolume(trackVolumeSlider.valueAsNumber));
+trackVolumeResetButton.addEventListener('click', () => setSelectedTrackVolume(100));
+addAudioTrackButton.addEventListener('click', addAudioTrackFromMenu);
 addSubtitleTrackButton.addEventListener('click', addSubtitleTrackFromMenu);
 recognizeSubtitlesButton.addEventListener('click', () => void recognizeSelectedAudio());
+importAudioTrackButton.addEventListener('click', importAudioToTrackFromMenu);
+deleteAudioTrackButton.addEventListener('click', deleteAudioTrackFromMenu);
+fillSubtitleGapsButton.addEventListener('click', fillSubtitleGapsFromMenu);
+deleteSubtitleTrackButton.addEventListener('click', deleteSubtitleTrackFromMenu);
 recognizeSelectedAudioButton.addEventListener('click', () => {
   if (selectedTrackId) void recognizeSelectedAudio(selectedTrackId);
 });
@@ -2246,6 +2527,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (modifier && event.key.toLowerCase() === 'o') {
     event.preventDefault();
+    pendingAudioImportTrackId = null;
     fileInput.click();
     return;
   }
@@ -2459,6 +2741,7 @@ void (async () => {
         void media;
         return exportClips({
           clips,
+          audioTracks: audioTracksForExport(project.findTrack(trackId)!),
           subtitles: project.subtitleTracks(trackId)
             .map((subtitle) => subtitleRenderTrack(subtitle))
             .filter((subtitle) => subtitle !== null),

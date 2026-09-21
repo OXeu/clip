@@ -8,6 +8,7 @@ import {
   FrameQueue,
   mapWasmMedia,
   preferredWebCodecsAudioCodec,
+  requiresAudioMix,
   videoMuxerReadinessError,
   wasmConcatManifest,
   webCodecsVideoConfig,
@@ -190,5 +191,31 @@ describe('ffmpeg.wasm 素材映射', () => {
       '-map', '0:v:0', '-map', '0:a:0',
     ]);
     assert.ok(args.includes('copy'));
+  });
+});
+
+describe('多音轨导出路由', () => {
+  const media: MediaInfo = {
+    path: 'video.mp4', duration: 4, width: 640, height: 360, frameRate: 30,
+    videoStreamIndex: 0, audioStreamIndex: 1, codec: 'h264', videoTimestampOffset: 0, isHdr: false,
+  };
+  const video: VideoClip = { id: 'video', media, start: 0, end: 4, speed: 1 };
+  const original: VideoClip = { ...video, id: 'original' };
+  const bgm: VideoClip = {
+    id: 'bgm', start: 0, end: 3, speed: 1,
+    media: { ...media, path: 'bgm.m4a', duration: 3, width: 0, height: 0, videoStreamIndex: -1, audioStreamIndex: 0 },
+  };
+
+  it('默认分离音轨保持快速路线，增加或替换音轨后启用混音', () => {
+    assert.equal(requiresAudioMix([video], undefined), false);
+    assert.equal(requiresAudioMix([video], [{ clips: [original] }]), false);
+    assert.equal(requiresAudioMix([video], [{ clips: [original] }, { clips: [] }]), false);
+    assert.equal(requiresAudioMix([video], [{ clips: [{ ...original, volume: 0.5 }] }]), true,
+      '素材音量变化必须进入支持增益的混音路线');
+    assert.equal(requiresAudioMix([video], [{ clips: [original], volume: 0.4 }]), true,
+      '轨道音量变化必须进入支持增益的混音路线');
+    assert.equal(requiresAudioMix([video], [{ clips: [original] }, { clips: [bgm] }]), true);
+    assert.equal(requiresAudioMix([video], [{ clips: [bgm] }]), true);
+    assert.equal(requiresAudioMix([video], []), true, '删除全部显式音轨后必须导出静音，而不是回用视频内嵌音频');
   });
 });

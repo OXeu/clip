@@ -15,9 +15,11 @@ import {
   SubtitleVerticalAlignment,
   TrackKind,
   clipDuration,
+  clipVolume,
   createClip,
   subtitleCues,
   trackDuration,
+  trackVolume,
   validateClip,
 } from '../src/model.ts';
 
@@ -173,6 +175,37 @@ describe('音视频分轨与对齐绑定', () => {
     assert.equal(project.allTracks.length, 1);
   });
 
+  it('单个视频组支持多条音频轨并可独立导入、删除和恢复', () => {
+    const project = new EditProject();
+    const imported = project.importSeparated(media);
+    const subtitle = project.addSubtitleTrack(imported.videoTrack.id)!;
+    const bgm = project.addAudioTrack(imported.videoTrack.id)!;
+    const shortBgm = { ...audioMedia, duration: 3 };
+    const bgmClipId = project.importAudioToTrack(shortBgm, bgm.id)!;
+    assert.deepEqual(project.companionTracks(imported.videoTrack.id).map((track) => track.kind),
+      [TrackKind.Video, TrackKind.Audio, TrackKind.Audio, TrackKind.Subtitle]);
+    assert.deepEqual(project.audioTracks(imported.videoTrack.id).map((track) => track.id),
+      [imported.audioTrack.id, bgm.id]);
+    assert.equal(project.findClip(bgmClipId)?.clip.media.path, shortBgm.path);
+    assert.equal(project.findTrack(subtitle.id)?.kind, TrackKind.Subtitle);
+    assert.ok(project.setClipVolume(bgmClipId, 0.5));
+    assert.ok(project.setTrackVolume(bgm.id, 0.4));
+    assert.equal(clipVolume(project.findClip(bgmClipId)!.clip), 0.5);
+    assert.equal(trackVolume(project.findTrack(bgm.id)!), 0.4);
+    assert.equal(clipVolume(project.findClip(bgmClipId)!.clip) * trackVolume(project.findTrack(bgm.id)!), 0.2);
+    assert.throws(() => project.setClipVolume(bgmClipId, 2.01), /0%–200%/);
+    assert.ok(project.split(imported.videoTrack.id, 5), '短 BGM 不应阻止视频与原声在后续时间点分割');
+    assert.equal(project.findTrack(bgm.id)?.clips.length, 1, '短于切点的 BGM 不应产生空片段');
+    const restored = EditProject.fromSnapshot(project.exportSnapshot());
+    assert.equal(clipVolume(restored.findClip(bgmClipId)!.clip), 0.5);
+    assert.equal(trackVolume(restored.findTrack(bgm.id)!), 0.4);
+
+    assert.ok(project.deleteAudioTrack(bgm.id));
+    assert.equal(project.audioTracks(imported.videoTrack.id).length, 1);
+    assert.ok(project.undo());
+    assert.equal(project.audioTracks(imported.videoTrack.id).length, 2);
+  });
+
   it('普通音频不能被误导入为视频片段', () => {
     const project = new EditProject();
     assert.throws(() => project.import(audioMedia), /音频素材/);
@@ -254,6 +287,11 @@ describe('字幕伴生轨', () => {
       [TrackKind.Video, TrackKind.Audio, TrackKind.Subtitle]);
 
     const cueId = project.addSubtitle(subtitle.id, 1, 3, '第一句')!;
+    const secondCueId = project.addSubtitle(subtitle.id, 6, 8, '第二句')!;
+    assert.ok(project.fillSubtitleGaps(subtitle.id));
+    assert.equal(project.findSubtitle(cueId)?.cue.end, 6, '第一条字幕应延伸到下一条字幕开始');
+    assert.equal(project.findSubtitle(secondCueId)?.cue.end, 8, '最后一条字幕应保持原结束时间');
+    assert.ok(project.undo());
     assert.ok(project.updateSubtitle(cueId, { start: 1.5, end: 4, text: '更新后的字幕' }));
     assert.deepEqual(project.findSubtitle(cueId)?.cue,
       { id: cueId, start: 1.5, end: 4, text: '更新后的字幕' });
@@ -281,6 +319,27 @@ describe('字幕伴生轨', () => {
         ? { ...track, cues: [{ id: 'bad', start: 9, end: 11, text: '越界' }] }
         : track),
     }), /字幕/);
+  });
+
+  it('字幕轨道可删除并撤销，最后一条伴生轨删除后释放视频分组', () => {
+    const project = new EditProject();
+    const imported = project.importSeparated(media);
+    const subtitle = project.addSubtitleTrack(imported.videoTrack.id)!;
+    const cueId = project.addSubtitle(subtitle.id, 1, 3, '待删除字幕')!;
+    assert.ok(project.deleteSubtitleTrack(subtitle.id));
+    assert.equal(project.findTrack(subtitle.id), undefined);
+    assert.equal(project.findSubtitle(cueId), undefined);
+    assert.deepEqual(project.companionTracks(imported.videoTrack.id).map((track) => track.kind),
+      [TrackKind.Video, TrackKind.Audio]);
+    assert.ok(project.undo());
+    assert.equal(project.findSubtitle(cueId)?.cue.text, '待删除字幕');
+
+    const standalone = new EditProject();
+    const video = standalone.import(media);
+    const onlySubtitle = standalone.addSubtitleTrack(video.id)!;
+    assert.ok(standalone.deleteSubtitleTrack(onlySubtitle.id));
+    assert.equal(standalone.findTrack(video.id)?.companionGroupId, null);
+    assert.doesNotThrow(() => EditProject.fromSnapshot(standalone.exportSnapshot()));
   });
 });
 

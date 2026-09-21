@@ -15,9 +15,12 @@ import { describe, it } from 'node:test';
 import {
   buildAudioFilter,
   buildFilter,
+  buildMixedAudioFilter,
+  buildMixedAudioMuxArguments,
   buildTempoFilter,
 } from '../src/filtergraph.ts';
 import {
+  ClipKind,
   type ExportOptions,
   type MediaInfo,
   type VideoClip,
@@ -57,6 +60,14 @@ const portrait: MediaInfo = { ...media, path: 'portrait.mp4', width: 1080, heigh
 const silent: MediaInfo = { ...media, audioStreamIndex: null };
 const indexed: MediaInfo = { ...media, videoStreamIndex: 2, audioStreamIndex: 3 };
 const offset: MediaInfo = { ...media, videoTimestampOffset: 1.5 };
+const bgm: MediaInfo = {
+  ...media,
+  path: 'bgm.m4a',
+  width: 0,
+  height: 0,
+  videoStreamIndex: -1,
+  audioStreamIndex: 0,
+};
 
 const CLIP_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -230,6 +241,27 @@ describe('音频半边 filter graph', () => {
     assert.match(graph, /anullsrc=r=48000:cl=stereo/);
     assert.match(graph, /fps=60:/);
     assert.match(graph, /concat=n=1:v=1:a=1\[video\]\[audio\]$/);
+  });
+
+  it('多条伴生音轨分别拼接后混合，并裁剪到视频时长', () => {
+    const original = { ...clip(media, 0, 10), id: 'original', kind: ClipKind.Audio };
+    const music = { ...clip(bgm, 0, 6), id: 'music', kind: ClipKind.Audio, volume: 0.5 };
+    const graph = buildMixedAudioFilter([{ clips: [original] }, { clips: [music], volume: 0.4 }], 10);
+    assert.match(graph, /^\[1:1\]/, '原声应从视频输入之后的第一个音频输入读取');
+    assert.match(graph, /^\[2:0\]/m, 'BGM 应使用自己的音频流');
+    assert.match(graph, /atempo=1,volume=0\.5,apad/, '素材音量应先应用到片段');
+    assert.match(graph, /\[a1_0\]anull,volume=0\.4,apad/, '轨道音量应在拼接后应用，最终增益为 0.5 × 0.4');
+    assert.match(graph, /\[atrack0\]\[atrack1\]amix=inputs=2/);
+    assert.match(graph, /alimiter=limit=0\.95,atrim=duration=10\[audio\]$/);
+
+    const args = buildMixedAudioMuxArguments(
+      [{ clips: [original] }, { clips: [music] }],
+      'video.mp4',
+      'mix.ffgraph',
+      'output.mp4',
+    );
+    assert.deepEqual(args.filter((argument) => argument === '-i').length, 3);
+    assert.ok(args.includes('[audio]'));
   });
 });
 

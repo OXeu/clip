@@ -35,10 +35,13 @@ public sealed record SubtitleRegion(
     }
 }
 
-public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double End, double Speed = 1, ClipKind Kind = ClipKind.Combined)
+public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double End, double Speed = 1,
+    ClipKind Kind = ClipKind.Combined, double Volume = 1)
 {
     public const double MinimumSpeed = 0.1;
     public const double MaximumSpeed = 8;
+    public const double MinimumVolume = 0;
+    public const double MaximumVolume = 2;
     public string? Name { get; init; }
     public string DisplayName => Name ?? Media.FileName;
     public double SourceDuration => End - Start;
@@ -48,6 +51,7 @@ public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double En
     public void Validate()
     {
         ValidateSpeed(Speed);
+        ValidateVolume(Volume);
         if (!double.IsFinite(Start) || !double.IsFinite(End) || Start < 0 || End > Media.Duration + 0.001 || End <= Start ||
             !double.IsFinite(Media.Duration) || Media.Duration <= 0 || !double.IsFinite(Media.FrameRate) || Media.FrameRate <= 0 ||
             Media.Width < 1 || Media.Height < 1 || Media.VideoStreamIndex < 0 || Media.AudioStreamIndex < 0 || string.IsNullOrWhiteSpace(Media.Path))
@@ -59,11 +63,17 @@ public sealed record VideoClip(Guid Id, MediaInfo Media, double Start, double En
         if (!double.IsFinite(speed) || speed < MinimumSpeed || speed > MaximumSpeed)
             throw new ArgumentException("片段速度必须在 0.1–8 倍之间。");
     }
+
+    public static void ValidateVolume(double volume)
+    {
+        if (!double.IsFinite(volume) || volume < MinimumVolume || volume > MaximumVolume)
+            throw new ArgumentException("音量必须在 0%–200% 之间。");
+    }
 }
 
 public sealed record VideoTrack(Guid Id, string Name, bool IsMain, IReadOnlyList<VideoClip> Clips,
     TrackKind Kind = TrackKind.Video, Guid? BindingId = null, Guid? CompanionGroupId = null,
-    IReadOnlyList<SubtitleCue>? Cues = null, SubtitleRegion? SubtitleRegion = null)
+    IReadOnlyList<SubtitleCue>? Cues = null, SubtitleRegion? SubtitleRegion = null, double Volume = 1)
 {
     [JsonIgnore]
     public IReadOnlyList<SubtitleCue> SubtitleCues => Cues ?? Array.Empty<SubtitleCue>();

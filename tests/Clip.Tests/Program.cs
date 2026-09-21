@@ -90,6 +90,29 @@ Test("silent video still owns a companion audio slot", () =>
         "Silent video did not retain a companion audio slot");
 });
 
+Test("one video group supports multiple independently removable audio tracks", () =>
+{
+    var project = new EditProject();
+    var imported = project.ImportSeparated(media);
+    var second = project.AddAudioTrack(imported.VideoTrack.Id) ?? throw new Exception("Second audio track was not created");
+    var third = project.AddAudioTrack(imported.VideoTrack.Id) ?? throw new Exception("Third audio track was not created");
+    Check(project.CompanionTracks(imported.VideoTrack.Id).Select(track => track.Kind)
+        .SequenceEqual(new[] { TrackKind.Video, TrackKind.Audio, TrackKind.Audio, TrackKind.Audio }),
+        "Multiple audio tracks were not kept inside the video group");
+    var originalClip = imported.AudioTrack.Clips[0];
+    Check(project.SetClipVolume(originalClip.Id, 0.5) && project.SetTrackVolume(imported.AudioTrack.Id, 0.4),
+        "Audio clip or track volume was not updated");
+    Check(Math.Abs(project.FindClip(originalClip.Id)!.Value.Clip.Volume * project.FindTrack(imported.AudioTrack.Id)!.Volume - 0.2) < 0.000001,
+        "Effective audio volume was not the product of track and clip volume");
+    var restored = EditProject.FromSnapshot(project.ExportSnapshot());
+    Check(restored.FindClip(originalClip.Id)!.Value.Clip.Volume == 0.5 && restored.FindTrack(imported.AudioTrack.Id)!.Volume == 0.4,
+        "Audio volume was not preserved in the project snapshot");
+    Check(project.DeleteAudioTrack(second.Id) && project.FindTrack(second.Id) is null &&
+        project.AudioTracks(imported.VideoTrack.Id).Count == 2, "Audio track deletion changed the wrong group");
+    Check(project.Undo() && project.FindTrack(second.Id) is not null && project.FindTrack(third.Id) is not null,
+        "Audio track deletion could not be undone");
+});
+
 Test("empty companion audio tracks do not block video splits", () =>
 {
     var project = new EditProject();
@@ -124,6 +147,11 @@ Test("subtitle tracks stay inside their video group and edit absolute cue ranges
         "Subtitle tracks were detached from the video group");
     var opening = project.AddSubtitle(first.Id, 1, 2, "开场字幕") ?? throw new Exception("Subtitle cue was not created");
     Check(project.AddSubtitle(first.Id, 2, 2, "重叠") is null, "Overlapping subtitle cue was accepted");
+    var closing = project.AddSubtitle(first.Id, 6, 2, "收尾字幕") ?? throw new Exception("Second subtitle cue was not created");
+    Check(project.FillSubtitleGaps(first.Id), "Subtitle gaps were not filled");
+    Check(project.FindSubtitle(opening)!.Value.Cue.End == 6 && project.FindSubtitle(closing)!.Value.Cue.End == 8,
+        "Filling subtitle gaps changed the wrong cue bounds");
+    Check(project.Undo(), "Subtitle gap filling could not be undone");
     Check(project.UpdateSubtitle(opening, 1.5, 4.5, "新的内容"), "Subtitle cue could not be moved or resized");
     var cue = project.FindSubtitle(opening)!.Value.Cue;
     Check(cue.Text == "新的内容" && cue.Start == 1.5 && cue.End == 4.5, "Subtitle cue edit was not preserved");
@@ -137,6 +165,16 @@ Test("subtitle tracks stay inside their video group and edit absolute cue ranges
     Check(project.MoveTrack(second.Id, project.Tracks.Count) && project.CompanionTracks(imported.VideoTrack.Id).Count == 4,
         "Moving a subtitle track detached the companion group");
     Check(project.Undo(), "Subtitle group move could not be undone");
+    Check(project.DeleteSubtitleTrack(second.Id) && project.FindTrack(second.Id) is null &&
+        project.CompanionTracks(imported.VideoTrack.Id).Count == 3, "Subtitle track was not deleted from its group");
+    Check(project.Undo() && project.FindTrack(second.Id) is not null, "Subtitle track deletion could not be undone");
+
+    var standalone = new EditProject();
+    var video = standalone.Import(media);
+    var onlySubtitle = standalone.AddSubtitleTrack(video.Id) ?? throw new Exception("Standalone subtitle track was not created");
+    Check(standalone.DeleteSubtitleTrack(onlySubtitle.Id) && standalone.FindTrack(video.Id)!.CompanionGroupId is null,
+        "Deleting the only companion track left an invalid singleton group");
+    _ = EditProject.FromSnapshot(standalone.ExportSnapshot());
 });
 
 Test("subtitle project snapshots validate text, bounds, ordering and layout", () =>

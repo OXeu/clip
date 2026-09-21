@@ -67,8 +67,10 @@ interface StateShape {
   readonly exportableTracks: number;
   readonly tracks: readonly {
     id: string;
-    kind: 'video' | 'audio';
-    clips: readonly { id: string; start: number; end: number; speed: number }[];
+    kind: 'video' | 'audio' | 'subtitle';
+    volume?: number;
+    clips: readonly { id: string; start: number; end: number; speed: number; volume?: number }[];
+    cues?: readonly { id: string; start: number; end: number; text: string }[];
   }[];
 }
 
@@ -254,6 +256,307 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     assert.equal(await page.locator('#audio-preview-name').textContent(), fixture.name);
     assert.equal(await page.locator('#export-button').isDisabled(), true);
     assert.equal(errors.length, 0, `普通音频导入期间不应报错：${errors.join(' | ')}`);
+    await page.context().close();
+  });
+
+  it('单个视频可添加多条音频轨，导入 BGM 后混音导出并可删除整轨', async () => {
+    const bgm = fixtures.find((item) => item.name === 'tone-3s.m4a');
+    assert.ok(bgm, '应准备 BGM 回归素材');
+    const { page, errors } = await openPage();
+    await importFixture(page, fixtures[0]!);
+    const timeline = page.locator('#timeline');
+    await timeline.scrollIntoViewIfNeeded();
+
+    // 视频轨菜单创建第二条音轨，并把文件选择结果直接导入新轨。
+    await timeline.click({ button: 'right', position: { x: 80, y: 62 } });
+    const chooserPromise = page.waitForEvent('filechooser');
+    await page.click('#add-audio-track');
+    const chooser = await chooserPromise;
+    await chooser.setFiles(bgm.path);
+    await page.waitForFunction(() => {
+      const state = (window as unknown as { __clip: { state: () => StateShape } }).__clip.state();
+      const progress = document.getElementById('progress') as HTMLProgressElement;
+      return state.tracks.filter((track) => track.kind === 'audio').length === 2 && progress.hidden;
+    }, undefined, { timeout: 120_000 });
+
+    let state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.deepEqual(
+      state.tracks.filter((track) => track.kind !== 'video' || track.clips.length > 0).slice(0, 3)
+        .map((track) => ({ kind: track.kind, clips: track.clips.length })),
+      [{ kind: 'video', clips: 1 }, { kind: 'audio', clips: 1 }, { kind: 'audio', clips: 1 }],
+    );
+    assert.match(await page.locator('#status-text').textContent() ?? '', /与同组音轨混合/);
+
+    // BGM 素材 50% × 所在轨道 40% = 最终绝对音量 20%。
+    await timeline.click({ button: 'right', position: { x: 220, y: 147 } });
+    await page.locator('#clip-volume-slider').waitFor({ state: 'visible' });
+    await page.locator('#clip-volume-slider').evaluate((element) => {
+      const input = element as HTMLInputElement;
+      input.value = '50';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await timeline.click({ button: 'right', position: { x: 80, y: 147 } });
+    await page.locator('#track-volume-slider').waitFor({ state: 'visible' });
+    await page.locator('#track-volume-slider').evaluate((element) => {
+      const input = element as HTMLInputElement;
+      input.value = '40';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    const bgmTrack = state.tracks.filter((track) => track.kind === 'audio')[1]!;
+    assert.equal(bgmTrack.volume, 0.4);
+    assert.equal(bgmTrack.clips[0]!.volume, 0.5);
+    assert.match(await page.locator('#status-text').textContent() ?? '', /将与各素材音量相乘/);
+    await page.locator('#status-text').click();
+
+    const videoTrackId = state.tracks.find((track) => track.kind === 'video' && track.clips.length > 0)!.id;
+    const results = await page.evaluate(async (trackId) => {
+      const api = (window as unknown as {
+        __clip: { exportToBlob: (request: Record<string, unknown>) => Promise<ExportResultShape> };
+      }).__clip;
+      return {
+        fast: await api.exportToBlob({ route: 'webcodecs-video', trackId }),
+        wasm: await api.exportToBlob({ route: 'wasm', trackId }),
+      };
+    }, videoTrackId);
+    assert.equal(results.fast.audioRoute, 'ffmpeg-wasm', '多音轨应交给 ffmpeg.wasm 做最终混音');
+    assert.equal(results.wasm.audioRoute, 'ffmpeg-wasm');
+    const outputs = [
+      await saveExport(page, results.fast, 'multi-audio-bgm-fast.mp4'),
+      await saveExport(page, results.wasm, 'multi-audio-bgm-wasm.mp4'),
+    ];
+    const toneEnergy = (pcm: Buffer, frequency: number): number => {
+      const first = 12_000;
+      const count = Math.min(72_000, pcm.length / 2 - first);
+      let real = 0;
+      let imaginary = 0;
+      for (let index = 0; index < count; index++) {
+        const sample = pcm.readInt16LE((first + index) * 2);
+        const phase = 2 * Math.PI * frequency * index / 48_000;
+        real += sample * Math.cos(phase);
+        imaginary -= sample * Math.sin(phase);
+      }
+      return Math.hypot(real, imaginary) / Math.max(1, count);
+    };
+    const sourceEnergyRatio = toneEnergy(extractPcm(bgm.path), 523.25)
+      / toneEnergy(extractPcm(fixtures[0]!.path), 440);
+    const expectedMixedRatio = sourceEnergyRatio * 0.5 * 0.4;
+    for (const output of outputs) {
+      const summary = probeFile(output);
+      assert.equal(summary.hasAudio, true);
+      assert.ok(Math.abs(summary.duration - 4) < 0.15, `混音输出应跟随视频时长，实际 ${summary.duration}`);
+      const pcm = extractPcm(output);
+      const originalEnergy = toneEnergy(pcm, 440);
+      const bgmEnergy = toneEnergy(pcm, 523.25);
+      assert.ok(originalEnergy > toneEnergy(pcm, 480) * 5, '混音应保留视频原声 440 Hz');
+      assert.ok(bgmEnergy > toneEnergy(pcm, 560) * 5, '混音应包含 BGM 523.25 Hz');
+      const actualRatio = bgmEnergy / originalEnergy;
+      assert.ok(actualRatio > expectedMixedRatio * 0.75 && actualRatio < expectedMixedRatio * 1.25,
+        `BGM 应按 50% × 40% 混音，期望频域比例 ${expectedMixedRatio}，实际 ${actualRatio}`);
+    }
+
+    // 第二条音轨菜单支持整轨删除，且进入统一撤销历史。
+    const bounds = await timeline.boundingBox();
+    assert.ok(bounds, '时间轴应可见');
+    await timeline.click({ button: 'right', position: { x: 80, y: 147 } });
+    await page.locator('#delete-audio-track').waitFor({ state: 'visible' });
+    await page.click('#delete-audio-track');
+    state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.equal(state.tracks.filter((track) => track.kind === 'audio').length, 1);
+    await page.click('#undo-button');
+    state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.equal(state.tracks.filter((track) => track.kind === 'audio').length, 2);
+    assert.equal(errors.length, 0, `多音轨流程不应报错：${errors.join(' | ')}`);
+    await page.context().close();
+  });
+
+  it('ASR Key 使用自定义编辑框，识别入口打开设置后可以完成并保存', async () => {
+    const { page, errors } = await openPage();
+    await importFixture(page, fixtures[0]!);
+    const audioTrackId = await page.evaluate(() => {
+      const clip = (window as unknown as { __clip: { state: () => StateShape } }).__clip;
+      return clip.state().tracks.find((track) => track.kind === 'audio')?.id ?? null;
+    });
+    assert.ok(audioTrackId, '测试素材应包含伴生音轨');
+    await page.evaluate((trackId) => {
+      (window as unknown as { __clip: { selectTrack: (id: string) => void } }).__clip.selectTrack(trackId);
+    }, audioTrackId);
+    await page.click('#recognize-selected-audio');
+    await page.locator('#settings-dialog').waitFor({ state: 'visible' });
+
+    const field = await page.evaluate(() => {
+      const shell = document.querySelector<HTMLElement>('.credential-field')!;
+      const input = document.getElementById('settings-asr-key') as HTMLInputElement;
+      const toggle = document.getElementById('settings-asr-key-toggle') as HTMLButtonElement;
+      const shellStyle = getComputedStyle(shell);
+      const inputStyle = getComputedStyle(input);
+      return {
+        shellDisplay: shellStyle.display,
+        shellRadius: shellStyle.borderRadius,
+        inputBorder: inputStyle.borderTopWidth,
+        inputBackground: inputStyle.backgroundColor,
+        inputType: input.type,
+        togglePressed: toggle.getAttribute('aria-pressed'),
+      };
+    });
+    assert.equal(field.shellDisplay, 'grid');
+    assert.equal(field.shellRadius, '8px');
+    assert.equal(field.inputBorder, '0px', 'Key 输入框应由自定义外壳绘制边框');
+    assert.match(field.inputBackground, /rgba\(0, 0, 0, 0\)|transparent/);
+    assert.equal(field.inputType, 'password');
+    assert.equal(field.togglePressed, 'false');
+
+    await page.fill('#settings-asr-key', 'test-session-api-key');
+    await page.click('#settings-asr-key-toggle');
+    assert.equal(await page.locator('#settings-asr-key').getAttribute('type'), 'text');
+    assert.equal(await page.locator('#settings-asr-key-toggle').getAttribute('aria-pressed'), 'true');
+    await page.click('#settings-close');
+    await page.locator('#settings-dialog').waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => sessionStorage.getItem('clip.tencent-asr-key')), 'test-session-api-key');
+
+    await page.setViewportSize({ width: 760, height: 700 });
+    const toolbar = await page.evaluate(() => {
+      const element = document.querySelector<HTMLElement>('.timeline-toolbar')!;
+      const items = Array.from(element.querySelectorAll<HTMLElement>('.btn:not([hidden]), .section-title'))
+        .filter((item) => item.offsetParent !== null);
+      return {
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        overflowX: getComputedStyle(element).overflowX,
+        items: items.map((item) => ({
+          text: item.textContent?.trim() ?? '',
+          whiteSpace: getComputedStyle(item).whiteSpace,
+          clientHeight: item.clientHeight,
+          scrollHeight: item.scrollHeight,
+        })),
+      };
+    });
+    assert.ok(toolbar.scrollWidth > toolbar.clientWidth, '窄尺寸下工具栏应在内部横向滚动');
+    assert.equal(toolbar.overflowX, 'auto');
+    assert.ok(toolbar.items.every((item) => item.whiteSpace === 'nowrap'), '工具栏文字必须禁止换行');
+    assert.ok(toolbar.items.every((item) => item.scrollHeight <= item.clientHeight), '工具栏控件不应被挤成多行');
+    assert.equal(errors.length, 0, `设置与窄工具栏交互不应报错：${errors.join(' | ')}`);
+    await page.context().close();
+  });
+
+  it('字幕拖拽实时反馈、不改播放头，并支持音频显示切换与自动填隙', async () => {
+    const { page, errors } = await openPage();
+    await importFixture(page, fixtures[0]!);
+    const timeline = page.locator('#timeline');
+    await timeline.scrollIntoViewIfNeeded();
+    let bounds = await timeline.boundingBox();
+    assert.ok(bounds, '时间轴应可见');
+
+    // 从视频轨左侧菜单添加字幕轨；创建后伴生音频与字幕轨自动展开。
+    await timeline.click({ button: 'right', position: { x: 80, y: 62 } });
+    await page.click('#add-subtitle-track');
+    bounds = await timeline.boundingBox();
+    assert.ok(bounds, '展开后的时间轴应可见');
+    const scale = (bounds!.width - 196) / 4;
+    const xAt = (time: number): number => bounds!.x + 176 + time * scale;
+    const subtitleY = bounds!.y + 151;
+    const audioY = bounds!.y + 113;
+
+    const initialPosition = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state().position);
+    await page.mouse.click(xAt(0.2), subtitleY);
+    let state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    const subtitleTrack = state.tracks.find((track) => track.kind === 'subtitle')!;
+    assert.equal(subtitleTrack.cues?.length, 1);
+    assert.ok(Math.abs(state.position - initialPosition) < 0.000001,
+      '在字幕轨创建或选择字幕不应修改播放头');
+    assert.equal(await page.locator('#subtitle-overlay').isVisible(), true, '选中字幕后应显示编辑边框');
+
+    // 拖动结束边：模型在 pointerup 前保持不变，但 canvas 必须立即重绘宽度。
+    const beforeDrag = await page.evaluate(() => (document.getElementById('timeline') as HTMLCanvasElement).toDataURL());
+    const originalEnd = subtitleTrack.cues![0]!.end;
+    await page.mouse.move(xAt(originalEnd) - 4, subtitleY);
+    await page.mouse.down();
+    await page.mouse.move(xAt(1.2), subtitleY, { steps: 5 });
+    const duringDrag = await page.evaluate(() => ({
+      bitmap: (document.getElementById('timeline') as HTMLCanvasElement).toDataURL(),
+      state: (window as unknown as { __clip: { state: () => StateShape } }).__clip.state(),
+    }));
+    assert.notEqual(duringDrag.bitmap, beforeDrag, '拖动过程中字幕块宽度应实时变化');
+    assert.equal(duringDrag.state.tracks.find((track) => track.kind === 'subtitle')!.cues![0]!.end, originalEnd,
+      'pointerup 前不应写入项目或产生撤销步骤');
+    await page.mouse.up();
+    state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.ok(Math.abs(state.tracks.find((track) => track.kind === 'subtitle')!.cues![0]!.end - 1.2) < 0.03);
+    assert.ok(Math.abs(state.position - initialPosition) < 0.000001, '拖动字幕不应移动播放头');
+
+    // 创建第二条字幕，再通过轨道菜单把第一条的结尾延伸至第二条开始。
+    await page.mouse.click(xAt(2), subtitleY);
+    state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.equal(state.tracks.find((track) => track.kind === 'subtitle')!.cues?.length, 2);
+    await timeline.click({ button: 'right', position: { x: 80, y: 151 } });
+    await page.click('#fill-subtitle-gaps');
+    state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    const filled = state.tracks.find((track) => track.kind === 'subtitle')!.cues!;
+    assert.ok(Math.abs(filled[0]!.end - filled[1]!.start) < 0.001, '字幕空隙应自动填充');
+
+    // 音频槽左侧按钮在响度线和名称模式间切换，不改变播放进度。
+    const beforeAudioToggle = await page.evaluate(() => (document.getElementById('timeline') as HTMLCanvasElement).toDataURL());
+    await page.mouse.click(bounds!.x + 149, audioY);
+    assert.match(await page.locator('#status-text').textContent() ?? '', /名称/);
+    const nameMode = await page.evaluate(() => (document.getElementById('timeline') as HTMLCanvasElement).toDataURL());
+    assert.notEqual(nameMode, beforeAudioToggle, '名称模式应改变音频槽绘制');
+    await page.mouse.click(bounds!.x + 149, audioY);
+    assert.match(await page.locator('#status-text').textContent() ?? '', /响度线/);
+
+    // 选中音频片段后隐藏编辑边框，但仍按实际导出状态显示当前字幕文本。
+    await page.mouse.click(xAt(0.5), audioY);
+    await page.waitForFunction(() => (document.getElementById('subtitle-overlay') as HTMLElement).hidden);
+    assert.equal(await page.locator('#subtitle-export-layer .subtitle-export-item').count(), 1,
+      '选中音视频时应显示无边框的真实字幕预览');
+    const audioPosition = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state().position);
+    await page.mouse.click(bounds!.x + 80, subtitleY);
+    assert.equal(await page.locator('#subtitle-overlay').isVisible(), true, '选中字幕轨后应恢复编辑边框');
+    assert.ok(Math.abs(await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state().position) - audioPosition) < 0.000001,
+    '选中字幕轨头不应修改播放头');
+
+    // 横向滚动后，固定在左侧的字幕轨头仍应优先命中，并可从右键菜单删除整条轨道。
+    await page.click('#zoom-in');
+    await page.click('#zoom-in');
+    const scrollBox = await page.locator('#timeline-scroll').boundingBox();
+    assert.ok(scrollBox, '时间轴滚动区域应可见');
+    await page.locator('#timeline-scroll').evaluate((element) => { element.scrollLeft = 240; });
+    const cueCountBeforeHeaderClick = state.tracks.find((track) => track.kind === 'subtitle')!.cues!.length;
+    await page.mouse.click(scrollBox!.x + 80, subtitleY);
+    assert.match(await page.locator('#status-text').textContent() ?? '', /已选中字幕轨道/,
+      '横向滚动后左侧区域仍应选中字幕轨道，而不是命中其后的字幕块');
+    state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.equal(state.tracks.find((track) => track.kind === 'subtitle')!.cues!.length, cueCountBeforeHeaderClick,
+      '点击固定轨道头不应创建字幕');
+    assert.ok(Math.abs(state.position - audioPosition) < 0.000001, '点击固定轨道头不应修改播放头');
+
+    await page.mouse.click(scrollBox!.x + 80, subtitleY, { button: 'right' });
+    await page.locator('#delete-subtitle-track').waitFor({ state: 'visible' });
+    await page.click('#delete-subtitle-track');
+    state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.equal(state.tracks.some((track) => track.kind === 'subtitle'), false, '删除菜单应移除整条字幕轨道');
+    assert.equal(await page.locator('#subtitle-overlay').isVisible(), false, '删除已选轨道后应隐藏字幕编辑框');
+    assert.match(await page.locator('#status-text').textContent() ?? '', /可撤销/);
+    await page.click('#undo-button');
+    state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.equal(state.tracks.some((track) => track.kind === 'subtitle'), true, '撤销应恢复字幕轨道');
+
+    assert.equal(errors.length, 0, `字幕与音频轨交互不应报错：${errors.join(' | ')}`);
     await page.context().close();
   });
 

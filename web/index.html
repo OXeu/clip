@@ -50,6 +50,7 @@
       <section class="preview-region is-empty" id="preview-region">
         <div class="preview-canvas" id="preview-canvas" title="滚轮或双指缩放预览 · 双击恢复适应">
           <canvas id="preview-frame" class="preview-frame" aria-label="视频预览画面" hidden></canvas>
+          <div id="subtitle-export-layer" class="subtitle-export-layer" aria-hidden="true"></div>
           <div id="subtitle-overlay" class="subtitle-overlay" hidden aria-label="字幕矩形框">
             <div id="subtitle-preview-text" class="subtitle-preview-text">字幕预览</div>
             <button class="subtitle-resize-handle nw" type="button" data-resize="nw" aria-label="调整字幕框左上角"></button>
@@ -172,7 +173,7 @@
 
     <div class="drop-overlay" id="drop-overlay" hidden>松开以导入素材</div>
 
-    <div id="clip-context-menu" class="clip-context-menu" role="menu" aria-label="片段倍速" hidden>
+    <div id="clip-context-menu" class="clip-context-menu" role="menu" aria-label="片段设置" hidden>
       <div class="clip-context-heading">
         <span>片段倍速</span>
         <span id="clip-speed-current" class="clip-context-value">1×</span>
@@ -192,22 +193,64 @@
       <button id="custom-speed-button" class="more-menu-item" type="button" role="menuitem">
         <span>自定义…</span><span class="menu-shortcut">0.1–8×</span>
       </button>
+      <div id="clip-volume-actions" class="volume-menu-section" hidden>
+        <div class="more-menu-divider" role="separator"></div>
+        <div class="clip-context-heading">
+          <span>素材音量</span><output id="clip-volume-current" class="clip-context-value">100%</output>
+        </div>
+        <input id="clip-volume-slider" class="volume-slider" type="range" min="0" max="200" step="1" value="100"
+               aria-label="素材音量百分比" />
+        <div class="volume-scale" aria-hidden="true"><span>0%</span><span>100%</span><span>200%</span></div>
+        <button id="clip-volume-reset" class="volume-reset" type="button">恢复 100%</button>
+      </div>
     </div>
 
     <div id="track-context-menu" class="clip-context-menu" role="menu" aria-label="轨道操作" hidden>
       <div class="clip-context-heading"><span id="track-context-title">轨道操作</span></div>
+      <button id="add-audio-track" class="more-menu-item" type="button" role="menuitem" hidden>
+        <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-add-line"></use></svg><span>添加音频轨道…</span>
+      </button>
       <button id="add-subtitle-track" class="more-menu-item" type="button" role="menuitem" hidden>
         <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-add-line"></use></svg><span>添加字幕伴生轨</span>
       </button>
       <button id="recognize-subtitles" class="more-menu-item" type="button" role="menuitem" hidden>
         <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-edit-line"></use></svg><span>自动识别字幕</span>
       </button>
+      <div id="audio-track-actions" hidden>
+        <div class="volume-menu-section">
+          <div class="clip-context-heading">
+            <span>轨道音量</span><output id="track-volume-current" class="clip-context-value">100%</output>
+          </div>
+          <input id="track-volume-slider" class="volume-slider" type="range" min="0" max="200" step="1" value="100"
+                 aria-label="轨道音量百分比" />
+          <div class="volume-scale" aria-hidden="true"><span>0%</span><span>100%</span><span>200%</span></div>
+          <button id="track-volume-reset" class="volume-reset" type="button">恢复 100%</button>
+        </div>
+        <div class="more-menu-divider" role="separator"></div>
+        <button id="import-audio-track" class="more-menu-item" type="button" role="menuitem">
+          <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-import-line"></use></svg><span>导入音频到此轨…</span>
+        </button>
+        <div class="more-menu-divider" role="separator"></div>
+        <button id="delete-audio-track" class="more-menu-item danger-menu-item" type="button" role="menuitem">
+          <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-delete-bin-line"></use></svg><span>删除音频轨道</span>
+        </button>
+      </div>
       <div id="subtitle-alignment-actions" hidden>
+        <div class="more-menu-divider" role="separator"></div>
+        <button id="fill-subtitle-gaps" class="more-menu-item" type="button" role="menuitem">
+          <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-arrow-go-forward-line"></use></svg>
+          <span>自动填充字幕空隙</span>
+        </button>
         <div class="more-menu-divider" role="separator"></div>
         <div class="clip-context-heading"><span>矩形框内对齐</span></div>
         <button class="more-menu-item subtitle-align" type="button" role="menuitemradio" data-alignment="top">顶对齐</button>
         <button class="more-menu-item subtitle-align" type="button" role="menuitemradio" data-alignment="center">矩形中心对齐</button>
         <button class="more-menu-item subtitle-align" type="button" role="menuitemradio" data-alignment="bottom">底部对齐</button>
+        <div class="more-menu-divider" role="separator"></div>
+        <button id="delete-subtitle-track" class="more-menu-item danger-menu-item" type="button" role="menuitem">
+          <svg class="ri-icon" aria-hidden="true"><use href="./remixicon.svg#ri-delete-bin-line"></use></svg>
+          <span>删除字幕轨道</span>
+        </button>
       </div>
       <div id="subtitle-cue-actions" hidden>
         <div class="more-menu-divider" role="separator"></div>
@@ -307,7 +350,7 @@
     </dialog>
 
     <dialog id="settings-dialog">
-      <form method="dialog">
+      <form id="settings-form" method="dialog">
         <div class="dialog-header">
           <h2>设置</h2>
         </div>
@@ -328,15 +371,21 @@
           </div>
           <div class="field">
             <label for="settings-asr-key">腾讯云 ASR API Key</label>
-            <input id="settings-asr-key" type="password" autocomplete="off" spellcheck="false" placeholder="Bearer API Key" />
-            <span class="hint">只保存在当前浏览器会话，不写入项目文件。用于 hy-asr-3.0-preview 自动识别。</span>
+            <div class="credential-field">
+              <span class="credential-field-prefix" aria-hidden="true">ASR</span>
+              <input id="settings-asr-key" class="credential-field-input" type="password" autocomplete="off"
+                     spellcheck="false" placeholder="输入 Bearer API Key" aria-describedby="settings-asr-key-hint" />
+              <button id="settings-asr-key-toggle" class="credential-field-toggle" type="button"
+                      aria-label="显示 API Key" aria-pressed="false">显示</button>
+            </div>
+            <span class="hint" id="settings-asr-key-hint">只保存在当前浏览器会话，不写入项目文件。用于 hy-asr-3.0-preview 自动识别。</span>
           </div>
           <div class="callout info" id="settings-ffmpeg"></div>
         </div>
         <div class="dialog-footer">
           <span class="hint">设置保存在本机浏览器</span>
           <span class="actions">
-            <button class="btn btn-primary" type="button" id="settings-close">完成</button>
+            <button class="btn btn-primary" type="submit" id="settings-close" value="confirm">完成</button>
           </span>
         </div>
       </form>

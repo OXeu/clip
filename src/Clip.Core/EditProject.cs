@@ -48,7 +48,8 @@ public sealed class EditProject
         foreach (var track in snapshot.Tracks)
         {
             if (track is null || track.Id == Guid.Empty || !trackIds.Add(track.Id) || string.IsNullOrWhiteSpace(track.Name) ||
-                track.Clips is null || !Enum.IsDefined(track.Kind) || track.BindingId == Guid.Empty || track.CompanionGroupId == Guid.Empty)
+                track.Clips is null || !Enum.IsDefined(track.Kind) || track.BindingId == Guid.Empty || track.CompanionGroupId == Guid.Empty ||
+                !double.IsFinite(track.Volume) || track.Volume < VideoClip.MinimumVolume || track.Volume > VideoClip.MaximumVolume)
                 throw new InvalidDataException("保存的轨道信息无效。");
             var clips = new List<VideoClip>(track.Clips.Count);
             foreach (var clip in track.Clips)
@@ -82,7 +83,7 @@ public sealed class EditProject
         var companionGroups = tracks.Where(track => track.CompanionGroupId.HasValue)
             .GroupBy(track => track.CompanionGroupId!.Value);
         if (companionGroups.Any(group => group.Count() < 2 ||
-            group.Count(track => track.Kind == TrackKind.Video) != 1 || group.Count(track => track.Kind == TrackKind.Audio) > 1))
+            group.Count(track => track.Kind == TrackKind.Video) != 1))
             throw new InvalidDataException("保存的项目包含无效的伴生轨道组。");
         foreach (var track in tracks.Where(track => track.Kind == TrackKind.Subtitle))
         {
@@ -143,6 +144,48 @@ public sealed class EditProject
             .OrderBy(candidate => TrackKindOrder(candidate.Kind)).ToArray();
     }
 
+    public IReadOnlyList<VideoTrack> AudioTracks(Guid videoTrackId)
+    {
+        if (FindTrack(videoTrackId) is not { Kind: TrackKind.Video } video) return [];
+        return video.CompanionGroupId is { } groupId
+            ? _tracks.Where(track => track.CompanionGroupId == groupId && track.Kind == TrackKind.Audio).ToArray()
+            : [];
+    }
+
+    public VideoTrack? AddAudioTrack(Guid videoTrackId)
+    {
+        if (FindTrack(videoTrackId) is not { Kind: TrackKind.Video } video) return null;
+        SaveUndo();
+        var groupId = video.CompanionGroupId ?? Guid.NewGuid();
+        if (video.CompanionGroupId is null)
+        {
+            var videoIndex = _tracks.FindIndex(track => track.Id == videoTrackId);
+            _tracks[videoIndex] = video = video with { CompanionGroupId = groupId };
+        }
+        var audioIndexes = _tracks.Select((track, index) => (track, index))
+            .Where(item => item.track.CompanionGroupId == groupId && item.track.Kind == TrackKind.Audio)
+            .Select(item => item.index).ToArray();
+        var insertionIndex = audioIndexes.Length == 0
+            ? _tracks.FindIndex(track => track.Id == videoTrackId) + 1
+            : audioIndexes.Max() + 1;
+        var audio = new VideoTrack(Guid.NewGuid(), $"音频 {AudioTracks(videoTrackId).Count + 1}", false,
+            Array.AsReadOnly(Array.Empty<VideoClip>()), TrackKind.Audio, CompanionGroupId: groupId);
+        _tracks.Insert(insertionIndex, audio);
+        return audio;
+    }
+
+    public bool DeleteAudioTrack(Guid trackId)
+    {
+        var index = _tracks.FindIndex(track => track.Id == trackId && track.Kind == TrackKind.Audio);
+        if (index < 0) return false;
+        var track = _tracks[index];
+        SaveUndo();
+        _tracks.RemoveAt(index);
+        ReleaseSingletonCompanionGroup(track.CompanionGroupId);
+        if (track.BindingId is { } bindingId) ClearSingletonBindings([bindingId]);
+        return true;
+    }
+
     public IReadOnlyList<VideoTrack> SubtitleTracks(Guid videoTrackId)
     {
         if (FindTrack(videoTrackId) is not { Kind: TrackKind.Video } video) return [];
@@ -169,6 +212,18 @@ public sealed class EditProject
             SubtitleRegion: Clip.Core.SubtitleRegion.Default);
         _tracks.Insert(insertionIndex, subtitle);
         return subtitle;
+    }
+
+    public bool DeleteSubtitleTrack(Guid trackId)
+    {
+        var index = _tracks.FindIndex(track => track.Id == trackId && track.Kind == TrackKind.Subtitle);
+        if (index < 0) return false;
+        var track = _tracks[index];
+        SaveUndo();
+        _tracks.RemoveAt(index);
+        ReleaseSingletonCompanionGroup(track.CompanionGroupId);
+        if (track.BindingId is { } bindingId) ClearSingletonBindings([bindingId]);
+        return true;
     }
 
     public SubtitlePosition? FindSubtitle(Guid id)
@@ -216,6 +271,25 @@ public sealed class EditProject
         if (FindSubtitle(id) is not { } position || FindTrack(position.TrackId) is not { } track) return false;
         SaveUndo();
         ReplaceSubtitles(position.TrackId, track.SubtitleCues.Where(cue => cue.Id != id).ToList());
+        return true;
+    }
+
+    public bool FillSubtitleGaps(Guid trackId)
+    {
+        if (FindTrack(trackId) is not { Kind: TrackKind.Subtitle } track || track.SubtitleCues.Count < 2)
+            return false;
+        var cues = track.SubtitleCues.ToArray();
+        var changed = false;
+        for (var index = 0; index + 1 < cues.Length; index++)
+        {
+            var nextStart = cues[index + 1].Start;
+            if (Math.Abs(cues[index].End - nextStart) <= 0.001) continue;
+            cues[index] = cues[index] with { End = nextStart };
+            changed = true;
+        }
+        if (!changed) return false;
+        SaveUndo();
+        ReplaceSubtitles(trackId, cues.ToList());
         return true;
     }
 
@@ -324,16 +398,29 @@ public sealed class EditProject
 
     public Guid? Split(Guid trackId, double time)
     {
-        if (FindTrack(trackId) is not { Clips.Count: > 0 }) return null;
+        if (FindTrack(trackId) is not { Clips.Count: > 0 } requestedTrack) return null;
+        var primaryAudioId = requestedTrack.CompanionGroupId is { } groupId
+            ? _tracks.FirstOrDefault(track => track.CompanionGroupId == groupId && track.Kind == TrackKind.Audio)?.Id
+            : null;
         var cuts = new List<(VideoTrack Track, ClipPosition Position, double Cut)>();
         foreach (var track in SynchronizedTracks(trackId))
         {
             // 空的伴生音轨/对齐轨没有可切内容，不应阻止当前轨道分割。
             if (track.Clips.Count == 0) continue;
-            if (Locate(track.Id, time) is not { } position) return null;
+            // 第二条及后续音轨是独立伴声/BGM；短于视频时不应阻止视频切割。
+            var auxiliaryAudio = track.Kind == TrackKind.Audio && track.CompanionGroupId.HasValue && track.Id != primaryAudioId;
+            if (Locate(track.Id, time) is not { } position)
+            {
+                if (auxiliaryAudio) continue;
+                return null;
+            }
             var frame = 1 / position.Clip.Media.FrameRate;
             var cut = Math.Round(position.SourceTime / frame) * frame;
-            if (cut - position.Clip.Start < frame * 0.5 || position.Clip.End - cut < frame * 0.5) return null;
+            if (cut - position.Clip.Start < frame * 0.5 || position.Clip.End - cut < frame * 0.5)
+            {
+                if (auxiliaryAudio) continue;
+                return null;
+            }
             cuts.Add((track, position, cut));
         }
         if (cuts.Count == 0) return null;
@@ -429,6 +516,28 @@ public sealed class EditProject
         var clips = FindTrack(position.TrackId)!.Clips.ToList();
         clips[position.Index] = position.Clip with { Speed = speed };
         ReplaceClips(position.TrackId, clips);
+        return true;
+    }
+
+    public bool SetClipVolume(Guid clipId, double volume)
+    {
+        VideoClip.ValidateVolume(volume);
+        if (FindClip(clipId) is not { } position || FindTrack(position.TrackId) is not { Kind: TrackKind.Audio } track ||
+            Math.Abs(position.Clip.Volume - volume) < 0.000001) return false;
+        SaveUndo();
+        var clips = track.Clips.ToList();
+        clips[position.Index] = position.Clip with { Volume = volume };
+        ReplaceClips(track.Id, clips);
+        return true;
+    }
+
+    public bool SetTrackVolume(Guid trackId, double volume)
+    {
+        VideoClip.ValidateVolume(volume);
+        var index = _tracks.FindIndex(track => track.Id == trackId && track.Kind == TrackKind.Audio);
+        if (index < 0 || Math.Abs(_tracks[index].Volume - volume) < 0.000001) return false;
+        SaveUndo();
+        _tracks[index] = _tracks[index] with { Volume = volume };
         return true;
     }
 
@@ -531,6 +640,14 @@ public sealed class EditProject
             if (_tracks.Count(t => t.BindingId == bindingId) < 2)
                 for (var i = 0; i < _tracks.Count; i++)
                     if (_tracks[i].BindingId == bindingId) _tracks[i] = _tracks[i] with { BindingId = null };
+    }
+    private void ReleaseSingletonCompanionGroup(Guid? groupId)
+    {
+        if (groupId is null) return;
+        var remaining = _tracks.Where(track => track.CompanionGroupId == groupId).ToArray();
+        if (remaining is not [{ Kind: TrackKind.Video } video]) return;
+        var videoIndex = _tracks.FindIndex(track => track.Id == video.Id);
+        _tracks[videoIndex] = video with { CompanionGroupId = null };
     }
     private State Snapshot() => new(_tracks.ToArray(), _sources.ToArray());
     private void SaveUndo() { _undo.Push(Snapshot()); _redo.Clear(); }
