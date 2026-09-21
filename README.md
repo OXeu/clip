@@ -11,7 +11,7 @@
 
 ## 界面预览
 
-<!-- clip-ui-screenshots: run=35572922690; commit=905860b506b6943795a21a5e6d9df1ab3b9cc987; size=3024x2043; density=3x -->
+<!-- clip-ui-screenshots: run=35599946018; commit=27e6bdd10e2a3733e41829de81ad28a3de45aeab; size=3024x2043; density=3x -->
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-dark.png" />
   <img src="docs/images/screenshot.png" alt="Clip 多素材、多轨道剪辑界面" width="1008" />
