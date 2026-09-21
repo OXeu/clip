@@ -409,7 +409,7 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     await page.context().close();
   });
 
-  it('ASR Key 使用自定义编辑框，识别入口打开设置后可以完成并保存', async () => {
+  it('ASR Key、分阶段进度、字幕创建与接口错误都在界面正确反馈', async () => {
     const { page, errors } = await openPage();
     await importFixture(page, fixtures[0]!);
     const audioTrackId = await page.evaluate(() => {
@@ -474,6 +474,66 @@ describe('端到端导出（真实 Chromium + FFprobe）', { skip: skipReason ??
     assert.equal(toolbar.overflowX, 'auto');
     assert.ok(toolbar.items.every((item) => item.whiteSpace === 'nowrap'), '工具栏文字必须禁止换行');
     assert.ok(toolbar.items.every((item) => item.scrollHeight <= item.clientHeight), '工具栏控件不应被挤成多行');
+
+    let asrMode: 'success' | 'failure' = 'success';
+    let asrCalls = 0;
+    await page.route('**/v1/wand/asrproxy/sync_transcribe', async (route) => {
+      const headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Content-Type': 'application/json',
+      };
+      if (route.request().method() === 'OPTIONS') {
+        await route.fulfill({ status: 204, headers, body: '' });
+        return;
+      }
+      asrCalls++;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await route.fulfill({
+        status: 200,
+        headers,
+        body: JSON.stringify(asrMode === 'success'
+          ? { status: 'completed', output: { text: '自动识别字幕' } }
+          : {
+            status: 'failed',
+            error: { message_zh: '测试鉴权失败', code: '401002', request_id: 'e2e-request' },
+          }),
+      });
+    });
+
+    await page.evaluate((trackId) => {
+      (window as unknown as { __clip: { selectTrack: (id: string) => void } }).__clip.selectTrack(trackId);
+    }, audioTrackId);
+    await page.click('#recognize-selected-audio');
+    await page.waitForFunction(() => {
+      const feedback = document.getElementById('asr-feedback')!;
+      return feedback.dataset.tone === 'working'
+        && feedback.textContent?.includes('腾讯云 ASR')
+        && !(document.getElementById('progress') as HTMLProgressElement).hidden;
+    }, undefined, { timeout: 30_000 });
+    await page.waitForFunction(() => document.getElementById('asr-feedback')?.dataset.tone === 'success');
+    let state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    const subtitleTracks = state.tracks.filter((track) => track.kind === 'subtitle');
+    assert.equal(asrCalls > 0, true, '应向腾讯云 ASR 提交检测到的有声片段');
+    assert.equal(subtitleTracks.length, 1);
+    assert.equal(subtitleTracks[0]!.cues?.[0]?.text, '自动识别字幕');
+    assert.match(await page.locator('#asr-feedback-detail').textContent() ?? '', /已识别并创建/);
+
+    asrMode = 'failure';
+    await page.evaluate((trackId) => {
+      (window as unknown as { __clip: { selectTrack: (id: string) => void } }).__clip.selectTrack(trackId);
+    }, audioTrackId);
+    await page.click('#recognize-selected-audio');
+    await page.waitForFunction(() => document.getElementById('asr-feedback')?.dataset.tone === 'error');
+    assert.match(await page.locator('#asr-feedback-detail').textContent() ?? '',
+      /测试鉴权失败.*401002.*e2e-request/);
+    assert.equal(await page.locator('#status-text').getAttribute('data-tone'), 'error');
+    assert.equal(await page.locator('#progress').isHidden(), true);
+    state = await page.evaluate(() =>
+      (window as unknown as { __clip: { state: () => StateShape } }).__clip.state());
+    assert.equal(state.tracks.filter((track) => track.kind === 'subtitle').length, 1,
+      '识别失败不应留下新的空字幕轨');
     assert.equal(errors.length, 0, `设置与窄工具栏交互不应报错：${errors.join(' | ')}`);
     await page.context().close();
   });

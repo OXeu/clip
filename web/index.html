@@ -158,6 +158,19 @@
             </button>
           </div>
         </div>
+        <div id="asr-feedback" class="asr-feedback" data-tone="working" role="status" aria-live="polite" hidden>
+          <span class="asr-feedback-marker" aria-hidden="true"><span></span></span>
+          <span class="asr-feedback-copy">
+            <strong id="asr-feedback-title">正在生成字幕</strong>
+            <span id="asr-feedback-detail">正在准备音频…</span>
+          </span>
+          <output id="asr-feedback-percent" class="asr-feedback-percent">0%</output>
+          <button id="asr-feedback-dismiss" class="asr-feedback-dismiss" type="button"
+                  aria-label="关闭字幕识别消息" hidden>×</button>
+          <span class="asr-feedback-meter" aria-hidden="true">
+            <span id="asr-feedback-meter-value"></span>
+          </span>
+        </div>
         <div class="timeline-scroll" id="timeline-scroll" title="点击视频轨左侧按钮展开伴生轨 · 拖动把手排序 · 滚轮上下滚动 · Shift + 滚轮横向滚动 · Ctrl + 滚轮缩放">
           <canvas id="timeline" aria-label="视频、音频与字幕时间轴；视频轨默认折叠，点击左侧按钮展开伴生轨"></canvas>
         </div>
@@ -165,9 +178,9 @@
       </section>
 
       <footer class="status-bar">
-        <span class="status-text" id="status-text">就绪 · 导入视频或音频开始剪辑</span>
+        <span class="status-text" id="status-text" role="status" aria-live="polite">就绪 · 导入视频或音频开始剪辑</span>
         <span class="status-text capability-text" id="capability-text"></span>
-        <progress class="progress" id="progress" max="1" value="0" hidden></progress>
+        <progress class="progress" id="progress" max="1" value="0" aria-label="当前操作进度" hidden></progress>
       </footer>
     </div>
 

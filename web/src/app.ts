@@ -152,6 +152,12 @@ const canvas = $<HTMLCanvasElement>('timeline');
 const statusText = $('status-text');
 const capabilityText = $('capability-text');
 const progress = $<HTMLProgressElement>('progress');
+const asrFeedback = $('asr-feedback');
+const asrFeedbackTitle = $('asr-feedback-title');
+const asrFeedbackDetail = $('asr-feedback-detail');
+const asrFeedbackPercent = $<HTMLOutputElement>('asr-feedback-percent');
+const asrFeedbackMeterValue = $('asr-feedback-meter-value');
+const asrFeedbackDismissButton = $<HTMLButtonElement>('asr-feedback-dismiss');
 const positionLabel = $('position-text');
 const totalLabel = $('total-text');
 const playButton = $<HTMLButtonElement>('play-button');
@@ -293,8 +299,29 @@ function frameDuration(): number {
   return found ? 1 / (found.clip.media.frameRate * found.clip.speed) : 1 / 30;
 }
 
-function status(message: string): void {
+function status(message: string, tone: 'default' | 'error' = 'default'): void {
   statusText.textContent = message;
+  statusText.title = message;
+  statusText.dataset.tone = tone;
+}
+
+function showAsrFeedback(
+  tone: 'working' | 'success' | 'error',
+  title: string,
+  detail: string,
+  fraction: number,
+): void {
+  const clamped = Math.min(1, Math.max(0, fraction));
+  asrFeedback.hidden = false;
+  asrFeedback.dataset.tone = tone;
+  asrFeedback.setAttribute('role', tone === 'error' ? 'alert' : 'status');
+  asrFeedback.setAttribute('aria-live', tone === 'error' ? 'assertive' : 'polite');
+  asrFeedbackTitle.textContent = title;
+  asrFeedbackDetail.textContent = detail;
+  asrFeedbackDetail.title = detail;
+  asrFeedbackPercent.value = tone === 'error' ? '失败' : tone === 'success' ? '完成' : `${Math.round(clamped * 100)}%`;
+  asrFeedbackMeterValue.style.width = `${clamped * 100}%`;
+  asrFeedbackDismissButton.hidden = tone === 'working';
 }
 
 function setBusy(busy: boolean, message?: string): void {
@@ -303,6 +330,7 @@ function setBusy(busy: boolean, message?: string): void {
     progress.hidden = false;
     progress.value = 0;
     cancelButton.hidden = false;
+    asrFeedback.hidden = true;
   } else {
     operation = null;
     progress.hidden = true;
@@ -1642,23 +1670,30 @@ async function recognizeSelectedAudio(requestedTrackId?: string): Promise<void> 
   closeTrackContextMenu();
   const audio = audioId ? project.findTrack(audioId) : undefined;
   const videoTrack = audio ? videoForTrack(audio.id) : undefined;
-  if (!audio || audio.kind !== TrackKind.Audio || !videoTrack || operation) return;
+  if (operation) return;
+  if (!audio || audio.kind !== TrackKind.Audio || !videoTrack) {
+    const message = '请先选中一条包含音频素材的音频轨。';
+    showAsrFeedback('error', '无法开始字幕识别', message, 0);
+    status(message, 'error');
+    return;
+  }
   if (trackDuration(videoTrack) < 0.1) {
-    status('该音频组还没有可承载字幕的视频内容。');
+    const message = '该音频组还没有可承载字幕的视频内容。';
+    showAsrFeedback('error', '无法创建字幕轨道', message, 0);
+    status(message, 'error');
     return;
   }
   const apiKey = settingsAsrKey.value.trim();
   if (!apiKey) {
+    const message = '请先在“更多 → 设置”中填写腾讯云 ASR API Key。';
+    showAsrFeedback('error', '需要腾讯云 ASR API Key', message, 0);
     openSettings();
     queueMicrotask(() => settingsAsrKey.focus({ preventScroll: true }));
-    status('请先填写腾讯云 ASR API Key。');
+    status(message, 'error');
     return;
   }
-  const subtitleTrack = project.addSubtitleTrack(videoTrack.id);
-  if (!subtitleTrack) return;
-  selectedSubtitleTrackId = subtitleTrack.id;
-  timeline.expandVideoTrack(videoTrack.id);
   const controller = beginOperation('正在浏览器中检测有声片段…');
+  showAsrFeedback('working', '正在生成字幕', '正在准备音频解码器…', 0.01);
   try {
     const recognized = await recognizeAudioTrack(
       audio,
@@ -1668,23 +1703,41 @@ async function recognizeSelectedAudio(requestedTrackId?: string): Promise<void> 
         return source.arrayBuffer();
       },
       apiKey,
-      (completed, total, message) => {
-        progress.value = total > 0 ? completed / total : 0;
+      (fraction, message) => {
+        progress.value = fraction;
+        showAsrFeedback('working', '正在生成字幕', message, fraction);
         status(message);
       },
       controller.signal,
     );
     const videoDuration = trackDuration(videoTrack);
+    const cues = recognized
+      .map((cue) => ({
+        ...cue,
+        start: Math.min(cue.start, videoDuration),
+        end: Math.min(cue.end, videoDuration),
+      }))
+      .filter((cue) => cue.end - cue.start >= 0.1);
     let created = 0;
-    for (const cue of recognized) {
-      const start = Math.min(cue.start, videoDuration);
-      const end = Math.min(cue.end, videoDuration);
-      if (end - start >= 0.1 && project.addSubtitle(subtitleTrack.id, start, end, cue.text)) created++;
+    if (cues.length > 0) {
+      const subtitleTrack = project.addSubtitleTrack(videoTrack.id);
+      if (!subtitleTrack) throw new Error('无法为当前视频创建字幕轨道。');
+      for (const cue of cues) {
+        if (project.addSubtitle(subtitleTrack.id, cue.start, cue.end, cue.text)) created++;
+      }
+      selectedSubtitleTrackId = subtitleTrack.id;
+      timeline.expandVideoTrack(videoTrack.id);
     }
-    status(created > 0 ? `已识别并创建 ${created} 条字幕` : '未检测到视频范围内的清晰人声，未创建字幕。');
+    const message = created > 0
+      ? `已识别并创建 ${created} 条字幕。`
+      : '未检测到视频范围内的清晰人声；请确认音轨有声音且音量足够。';
+    showAsrFeedback('success', created > 0 ? '字幕已生成' : '未检测到人声', message, 1);
+    status(message);
   } catch (error) {
-    status(error instanceof DOMException && error.name === 'AbortError'
-      ? '已取消字幕识别' : error instanceof Error ? error.message : String(error));
+    const cancelled = error instanceof DOMException && error.name === 'AbortError';
+    const message = cancelled ? '已取消字幕识别。' : error instanceof Error ? error.message : String(error);
+    showAsrFeedback(cancelled ? 'success' : 'error', cancelled ? '识别已取消' : '字幕识别失败', message, progress.value);
+    status(message, cancelled ? 'default' : 'error');
   } finally {
     setBusy(false);
     refresh();
@@ -2586,6 +2639,9 @@ fillSubtitleGapsButton.addEventListener('click', fillSubtitleGapsFromMenu);
 deleteSubtitleTrackButton.addEventListener('click', deleteSubtitleTrackFromMenu);
 recognizeSelectedAudioButton.addEventListener('click', () => {
   if (selectedTrackId) void recognizeSelectedAudio(selectedTrackId);
+});
+asrFeedbackDismissButton.addEventListener('click', () => {
+  asrFeedback.hidden = true;
 });
 for (const button of subtitleAlignButtons) {
   button.addEventListener('click', () => {
